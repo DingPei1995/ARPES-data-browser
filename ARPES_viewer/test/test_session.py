@@ -337,7 +337,7 @@ def test_a_four_dimensional_spatial_scan_keeps_all_four_axes(store):
 
 
 @pytest.mark.parametrize("kind,n_axes", [
-    ("cut", 2), ("map", 3), ("k_map", 3), ("kz_map", 3),
+    ("cut", 2), ("map", 3), ("k_map", 3), ("kz_map", 3), ("kz_map_k", 3),
     ("spem_1d", 3), ("spem_4d", 4),
 ])
 def test_every_kind_has_one_axis_slot_per_dimension(kind, n_axes):
@@ -368,7 +368,7 @@ def test_the_cube_kinds_are_exactly_the_three_axis_cubes():
     from loader.nxs_file import AXIS_SLOTS, CUBE_KINDS
     for kind in CUBE_KINDS:
         assert AXIS_SLOTS[kind]["array"] == ("x", "k", "z"), kind
-    assert set(CUBE_KINDS) == {"map", "k_map", "kz_map"}
+    assert set(CUBE_KINDS) == {"map", "k_map", "kz_map", "kz_map_k"}
 
 
 def test_every_kind_has_a_name_a_person_can_read():

@@ -93,6 +93,7 @@ KIND_LABELS = {
     "map": "Map",
     "k_map": "k-map",
     "kz_map": "kz map",
+    "kz_map_k": "kz map (k)",
     "spem_4d": "SPEM",
     "spem_1d": "SPEM",
 }
@@ -811,6 +812,7 @@ DATA_INFO_AXES = {
     "map": (("x", "angle/k"), ("k", "angle/k"), ("z", "energy")),
     "k_map": (("x", "k"), ("k", "k"), ("z", "energy")),
     "kz_map": (("x", "photon energy"), ("k", "angle/k"), ("z", "energy")),
+    "kz_map_k": (("x", "kz"), ("k", "k"), ("z", "energy")),
     "spem_4d": (("x", "spatial"), ("y", "spatial"), ("k", "angle"), ("z", "energy")),
     "spem_1d": (("x", "spatial"), ("k", "angle"), ("z", "energy")),
 }

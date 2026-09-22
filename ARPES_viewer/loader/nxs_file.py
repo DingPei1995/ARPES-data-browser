@@ -583,6 +583,7 @@ AXIS_SLOTS = {
     "map": {"array": ("x", "k", "z"), "constructor": ("x", "k", "z")},
     "k_map": {"array": ("x", "k", "z"), "constructor": ("x", "k", "z")},
     "kz_map": {"array": ("x", "k", "z"), "constructor": ("x", "k", "z")},
+    "kz_map_k": {"array": ("x", "k", "z"), "constructor": ("x", "k", "z")},
     "spem_1d": {"array": ("x", "y", "z"), "constructor": ("x", "y", "z")},
     "spem_4d": {"array": ("y", "x", "k", "z"),
                 "constructor": ("x", "y", "k", "z")},
@@ -600,7 +601,16 @@ AXIS_SLOTS = {
 #:             convertible by the in-plane formula -- turning a photon
 #:             energy into k_z needs the inner potential, which is a
 #:             property of the sample and not of the measurement.
-CUBE_KINDS = ("map", "k_map", "kz_map")
+#: ``kz_map_k`` that scan after the k_z conversion: (k_z, k_par, E), both
+#:             momenta in A^-1. k_z leads because it is the axis the
+#:             measurement is about, and the viewers put the first axis
+#:             across the image.
+CUBE_KINDS = ("map", "k_map", "kz_map", "kz_map_k")
+
+#: The cube kinds whose first two axes are already momentum. Nothing that
+#: converts angles should be offered for these, and anything that draws a
+#: Brillouin zone needs one of them.
+MOMENTUM_KINDS = ("k_map", "kz_map_k")
 
 #: What each kind is called in the file browser's "kind" column. A kind with
 #: no entry shows its internal name, which is better than showing nothing.
@@ -609,6 +619,7 @@ KIND_LABELS = {
     "map": "Map",
     "k_map": "k-map",
     "kz_map": "kz map",
+    "kz_map_k": "kz map (k)",
     "spem_4d": "SPEM",
     "spem_1d": "SPEM",
 }

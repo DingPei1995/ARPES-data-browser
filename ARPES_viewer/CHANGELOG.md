@@ -10,6 +10,175 @@ file is the record of how it got that way.
 
 ---
 
+## Thirty-third round: a picked direction is a line, not an arrow
+
+**Set rotation from contour** returned an angle that depended on which of
+the two points was clicked first, and on which side of the origin they sat.
+Both give the same *line*, and the sample does not know the difference -- so
+the two orders differed by exactly 180 degrees, which is a plausible-looking
+number that converts the map upside down.
+
+`points_to_azimuth` folded its answer to (-180, 180], which is the range of
+a *direction*. A line has a 180-degree period, so the range is (-90, 90]:
+the smaller of the two turns, clockwise or anticlockwise, that stand it
+along ky. Standing a direction along +ky and along -ky are the same
+alignment of the same axis.
+
+### The tie needed more than the interval
+
+A horizontal line wants exactly a quarter turn, and a quarter turn either
+way is equally small -- a real tie. `arctan2` returns that case as 90 plus
+or minus a part in 1e14, depending on the sign of a sine that should have
+been zero, and those land on opposite ends of a half-open interval. So the
+same horizontal line could come back as +90 or -90 depending on floating
+point. Results within a tolerance of the boundary are now pulled to +90, and
+`-0.0` -- which formats as "-0.000" and reads like a real offset -- is
+normalised away.
+
+### Why it shipped
+
+There was no `test/test_kspace.py`. There is now, with 57 tests, and the
+ones that matter are properties rather than values: the answer does not
+depend on the order of the two points, on which side of the origin they sit,
+on where the pair is translated to, or on how far apart they are. The last
+one goes end to end, turning the picked direction with the rotation matrix
+the conversion actually applies and checking it lands on ky.
+
+The Brillouin-zone dialog has a similar picker. It only *reports* an angle
+rather than filling a box, and it is explicit that it measures
+counter-clockwise from kx, so it keeps doing that -- but it is the number
+someone then types into the zone azimuth, so it now shows the smallest
+upright rotation beside it, from the same function, and says which of the
+two depends on click order.
+
+## Thirty-second round: k_z, the inner potential, and how the crystal cleaved
+
+Ported from the lab's `plotKZ.m`, `kzconversionV4.m`, `kzconversion.m`,
+`Eslice_conversion.m` and `kz_plot.m`. The formulas in those are standard and
+correct; what is rebuilt here is how they are applied, and three things in
+them that are not.
+
+### The map is inverted, not projected
+
+The MATLAB walks the measured grid forwards, works out where each sample
+lands in `(k_z, k_par)`, and interpolates that scattered cloud onto a regular
+grid. On a real cube that is **199 s** measured, which is why `kzconversionV4`
+then approximates: it triangulates one energy slice, reuses the barycentric
+weights for all the others, and corrects with a rigid shift along k_z. The
+shift is right only if k_par does not move, and k_par goes as `sqrt(E_kin)`,
+so every slice but the first comes out with the wrong k_par axis.
+
+None of it is necessary, because the map inverts in closed form. Given a
+target `(k_z, k_par)` and a binding energy there is exactly one photon energy
+and one emission angle that produced it:
+
+```
+E_kin = [k_z² + k_par² cos²θp - A m* V0] / [A (m* - sin²θp)]
+hv    = E_kin + W - E
+sin α = k_par / sqrt(A E_kin)
+```
+
+So the conversion is a resampling of the original regular grid: one
+`map_coordinates` call per energy slice. **0.003 s a slice against 0.32 s,
+about 120×**, exact for every slice rather than for the first, and points the
+measurement never reached are NaN by construction instead of whatever the
+nearest triangle held. The round trip is exact to 1e-13 over 20,000 random
+parameter sets, manipulator tilt included.
+
+### Three errors in the original
+
+**k_z is missing an in-plane component.** `Eslice_conversion.m` computes the
+second in-plane momentum `kx1` that a tilted manipulator produces, comments
+that it is there "to check the deviation", and then subtracts only `kpar`
+inside the square root. At a manipulator angle of 20° that inflates k_z by
+**0.257 Å⁻¹** — a quarter of a zone for a 6 Å repeat. `kz_plot.m:94` has the
+same omission in the arc it draws.
+
+**`kzconversionV4` ignores two of its own arguments.** `theta_offset` and
+`theta_position` are in the signature and appear nowhere in the body. So the
+GUI's two buttons run different physics from the same input boxes: one
+subtracts an offset from the slit angle and knows nothing of the manipulator,
+the other applies a 3-D rotation and does. They agree exactly when
+`theta_position = 0` (the rotation reduces to `sin(α − φ)`) and diverge
+silently the moment the manipulator leaves normal.
+
+**One imaginary point abandons the whole cube.** The `isreal` check calls
+`errordlg` and `return`s with the output variable never assigned, so the
+caller gets an error rather than a result. Those points are physically
+forbidden emission directions and belong as NaN. Worth knowing when it can
+fire at all: with a free-electron final state (`m* = 1`) and `V0 > 0`, k_z is
+**never** imaginary — `A E sin²α > A(E + V0)` cannot hold for `sin² ≤ 1`. It
+takes `m* < 1` to reach that region, which is now a test.
+
+### Choosing V₀, and what the scan can actually tell you
+
+The inner potential is not measured, so the window is built around choosing
+it: a preview that reconverts one slice in milliseconds, zone boundaries
+drawn over it, and a scan of V₀ against the k_z period the data shows.
+
+The honest part is the uncertainty. Two candidate criteria were measured
+before either was implemented:
+
+* **Maximising the periodicity amplitude** — peaks at the right V₀ but its
+  half-width covers the whole 2–30 eV search range. Useless, and it was the
+  first thing I tried.
+* **Matching the measured period to 2π/d** — recovers 11.1 eV against a true
+  12.0, with `d(period)/d(V0) = −0.0062 Å⁻¹/eV`. Measuring the period to 2%
+  pins V₀ to **±3.4 eV**.
+
+That ±3.4 eV is this scan's photon-energy range talking, not the fit: across
+5–25 eV of V₀ the number of zones crossed only moves from 2.26 to 1.99. The
+dialog reports the sensitivity and the uncertainty next to the answer rather
+than presenting a single number as settled.
+
+### Which plane the crystal cleaved along
+
+A new tool: click two points that are the same feature one zone apart, and
+their k_z separation is matched against every reciprocal lattice vector
+within 15%. The matches are the candidate surface normals.
+
+Two things make that less trivial than it sounds, and both are handled by
+enumerating the **primitive** reciprocal lattice rather than the conventional
+cell. Centring: in a body-centred lattice (001) is a forbidden reflection, so
+the first one along that normal is (002) and the period is `4π/a`, not
+`2π/a` — a factor of two, and a plausible-looking one. And which zone: a user
+picking "the same feature again" may well be two zones apart, so each
+candidate is tested at one, two and three orders and says which it matched at.
+
+### Fermi-surface correction on a kz map
+
+Checked rather than assumed, since a kz map's first axis is a photon energy
+and correcting along *that* would be meaningless. It is already right: the
+correction is offered from the slit cut, whose axes are (analyser angle,
+energy), and applies the fit to the whole cube along dimension 1. The
+deflector cut correctly offers nothing.
+
+What the check did turn up is that the correction grows the energy axis and
+pads the ends with NaN — 8% of the cube in the test. The conversion has to
+leave those as holes rather than smear them, which bilinear sampling does,
+and which is now a test.
+
+The conversion reads the energy axis literally, so an edge still bending
+across the analyser angle becomes a bend in k_z that looks like dispersion —
+the artefact nobody catches afterwards. The dialog measures the bend on open
+and says so. On the real LHhv scan it is 0.27 eV, so that reminder earns its
+place. It is a reminder and not a refusal: a scan taken well away from E_F
+has no edge to flatten.
+
+### New files
+
+| | |
+|---|---|
+| `tools/kzconv.py` | `forward`, `inverse`, `to_kz_cube`, `photon_arc`, `scan_inner_potential`, `edge_flatness`. No Qt. |
+| `tools/cleavage.py` | `reciprocal_lengths`, `candidates` — a measured period to a list of planes. |
+| `ui/kzconv.py` | The window: V0, m*, work function (read from the file, editable), geometry, the preview with zone lines, the V0 scan, the two-point period tool. |
+| `test/test_kzconv.py` | 24 tests. |
+| `test/test_cleavage.py` | 19 tests. |
+
+Data kinds gained `kz_map_k` — a converted scan, `(k_z, k_par, E)` in Å⁻¹ —
+and `MOMENTUM_KINDS`, the set whose first two axes are already momentum, so
+that nothing offering an angle conversion has to name kinds one at a time.
+
 ## Thirty-first round: calibrating a kz map against its own Fermi edges
 
 The loader stacks a photon-energy scan as measured and says plainly that the

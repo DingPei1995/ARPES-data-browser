@@ -48,7 +48,7 @@ from tools.fermi import (PARAMETERS, PARAMETER_LABELS, K_B, initial_guess,
                        divide_fermi)
 from tools.dataops import (truncate, self_normalize, compress, ARRAY_AXES,
                         CONSTRUCTOR_AXES)
-from loader.nxs_file import CUBE_KINDS, energy_slot
+from loader.nxs_file import CUBE_KINDS, MOMENTUM_KINDS, energy_slot
 
 from ui.widgets import (SpatialImageView, FrameImageView, ImagePanel,
                                FrameWindow, KMapData, MemoryData, _SliceControl,
@@ -1119,7 +1119,11 @@ class KConversionDialog(QDialog):
         self.rotation_button.setToolTip(
             "Pick a direction on the contour that should end up vertical: click "
             "two points along it (or one, and the line from the origin to it is "
-            "used), and the rotation that stands it upright is filled in above.")
+            "used), and the rotation that stands it upright is filled in above.\n\n"
+            "The two points mark a line, not an arrow, so the order you click "
+            "them in and which side of the origin they sit on make no "
+            "difference. What comes back is the smaller of the two turns that "
+            "stand that line vertical, between -90 and +90 degrees.")
         self.rotation_button.setCheckable(True)
         self.rotation_button.toggled.connect(self._toggle_rotation_picking)
         form.addRow("", self.rotation_button)
@@ -1350,13 +1354,15 @@ class KConversionDialog(QDialog):
             self.rotation_note.setText(
                 f"One point: the line from the k-space origin "
                 f"({ox:.3g}, {oy:.3g}) to it is taken as the direction "
-                f"\u2192 {rotation:.3f}\u00b0. Click a second point to use the "
-                f"line between the two instead.")
+                f"\u2192 {rotation:.3f}\u00b0 (the smaller turn; the line has "
+                f"no direction). Click a second point to use the line between "
+                f"the two instead.")
         else:
             self.contour.view.show_overlay_path(xs, ys)
             self.rotation_note.setText(
-                f"Two points \u2192 {rotation:.3f}\u00b0 stands that direction "
-                f"vertical (along ky).")
+                f"Two points \u2192 {rotation:.3f}\u00b0 stands that line "
+                f"vertical (along ky). The line has no direction, so clicking "
+                f"the pair the other way round gives the same number.")
         self._update_grid_note()
 
     def _angle_box(self, tip):
@@ -2355,6 +2361,20 @@ class BrillouinZoneDialog(QDialog):
             raise ValueError("the two points coincide")
         return float(np.degrees(np.arctan2(dy, dx)))
 
+    @staticmethod
+    def _upright_of(p0, p1) -> float:
+        """The smallest turn that stands the picked line along ky.
+
+        Reported beside the raw direction because it is the number that gets
+        typed into a rotation: the raw angle depends on which point was
+        clicked first and which side of the origin they sit on, and a line
+        has neither. Same definition as the k-conversion dialog's, from the
+        same function, so the two cannot drift apart.
+        """
+        from tools.kspace import points_to_azimuth
+
+        return points_to_azimuth([p0, p1])
+
     def _add_direction_point(self, x: float, y: float):
         self._direction_points.append((x, y))
         if len(self._direction_points) > 2:
@@ -2368,6 +2388,7 @@ class BrillouinZoneDialog(QDialog):
             pair = list(self._direction_points)
         try:
             angle = self._angle_of(pair[0], pair[1])
+            upright = self._upright_of(pair[0], pair[1])
         except ValueError as exc:
             self.direction_note.setText(str(exc))
             return
@@ -2375,12 +2396,16 @@ class BrillouinZoneDialog(QDialog):
             self.contour.view.show_overlay_path([0.0, xs[0]], [0.0, ys[0]])
             self.direction_note.setText(
                 f"One point: the line from k = (0, 0) to it sits at "
-                f"{angle:.3f}° (counter-clockwise from kx). Click a "
+                f"{angle:.3f}° (counter-clockwise from kx); the smallest "
+                f"rotation standing it upright is {upright:.3f}°. Click a "
                 "second point to use the line between the two instead.")
         else:
             self.contour.view.show_overlay_path(xs, ys)
             self.direction_note.setText(
-                f"Two points: {angle:.3f}° (counter-clockwise from kx).")
+                f"Two points: {angle:.3f}° counter-clockwise from kx, which "
+                f"depends on the order you clicked them; the smallest "
+                f"rotation standing that line upright is {upright:.3f}°, "
+                f"which does not.")
 
     # -- drawing, on request only ----------------------------------------------
     def plot(self):
@@ -2669,7 +2694,8 @@ class ContourWindow(ViewerWindow):
         # a photon energy, and the in-plane formula does not apply to it.
         # (The refusal in open_k_conversion() is still there as the backstop,
         # and explains why; this just stops the button being offered.)
-        self.kconv_button.setVisible(data.kind not in ("k_map", "kz_map"))
+        self.kconv_button.setVisible(data.kind not in MOMENTUM_KINDS
+                                     and data.kind != "kz_map")
         self.bz_button = QPushButton("Brillouin zone...")
         self.bz_button.setToolTip(
             "Overlay a Brillouin zone (or a moire zone) on this contour. "
@@ -2690,8 +2716,20 @@ class ContourWindow(ViewerWindow):
             "it from the spectra themselves.")
         self.kz_button.clicked.connect(self.open_kz_processing)
         # Only a photon-energy scan needs this: it is the one kind whose
-        # members were each measured against a different reference.
+        # members were each measured against a different reference. Once
+        # converted it is a kz_map_k and both are done with.
         self.kz_button.setVisible(data.kind == "kz_map")
+
+        self.kzconv_button = QPushButton("kz -> momentum...")
+        self.kzconv_button.setToolTip(
+            "Convert this photon-energy scan to (k_z, k_par) in A^-1, "
+            "choosing the inner potential.\n\n"
+            "Flatten the Fermi surface first: the conversion reads the "
+            "energy axis literally, so a Fermi edge that bends across the "
+            "analyser angle becomes a bend in k_z that looks like "
+            "dispersion.")
+        self.kzconv_button.clicked.connect(self.open_kz_conversion)
+        self.kzconv_button.setVisible(data.kind == "kz_map")
         self.slices_button = QPushButton("Slice figure...")
         self.slices_button.setToolTip(
             "A page of slices through this cube as one figure for a paper -- "
@@ -2701,7 +2739,7 @@ class ContourWindow(ViewerWindow):
         self.build_toolbar((self.defl_cut_button, self.slit_cut_button,
                             self.arbcut_button, self.kconv_button,
                             self.bz_button, self.kz_button,
-                            self.slices_button))
+                            self.kzconv_button, self.slices_button))
         self.figure_windows = []
 
         self.e_control = _SliceControl("Energy (eV)", "eV", 0.05, self)
@@ -2759,6 +2797,29 @@ class ContourWindow(ViewerWindow):
                             self.angle_defl, self.angle_slit)
         self.panel.sync_level_range()
         self.set_colormap(self.colormap, self.flip)
+
+    def open_kz_conversion(self):
+        """Angle and photon energy to k_par and k_z, with the inner
+        potential chosen against the lattice's own periodicity.
+
+        Modeless, like the other cube tools: the preview and the two-point
+        period measurement happen inside the dialog, but the contour behind
+        it stays usable for comparison.
+        """
+        from ui.kzconv import KzConversionDialog
+
+        existing = getattr(self, "_kzconv_dialog", None)
+        if existing is not None:
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+        dialog = KzConversionDialog(self)
+        dialog.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        self._kzconv_dialog = dialog
+        dialog.finished.connect(lambda *_: setattr(self, "_kzconv_dialog", None))
+        dialog.show()
+        return dialog
 
     def open_kz_processing(self):
         """Calibrate a photon-energy scan against its own Fermi edges.

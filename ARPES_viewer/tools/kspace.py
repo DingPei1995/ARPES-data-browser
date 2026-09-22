@@ -181,13 +181,24 @@ def k_extent(theta_deg, phi_deg, energy_eV, *, theta_offset_deg: float = 0.0,
 
 
 def points_to_azimuth(points) -> float:
-    """The sample rotation that stands a picked direction upright.
+    """The smallest sample rotation that stands a picked direction upright.
 
     Give it two points on the constant-energy contour and it returns the
     rotation that makes the line through them vertical (along ky); give it
     one and the line is taken from the origin to that point, since that is
-    the only line a single point defines. The rotation is about the origin,
-    so only the direction matters, not where the pair sits.
+    the only line a single point defines.
+
+    **Two points define a line, not an arrow.** Which of them was clicked
+    first, and which side of the origin they sit on, are not things the
+    sample knows about -- so the answer must not depend on either, and the
+    result is folded to (-90, 90]. Standing a direction along +ky and along
+    -ky are the same alignment of the same axis, and they differ by exactly
+    the 180 degrees that folding removes; what is left is the smaller of the
+    two turns, clockwise or anticlockwise.
+
+    Before this was folded that far, clicking the same pair in the other
+    order gave a rotation 180 degrees away -- a perfectly plausible number,
+    and one that converts the map upside down.
 
     A high-symmetry direction picked off a Fermi surface is exactly what
     this is for: pick two points along it, and the converted map comes out
@@ -207,10 +218,28 @@ def points_to_azimuth(points) -> float:
     # 90 - angle. (Verified against a real conversion in test_kspace.)
     angle = np.degrees(np.arctan2(dy, dx))
     rotation = 90.0 - angle
-    # Fold to (-180, 180]: a rotation of 190 degrees is -170, and the smaller
-    # number is the one a user recognises.
-    rotation = (rotation + 180.0) % 360.0 - 180.0
-    return float(rotation)
+    return _fold_to_right_angle(rotation)
+
+
+def _fold_to_right_angle(rotation: float, tol: float = 1e-9) -> float:
+    """Fold a rotation into (-90, 90], the range of an undirected line.
+
+    Written the way it is so that a tie lands on +90 rather than -90: a
+    quarter turn one way and a quarter turn the other are equally small, and
+    picking the same one every time beats picking whichever the modulo
+    happened to give.
+
+    The tie needs the tolerance, not just the choice of interval. A
+    horizontal line wants exactly a quarter turn, and ``arctan2`` returns it
+    as 90 plus or minus a part in 1e14 depending on the sign of a sine that
+    should have been zero -- which lands on opposite ends of a half-open
+    interval. So a result within ``tol`` of the boundary is pulled to +90,
+    and the same picked line gives the same number every time.
+    """
+    folded = -((-float(rotation) + 90.0) % 180.0 - 90.0)
+    if abs(folded + 90.0) < tol or abs(folded - 90.0) < tol:
+        return 90.0
+    return float(folded) + 0.0      # normalise -0.0, which prints as "-0.000"
 
 
 def _resample_energy(cube: np.ndarray, energy: np.ndarray, n_energy: int):

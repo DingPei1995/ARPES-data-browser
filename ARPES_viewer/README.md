@@ -118,14 +118,19 @@ view, and each viewer exports what it itself shows.
 | `map` | (angle, angle/k, E) | a deflector or polar-angle scan |
 | `k_map` | (kx, ky, E) | a map converted to momentum |
 | `kz_map` | (hv, angle/k, E) | a photon-energy scan |
+| `kz_map_k` | (k_z, k_par, E) | that scan converted to momentum |
 | `spem_1d` | (x, k, E) | a real-space line scan |
 | `spem_4d` | (x, y, k, E) | a real-space raster scan |
 
-`map`, `k_map` and `kz_map` are the three-axis cubes (`CUBE_KINDS`): they
-share a viewer, the 3-D view and the processing panels, and differ only in
-what their first axis means. A `kz_map` is not offered a k conversion --
-turning a photon energy into k_z needs the inner potential, which is a
-property of the sample and not of the measurement.
+`map`, `k_map`, `kz_map` and `kz_map_k` are the three-axis cubes
+(`CUBE_KINDS`): they share a viewer, the 3-D view and the processing panels,
+and differ only in what their first two axes mean. `k_map` and `kz_map_k` are
+the ones already in momentum (`MOMENTUM_KINDS`), so nothing that converts
+angles is offered for them.
+
+A `kz_map` gets its own conversion rather than the in-plane one: turning a
+photon energy into k_z needs the inner potential, which is a property of the
+sample and not of the measurement.
 
 Which axes a kind has lives in **one** table, `loader/nxs_file.AXIS_SLOTS`.
 Everything else -- the save format, the memory data wrapper, the processing
@@ -152,7 +157,11 @@ axis ranges.
 
 - **k conversion** (cube and single cut) -- the free-electron formula, with
   the inputs shown and checkable. Refused, with a reason, for an axis that is
-  not an emission angle.
+  not an emission angle. **Set rotation from contour** reads the sample
+  rotation off a direction picked on the contour: two points mark a line, so
+  the order you click them in and which side of the origin they sit on make
+  no difference, and what comes back is the smaller of the two turns that
+  stand it vertical.
 - **Fermi level** -- fit the edge, offset the energy axis, or divide it out.
 - **MDC / EDC fitting** -- fit the peaks across a cut and read the band off
   them: `v_F`, `m*`, and the self-energy. Only accepts a cut whose in-plane
@@ -167,7 +176,7 @@ axis ranges.
 - **Brillouin zone** -- overlay a conventional or irreducible zone, or a
   moiré zone, on a converted contour. Space group first, then the lattice
   parameters it constrains; a 3-D preview shows how the cut plane sits.
-- **kz map processing** -- see below.
+- **kz map processing** and **kz -> momentum** -- see below.
 
 ### kz map processing
 
@@ -200,6 +209,49 @@ and filled in from their neighbours rather than dropped.
 
 The fitted levels are stored on the result as `kz.fermi_level_eV`, so the
 calibration can be checked or reused later.
+
+### kz -> momentum
+
+**kz -> momentum...** on a kz map's viewer converts it to `(k_z, k_par, E)`
+in Å⁻¹, with k_z along the first axis.
+
+The conversion is a coordinate change:
+
+```
+k_par = sqrt(A E_kin) sin(alpha)
+k_z   = sqrt(A m* (E_kin + V0) - k_par^2)      A = 0.262466 Å⁻² eV⁻¹
+```
+
+It is done by **inverting** the map rather than projecting it: for each
+target `(k_z, k_par)` there is exactly one photon energy and one emission
+angle that produced it, so the conversion is a resampling of the original
+regular grid — one `map_coordinates` call per energy slice. Exact for every
+slice, and about 120× faster than interpolating a scattered cloud (2.8 s for
+a real 41×664×602 cube). Points the measurement never reached come back as
+NaN rather than as the nearest sample smeared outwards.
+
+**Flatten the Fermi surface first.** The conversion reads the energy axis
+literally, so an edge that bends across the analyser angle becomes a bend in
+k_z that looks like dispersion. Open the slit cut, use Fermi-surface
+correction, then convert. The dialog measures the bend and says so; it is a
+reminder, not a refusal.
+
+**Choosing V₀.** The inner potential is not measured by the experiment, so
+the window is built around choosing it:
+
+- the preview reconverts one energy slice as you drag, in milliseconds;
+- the zone boundaries are drawn over it from the space group, lattice
+  constants and the surface normal;
+- **Scan V0** converts one slice at each of a range of inner potentials,
+  measures the k_z period each gives, and reports where it equals the
+  lattice's. It also reports how well that pins V₀ — for a scan covering a
+  couple of zones, only to a few eV, which is the measurement's limit rather
+  than the method's;
+- **Measure a k_z period...** lets you click two points that are the same
+  feature one zone apart. Their separation is matched against every
+  reciprocal lattice vector within 15% and the matching planes are listed —
+  which says how the crystal cleaved. Centring is handled: in a body-centred
+  lattice the period along [001] is 4π/a, not 2π/a, and the answer says so.
 
 ---
 
@@ -299,11 +351,13 @@ you what it may depend on.
 | `loader/nxs_file.py` | The SOLEIL parser, the saved format's reader and writer, `NxsScan`, the axis-slot table, and the lazy arrays that keep a measurement on disk. Start here. |
 | `loader/session.py` | Where a computed dataset lives: the folder it is written to as soon as it exists, the memory budget, and the operations log. |
 | **`tools/`** | |
-| `tools/kspace.py`, `tools/cutk.py` | Angle-to-momentum conversion, for a map and for a single cut. |
+| `tools/kspace.py`, `tools/cutk.py` | Angle-to-momentum conversion, for a map and for a single cut, and the rotation read off a picked direction. |
 | `tools/analysis.py` | Arbitrary-direction cut and Fermi-surface correction. |
 | `tools/dataops.py` | Truncate / self-normalise / compress, and the axis tables derived from `loader/nxs_file.py`. |
 | `tools/process.py`, `tools/volume.py` | Smoothing, derivatives, curvature, backgrounds, symmetrisation -- in 2-D and over a cube. |
 | `tools/kzmap.py` | Calibrating a photon-energy scan against its own Fermi edges: fit per spectrum, align, crop, normalise. |
+| `tools/kzconv.py` | The k_z conversion: the analytic forward and inverse maps, the resampling, and the inner-potential scan. |
+| `tools/cleavage.py` | From a measured k_z period to which lattice planes could have produced it. |
 | `tools/fermi.py`, `tools/peaks.py`, `tools/dispersion.py` | The Fermi-edge model, MDC/EDC peak fitting, and what the fitted band says (`v_F`, `m*`, self-energy). |
 | `tools/lattice.py`, `tools/spacegroups.py`, `tools/bz3d.py`, `tools/bz2d.py`, `tools/moire.py` | The Brillouin-zone geometry: lattices and point groups, the 3-D and 2-D zones and their irreducible wedges, and the moiré zone. |
 | `tools/figure.py`, `tools/export.py` | What a publication figure *is*, and what leaves the program. |
@@ -313,6 +367,7 @@ you what it may depend on.
 | `ui/windows.py`, `ui/widgets.py` | The per-file viewers, and the image panels they are built from. |
 | `ui/loader_dialog.py` | The Load-data window: files, reader, axis options. |
 | `ui/kzmap.py` | The kz map processing window. |
+| `ui/kzconv.py` | The kz-to-momentum window: V0, the zone lines, the period tool. |
 | `ui/jobs.py` | Running one long operation at a time off the GUI thread. |
 | `ui/figure.py`, `ui/fit.py`, `ui/process.py`, `ui/volume.py` | The figure composer, the MDC/EDC fit panel, and the 2-D and 3-D processing panels. |
 | **`devtools/`, `test/`** | |
@@ -391,5 +446,5 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 302 of them, no display needed -- `conftest.py` puts the
+from this folder. 403 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`.
