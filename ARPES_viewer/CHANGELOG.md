@@ -10,6 +10,74 @@ file is the record of how it got that way.
 
 ---
 
+## Thirty-fourth round: arithmetic between two cuts, and one name for it
+
+A window for combining two cuts -- LH − LV linear dichroism, circular
+dichroism, dividing by a reference spectrum -- reached from a **Cut
+arithmetic...** button on a cut's viewer, or from the main list's
+right-click menu with two cuts selected. Cuts only, as asked.
+
+### "Compare the two..." was already arithmetic
+
+The main list's right-click **Compare the two...** opened a dialog that
+showed the two side by side -- and also computed A − B, A / B and
+(A − B)/(A + B), and exported the result to the list. The name promised a
+look; the dialog did the arithmetic. Next to a new arithmetic window the two
+would have been two answers to one question, and sooner or later two
+different scale factors for it.
+
+So there is one engine, `tools/cutops.py`, and one window, `ui/cutops.py`.
+The right-click entry is now **Cut arithmetic on the two...** and opens the
+same window the viewer button does. What Compare did well is kept: A and B
+on a common colour scale, the result beside them, all three as a figure.
+`CompareDialog` is gone from `ui/process.py`.
+
+### Choosing B by clicking the list
+
+The viewer's cut is A. Rather than a second picker listing the same rows,
+a small prompt asks for a click in the main list, and the window opens on
+it. The list's own record is checked *before* anything is read, so a stray
+click on a sixty-spectrum map costs nothing and is refused in the prompt,
+which keeps waiting. Closing the prompt, or the viewer, ends the wait.
+
+Refusing A's own row needed the row, not the object: a cut read from a
+file is re-read on every load, so the same row hands back a different
+object each time, and an identity check let "A − A" through. Viewers now
+carry the list key they were opened from.
+
+### What the window checks
+
+- Recorded conditions side by side -- photon energy, angles, sample
+  position to 5 µm, temperature, pass energy, lens mode -- with the
+  differing ones in orange. A dichroism map between two spots is a map of
+  the two spots.
+- The polarisations against the purpose: LV − LH (swap for the usual sign),
+  the same polarisation twice, linear cuts under the circular preset. `LCP`
+  is circular, although it starts with an L; circular is tested first.
+- Axis units: degrees against Å⁻¹ is refused rather than lined up.
+- B is scaled to A by total intensity or by a region, because the two
+  polarisations leave the undulator with different flux and an unscaled LD
+  map is mostly that ratio. A reference is normalised to a mean of one, so
+  dividing by gold does not rescale the data by gold's count rate.
+
+### The uncertainty, and where it stops being right
+
+For raw counts on a common grid the Poisson σ is propagated to first order.
+Against 400-draw Monte Carlo, the difference's σ agrees exactly (0.999).
+The asymmetry's is within 5% from about 20 counts per pixel, then 12% low
+at 10 counts and 32% low at 4: the estimate is built from the noisy counts,
+and the ratio stops being Gaussian. The report says so below 20 counts, since
+that is also where the "fraction beyond 2σ" is too generous. Processed or
+interpolated cuts get no σ at all -- Poisson statistics through a smoothed
+map would understate the noise.
+
+428 tests (25 new); a headless run drives the viewer button → prompt → list
+click (map and own row refused) → window → presets, swap, export, figure,
+and the right-click route, on a real CASSIOPEE LH cut paired with a
+synthetic LV partner (the beamtime data are all LH).
+
+---
+
 ## Thirty-third round: a picked direction is a line, not an arrow
 
 **Set rotation from contour** returned an angle that depended on which of

@@ -861,6 +861,43 @@ class SpatialScanWindow(ViewerWindow):
 # --------------------------------------------------------------------------
 # Single cut
 # --------------------------------------------------------------------------
+class _PickOtherCutPrompt(QDialog):
+    """"Now click the other cut in the main list" -- and nothing else.
+
+    Non-modal on purpose: the whole point is that the user goes and clicks
+    in another window. It stays up, says what went wrong if the click was on
+    a map or on this cut itself, and closes itself once a cut is chosen.
+    Cancel (or closing it) stops the waiting.
+    """
+
+    def __init__(self, parent, name: str):
+        super().__init__(parent)
+        self.setWindowTitle("Cut arithmetic: choose B")
+        self.setModal(False)
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            f"<b>A</b> is \u201c{name}\u201d.<br><br>"
+            "Now click the other cut -- <b>B</b> -- in the main panel's list. "
+            "The arithmetic window opens as soon as you do; A and B can be "
+            "swapped there.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        self.message = QLabel("")
+        self.message.setWordWrap(True)
+        self.message.setStyleSheet("QLabel { color: #8a4b00; }")
+        layout.addWidget(self.message)
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.resize(380, 170)
+
+    def say(self, text: str):
+        self.message.setText(text)
+
+    def done_waiting(self):
+        self.accept()
+
+
 class CutWindow(ViewerWindow):
     """One E-vs-k spectrum (a scan taken at a single deflector position)."""
 
@@ -910,8 +947,15 @@ class CutWindow(ViewerWindow):
             # message box's job, and a three-paragraph tooltip is unreadable.
             self.fit_button.setToolTip(
                 f"Not available here: {reason.split(chr(10))[0]}")
+        self.arith_button = QPushButton("Cut arithmetic...")
+        self.arith_button.setToolTip(
+            "Combine this cut (A) with another (B): linear or circular "
+            "dichroism, dividing by a reference, A \u2212 B, A / B, "
+            "(A \u2212 B)/(A + B). After pressing it, click the other cut in "
+            "the main list.")
+        self.arith_button.clicked.connect(lambda: self.open_cut_arithmetic())
         self.build_toolbar((self.fermi_button, self.fs_button, self.kconv_button,
-                            self.fit_button))
+                            self.fit_button, self.arith_button))
 
         self.view = FrameImageView()
         # Titled from the axes themselves: a cut read from a file is an
@@ -1052,6 +1096,69 @@ class CutWindow(ViewerWindow):
 
     def fs_angle_label(self) -> str:
         return self.data.scan.labels.get("x", "angle")
+
+    # -- combining with another cut -----------------------------------------
+    def open_cut_arithmetic(self, other=None):
+        """This cut as A, and another as B, in the cut arithmetic window.
+
+        ``other`` is ``(name, data)`` to skip the asking (and how a test
+        drives it). Otherwise the main list is where B is chosen: a small
+        prompt says so, stays out of the way, and the window opens on the
+        next cut clicked there. The list is where the datasets are, so it
+        is where the choice belongs -- a second picker listing the same
+        rows would be the same list, worse.
+        """
+        if other is not None:
+            return self._open_arithmetic_with(*other)
+
+        existing = getattr(self, "_arith_prompt", None)
+        if existing is not None:
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+        await_selection = getattr(self, "_await_selection", None)
+        if await_selection is None:
+            QMessageBox.information(
+                self, "Cut arithmetic",
+                "This viewer was not opened from the main panel, so there is "
+                "no list to choose the other cut from. Open the cut from the "
+                "main panel's list, or select both cuts there and use "
+                "\u201cCut arithmetic on the two...\u201d.")
+            return None
+
+        prompt = _PickOtherCutPrompt(self, self.filename)
+        self._arith_prompt = prompt
+
+        def chosen(name, data):
+            prompt.done_waiting()
+            self._open_arithmetic_with(name, data)
+
+        cancel = await_selection(chosen, kind="cut", exclude=self.data,
+                                 exclude_key=getattr(self, "_list_key", None),
+                                 on_rejected=prompt.say)
+        prompt.finished.connect(lambda *_: (cancel(),
+                                            setattr(self, "_arith_prompt", None)))
+        self.closed.connect(lambda *_: prompt.close())
+        prompt.show()
+        return prompt
+
+    def _open_arithmetic_with(self, name, data):
+        from ui.cutops import CutArithmeticDialog
+
+        try:
+            dialog = CutArithmeticDialog(
+                (self.filename, self.data), (name, data), self,
+                self.colormap, self.flip,
+                region_source=self.view.selection_corners,
+                existing_names=self.existing_names)
+        except ValueError as exc:
+            QMessageBox.information(self, "Cut arithmetic", str(exc))
+            return None
+        dialog.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        dialog.show()
+        self._arith_dialog = dialog
+        return dialog
 
     def fs_correction_target(self):
         """The cut itself: (angle, energy), corrected into a new cut."""

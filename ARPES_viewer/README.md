@@ -100,7 +100,7 @@ read its metadata, **double-click** to open it in its own window.
 
 Right-click a row (or a selection) for everything that operates on data:
 open, save, rename, remove, data operations, processing, the 3-D view, the
-fit panels, export, and comparison.
+fit panels, export, and **Cut arithmetic on the two...** (see below).
 
 One window per thing you are looking at means several files -- or a contour
 and both its cuts -- can be on screen at once and arranged freely. The
@@ -168,7 +168,9 @@ axis ranges.
   axis is already in Å⁻¹, because every quantity built on the fitted band
   would otherwise carry meaningless units.
 - **Arbitrary cuts** -- any straight line through a contour.
-- **Fermi-surface correction**, **stack plots**, **comparison windows**.
+- **Fermi-surface correction**, **stack plots**.
+- **Cut arithmetic** -- linear and circular dichroism, dividing by a
+  reference, differences, ratios and sums between two cuts; see below.
 - **Processing** (2-D and over a cube) -- smoothing, derivatives, curvature,
   backgrounds, symmetrisation, despiking.
 - **Data operations** -- truncate, self-normalise, compress, on several
@@ -252,6 +254,75 @@ the window is built around choosing it:
   reciprocal lattice vector within 15% and the matching planes are listed —
   which says how the crystal cleaved. Centring is handled: in a body-centred
   lattice the period along [001] is 4π/a, not 2π/a, and the answer says so.
+
+### Cut arithmetic
+
+Two cuts combined into a third: LH − LV linear dichroism, circular
+dichroism, dividing by a reference spectrum (gold), and plain differences,
+ratios and sums. Cuts only -- a map has to be sliced first.
+
+Two ways in, the same window either way:
+
+- In a cut's viewer, press **Cut arithmetic...**. That cut is **A**. A small
+  prompt asks you to click the other cut in the main list; the window opens
+  on that click. Clicking a map, or A's own row, is refused in the prompt
+  and it keeps waiting; closing the prompt stops the wait.
+- In the main list, select two cuts, right-click, **Cut arithmetic on the
+  two...**. The first selected is A.
+
+The window shows:
+
+- **What the two measurements recorded**, side by side: polarisation,
+  photon energy, theta/tilt/phi, sample X/Y/Z, temperature, pass energy,
+  lens mode. Rows in orange differ beyond a tolerance (0.01 eV, 0.05°,
+  5 µm, 1 K). A dichroism map between two sample spots or two temperatures
+  is a map of *that* difference, so it is worth a look before trusting the
+  result. Polarisation is shown but never flagged -- it is meant to differ.
+- **Warnings** from the recorded polarisations: A = LV and B = LH under
+  the linear-dichroism preset (the sign is reversed -- **Swap A ↔ B**),
+  both the same polarisation, or linear cuts under the circular preset.
+- **Purpose** presets, each only a starting point:
+
+  | Purpose | Result | Scale B to A |
+  |---|---|---|
+  | Linear dichroism (LH − LV) | A − B | same total intensity |
+  | Circular dichroism | (A − B)/(A + B) | same total intensity |
+  | Divide by a reference | A / B, B's angular profile, mean 1 | -- |
+  | Custom | any | any |
+
+- **Scale B to A** by total intensity, or by the intensity in a region
+  (x0 y0 x1 y1, or **Take the box from A's viewer**). The two polarisations
+  leave the undulator with different flux; unscaled, an LD map is mostly
+  that ratio. A region above E_F, or a band known not to be dichroic, is
+  the better reference when the dichroism itself changes the total.
+- **Divide by** the whole reference, its angular profile (summed over
+  energy: the detector's channel sensitivity, without gold's own Fermi edge
+  and noise), or its energy profile. The reference is normalised to a mean
+  of one, so the result keeps A's scale. **Reference floor** hides the
+  ratio where the reference is below 5% of its maximum.
+- **Hide where A+B below** (2% by default) blanks the background, where an
+  asymmetry is a ratio of two noises.
+- A and B on **one** colour scale, B as it entered the arithmetic (scaled,
+  on A's grid), and the result -- signed results on a red-white-blue scale
+  symmetric about zero.
+
+B is interpolated onto A's grid when the two grids differ, and blank where
+B does not reach. Axes in different units (degrees against Å⁻¹) are
+refused rather than lined up.
+
+**Uncertainty.** When both cuts are raw counts on the same grid, the
+Poisson standard deviation is propagated -- `√(A + s²B)` for a difference,
+`2s√(AB(A+B))/(A+sB)²` for an asymmetry -- and the report gives its median
+and the fraction of pixels beyond 2σ. Checked against Monte Carlo: exact
+for the difference; for the asymmetry within 5% from about 20 counts per
+pixel, but 12% low at 10 counts and 32% low at 4, which the report says
+when it applies (bin the cuts first). There is no σ once either cut has
+been processed or interpolated, nor for a ratio.
+
+**Result to list**, **Uncertainty to list** and **All three as a figure**
+leave the window. The result is a cut named after A with `LD`, `CD`,
+`norm`, `diff`, `asym`, `ratio` or `sum`, and records A, B, the operation,
+the scale applied to B and the settings in its processing history.
 
 ---
 
@@ -357,6 +428,7 @@ you what it may depend on.
 | `tools/process.py`, `tools/volume.py` | Smoothing, derivatives, curvature, backgrounds, symmetrisation -- in 2-D and over a cube. |
 | `tools/kzmap.py` | Calibrating a photon-energy scan against its own Fermi edges: fit per spectrum, align, crop, normalise. |
 | `tools/kzconv.py` | The k_z conversion: the analytic forward and inverse maps, the resampling, and the inner-potential scan. |
+| `tools/cutops.py` | Arithmetic between two cuts: scaling, resampling, dichroism, reference division, Poisson uncertainty, and which recorded conditions differ. |
 | `tools/cleavage.py` | From a measured k_z period to which lattice planes could have produced it. |
 | `tools/fermi.py`, `tools/peaks.py`, `tools/dispersion.py` | The Fermi-edge model, MDC/EDC peak fitting, and what the fitted band says (`v_F`, `m*`, self-energy). |
 | `tools/lattice.py`, `tools/spacegroups.py`, `tools/bz3d.py`, `tools/bz2d.py`, `tools/moire.py` | The Brillouin-zone geometry: lattices and point groups, the 3-D and 2-D zones and their irreducible wedges, and the moiré zone. |
@@ -368,6 +440,7 @@ you what it may depend on.
 | `ui/loader_dialog.py` | The Load-data window: files, reader, axis options. |
 | `ui/kzmap.py` | The kz map processing window. |
 | `ui/kzconv.py` | The kz-to-momentum window: V0, the zone lines, the period tool. |
+| `ui/cutops.py` | The cut arithmetic window. |
 | `ui/jobs.py` | Running one long operation at a time off the GUI thread. |
 | `ui/figure.py`, `ui/fit.py`, `ui/process.py`, `ui/volume.py` | The figure composer, the MDC/EDC fit panel, and the 2-D and 3-D processing panels. |
 | **`devtools/`, `test/`** | |
@@ -446,5 +519,5 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 403 of them, no display needed -- `conftest.py` puts the
+from this folder. 428 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`.

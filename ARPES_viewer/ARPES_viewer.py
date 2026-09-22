@@ -433,10 +433,16 @@ def show_list_menu(position):
     view3d_action.setToolTip(
         "Orthogonal slices, the notched cube, an isosurface and the volume "
         "projections. Maps only.")
-    compare_action = menu.addAction("Compare the two...")
-    compare_action.setEnabled(len(keys) == 2)
-    compare_action.setToolTip(
-        "Side by side, with their difference or ratio on the same scale.")
+    # Was "Compare the two...", which already computed A - B, A / B and
+    # (A - B)/(A + B) and put the result in the list -- arithmetic under a
+    # name that promised a look. It is now the same window as a cut viewer's
+    # "Cut arithmetic..." button, named for what it does.
+    arithmetic_action = menu.addAction("Cut arithmetic on the two...")
+    arithmetic_action.setEnabled(len(keys) == 2)
+    arithmetic_action.setToolTip(
+        "Combine two cuts: linear or circular dichroism, dividing by a "
+        "reference, A \u2212 B, A / B, (A \u2212 B)/(A + B), A + B. The first "
+        "selected is A; the window can swap them.")
     menu.addSeparator()
     save_action = menu.addAction(
         "Save dataset..." if len(keys) <= 1 else f"Save {len(keys)} datasets...")
@@ -470,8 +476,8 @@ def show_list_menu(position):
         open_curve_fit()
     elif chosen is view3d_action:
         open_volume_view()
-    elif chosen is compare_action:
-        open_comparison()
+    elif chosen is arithmetic_action:
+        open_cut_arithmetic()
     elif chosen is save_action:
         save_selected()
     elif chosen is log_action:
@@ -938,7 +944,7 @@ def open_selected(item=None):
             f"group {current_data.scan.info.get('_group')})")
         return None
 
-    _adopt_viewer(window)
+    _adopt_viewer(window, key)
     window.closed.connect(_forget_viewer)
     viewer_windows.append(window)
     window.show()
@@ -947,7 +953,7 @@ def open_selected(item=None):
     return window
 
 
-def _adopt_viewer(window):
+def _adopt_viewer(window, key=None):
     """Hook a new viewer up to the list it came from.
 
     A viewer can compute datasets of its own -- a k-space map, an
@@ -963,6 +969,12 @@ def _adopt_viewer(window):
     # correction fits a gold reference, which is a different measurement.
     window._dataset_entries = listed_datasets
     window._dataset_loader = load_dataset
+    # So a cut viewer can say "now click the other cut in the list" -- and
+    # recognise its own row when it is clicked. The row, not the object: a
+    # cut read from a file is re-read on every load, so the same row hands
+    # back a different object each time.
+    window._await_selection = await_list_selection
+    window._list_key = key
     if hasattr(window, "kMapCreated"):
         window.kMapCreated.connect(
             lambda data: add_memory_dataset(data, getattr(data, "source_label", "k map")))
@@ -1088,7 +1100,7 @@ def open_dataset(data):
     window = viewer_windows_module.open_viewer(data, label, default_colormap, default_flip)
     if window is None:
         return None
-    _adopt_viewer(window)
+    _adopt_viewer(window, key)
     window.closed.connect(_forget_viewer)
     viewer_windows.append(window)
     window.show()
@@ -1328,30 +1340,99 @@ def open_volume_view():
     return window
 
 
-def open_comparison():
-    """Two datasets side by side, with their difference."""
-    from ui.process import CompareDialog
+def open_cut_arithmetic():
+    """Two cuts from the list, combined: dichroism, ratios, differences.
+
+    The same window a cut viewer opens from its own "Cut arithmetic..."
+    button (see :mod:`ui.cutops`); this is the route for when both cuts are
+    already picked in the list.
+    """
+    from ui.cutops import CutArithmeticDialog
 
     keys = selected_keys()[:2]
-    datasets = []
+    pair = []
     for key in keys:
+        if str(loaded_items.get(key, {}).get("kind", "")).lower() != "cut":
+            QMessageBox.information(
+                win, "Cut arithmetic",
+                f"{label_for(key)} is not a cut. Cut arithmetic works on two "
+                f"cuts; take a slice of a map first.")
+            return None
         try:
             data = load_dataset(key)
         except Exception as exc:
-            QMessageBox.warning(win, "Compare", str(exc))
+            QMessageBox.warning(win, "Cut arithmetic", str(exc))
             return None
-        if data.kind != "cut":
-            QMessageBox.information(
-                win, "Compare",
-                "Comparison works on 2-D datasets; take a slice of a map first.")
-            return None
-        datasets.append((label_for(key), data))
-    dialog = CompareDialog(datasets, win, default_colormap, default_flip)
+        pair.append((label_for(key), data))
+    try:
+        dialog = CutArithmeticDialog(pair[0], pair[1], win, default_colormap,
+                                     default_flip, existing_names=listed_names)
+    except ValueError as exc:
+        QMessageBox.information(win, "Cut arithmetic", str(exc))
+        return None
     dialog.datasetsCreated.connect(_list_computed)
     dialog.show()
     global process_dialog
     process_dialog = dialog
     return dialog
+
+
+def await_list_selection(on_chosen, *, kind: str = "cut", exclude=None,
+                         exclude_key=None, on_rejected=None):
+    """Call ``on_chosen(label, data)`` with the next dataset clicked in the
+    list that is a ``kind``.
+
+    How a viewer asks for "another" dataset without opening a picker of its
+    own: the list is where the datasets are, so that is where the choice is
+    made. Clicks on the wrong kind, or on ``exclude`` itself, are reported
+    through ``on_rejected(message)`` and the wait goes on. ``exclude`` is
+    matched by identity and ``exclude_key`` by list row; a viewer passes
+    both, since a cut read from a file is a new object on every load. The kind is
+    checked from the list's own record *before* anything is loaded, so a
+    stray click on a sixty-spectrum map costs nothing.
+
+    Returns a function that cancels the wait.
+    """
+    widget = ui.FilePathListWidget
+
+    def changed():
+        key = selected_key()
+        record = loaded_items.get(key) if key is not None else None
+        if record is None:
+            return
+        label = label_for(key)
+        if exclude_key is not None and key == exclude_key:
+            if on_rejected:
+                on_rejected("That is the cut this was opened from. Pick "
+                            "another one.")
+            return
+        if str(record.get("kind", "")).lower() != kind:
+            if on_rejected:
+                on_rejected(f"\u201c{label}\u201d is a {record.get('kind')}, "
+                            f"not a {kind}. Pick a {kind}.")
+            return
+        try:
+            data = load_dataset(key)
+        except Exception as exc:                            # noqa: BLE001
+            if on_rejected:
+                on_rejected(f"\u201c{label}\u201d could not be read: {exc}")
+            return
+        if exclude is not None and data is exclude:
+            if on_rejected:
+                on_rejected("That is the cut this was opened from. Pick "
+                            "another one.")
+            return
+        cancel()
+        on_chosen(label, data)
+
+    def cancel():
+        try:
+            widget.itemSelectionChanged.disconnect(changed)
+        except TypeError:
+            pass                    # already disconnected
+
+    widget.itemSelectionChanged.connect(changed)
+    return cancel
 
 
 def _list_computed(datasets):
