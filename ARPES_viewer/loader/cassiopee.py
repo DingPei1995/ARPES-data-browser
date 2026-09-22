@@ -126,9 +126,13 @@ def _read_lines(path: str):
 
 
 def _sections(lines):
-    """``{"[Region 1]": (start, end), ...}`` -- line ranges of each section."""
+    """``{"[Region 1]": (start, end), ...}`` -- line ranges of each section.
+
+    ``strip()`` on both ends because the older writer puts a tab after the
+    header: the line is ``"[Region 1]\\t "``, not ``"[Region 1]"``.
+    """
     starts = [(i, line.strip()) for i, line in enumerate(lines)
-              if line.startswith("[") and line.strip().endswith("]")]
+              if line.lstrip().startswith("[") and line.strip().endswith("]")]
     found = {}
     for position, (index, name) in enumerate(starts):
         end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
@@ -149,6 +153,70 @@ def _numbers(text: str) -> np.ndarray:
     return np.array(text.split(), dtype=float) if text.strip() else np.zeros(0)
 
 
+def _is_numeric_row(line: str, least: int = 2) -> bool:
+    """Is this line a row of the data block?
+
+    A row is ``energy`` followed by one count per angle channel, all
+    whitespace- or tab-separated. Everything else in these files is either a
+    ``key=value`` line, a ``[Section]`` header, or blank -- none of which
+    parse as several numbers, so "does it parse" is a sound test and does
+    not depend on knowing where the block starts.
+    """
+    parts = line.split()
+    if len(parts) < least:
+        return False
+    for part in parts:
+        try:
+            float(part)
+        except ValueError:
+            return False
+    return True
+
+
+def _data_block(lines, sections, number: str):
+    """The line range holding region ``number``'s counts.
+
+    Two writers, two layouts, and the difference is not announced anywhere
+    in the file:
+
+    * **SES 1.3.1** puts the counts in a ``[Data n]`` section of their own.
+    * **SES 1.2.5** has no such section. The counts simply follow the
+      ``[Run Mode Information n]`` block, after a stray ``inputA=`` line and
+      a blank one.
+
+    ``load_Soleil_Cassiopee_struct.m`` handles the second by counting three
+    lines on from ``[Run Mode Information`` and trusting the offset. That
+    works for the files it was written against and breaks silently on the
+    first file with one more or one fewer trailing field -- it would read
+    counts as an axis, or an axis as counts, and still produce a picture.
+    Here the block is found by what it *is*: the run of lines that parse as
+    rows of numbers. That recognises both layouts with one rule.
+    """
+    explicit = sections.get(f"[Data {number}]")
+    if explicit is not None:
+        return explicit
+
+    after = sections.get(f"[Run Mode Information {number}]")
+    if after is None:
+        after = sections.get(f"[Info {number}]") or sections.get(f"[Region {number}]")
+    if after is None:
+        return None
+
+    start = after[0]
+    while start < len(lines) and not _is_numeric_row(lines[start]):
+        # Only blank lines and key=value leftovers may be skipped; a section
+        # header means the region ended without any counts.
+        if lines[start].strip().startswith("["):
+            return None
+        start += 1
+    if start >= len(lines):
+        return None
+    end = start
+    while end < len(lines) and _is_numeric_row(lines[end]):
+        end += 1
+    return (start, end)
+
+
 def _maybe_numbers(text: str):
     """The numbers in ``text``, or ``None`` if it is not numeric.
 
@@ -162,6 +230,52 @@ def _maybe_numbers(text: str):
         return None
 
 
+def _decimals_needed(value: float, most: int = 9) -> int:
+    """The fewest decimal places that write ``value`` exactly."""
+    for decimals in range(most + 1):
+        scaled = value * (10.0 ** decimals)
+        if abs(scaled - round(scaled)) < 1e-6 * max(1.0, abs(scaled)):
+            return decimals
+    return most
+
+
+def _print_quantum(values: np.ndarray) -> float:
+    """The coarsest grid the numbers could have been *printed* on.
+
+    A value written out to a finite precision cannot be further than half a
+    printing step from where it really was, so this is how much of an axis's
+    raggedness is the file's formatting rather than the measurement.
+
+    The formatting is *significant figures*, not decimal places, which
+    matters more than it sounds. A real energy scale here crosses 100 eV,
+    and the writer -- printing five significant figures -- switches from
+    ``99.998`` to ``100.01`` as it does: three decimals below the boundary,
+    two above it. So the rounding grid gets ten times coarser part-way
+    through one axis. Counting decimals instead of significant figures takes
+    the fine half of the axis for the whole of it, and then reports the
+    coarse half as a non-linear scale -- which is exactly what a real file
+    from this beamline did.
+
+    Taking the *widest* significant-figure count in the array, rather than
+    the narrowest, is deliberate: a value that lands on a round number
+    (``100.00``) looks like it was printed to fewer figures than it was, and
+    believing that would make the allowance enormous. At least one value in
+    a real scale shows the full precision.
+    """
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite) & (finite != 0.0)]
+    if finite.size == 0:
+        return 0.0
+    figures = 0
+    for value in finite:
+        integer_digits = int(np.floor(np.log10(abs(value)))) + 1
+        figures = max(figures, _decimals_needed(float(value)) + integer_digits)
+    if figures <= 0:
+        return 0.0
+    largest = int(np.floor(np.log10(np.max(np.abs(finite)))))
+    return 10.0 ** (largest - figures + 1)
+
+
 def _regularise(axis: np.ndarray, name: str, path: str,
                 tolerance: float = 0.05) -> np.ndarray:
     """Replace an axis by the straight line through it.
@@ -169,13 +283,20 @@ def _regularise(axis: np.ndarray, name: str, path: str,
     The scales are printed to fixed precision, so the steps carry rounding
     jitter; the viewers draw an image and want an exactly even axis.
     ``load_Soleil_Cassiopee_struct.m`` does the same (``polyfit`` over the
-    point index), and on a real file the correction is around 1e-14 of a
-    step -- it is defence, not a fix.
+    point index).
 
     Unlike the original, a scale that is *genuinely* not linear is reported
-    rather than quietly straightened: past ``tolerance`` of one step the
-    difference is no longer rounding, and silently linearising it would move
-    data onto the wrong energies.
+    rather than quietly straightened -- silently linearising a curved scale
+    moves data onto the wrong energies.
+
+    What counts as "genuinely" has to allow for how the numbers were
+    printed, which is the part that is easy to get wrong. A real energy
+    scale here steps by 0.004 eV and is written to three decimals, so
+    rounding alone displaces a point by up to 0.0005 eV -- an eighth of a
+    step. A flat "5% of a step" rule calls every one of those files
+    non-linear, which is a warning on correct data, and a warning that
+    always fires is one nobody reads. The allowance is therefore the larger
+    of a fraction of a step and the printing grid itself.
     """
     if axis.size < 2:
         return axis
@@ -183,12 +304,14 @@ def _regularise(axis: np.ndarray, name: str, path: str,
     slope, intercept = np.polyfit(index, axis, 1)
     straight = index * slope + intercept
     step = abs(slope) or 1.0
-    worst = float(np.max(np.abs(axis - straight))) / step
-    if worst > tolerance:
+    worst = float(np.max(np.abs(axis - straight)))
+    allowed = max(tolerance * step, _print_quantum(axis))
+    if worst > allowed:
         warnings.warn(
             f"{os.path.basename(path)}: the {name} scale is not linear "
-            f"(off by up to {worst:.2f} of a step); it has been replaced by "
-            f"the straight line through it, which may misplace the data.")
+            f"(off by up to {worst / step:.2f} of a step); it has been "
+            f"replaced by the straight line through it, which may misplace "
+            f"the data.")
     return straight
 
 
@@ -236,10 +359,14 @@ def parse_scienta(path: str, median_filter: bool = False,
         header = _fields(lines, span)
         info_span = sections.get(f"[Info {number}]")
         info = _fields(lines, info_span) if info_span else {}
-        data_span = sections.get(f"[Data {number}]")
+        data_span = _data_block(lines, sections, number)
         if data_span is None:
             continue
 
+        # The point counts come from the scales, never from the
+        # "Dimension n size" fields. Those are unreliable: a real file from
+        # the older writer says ``Dimension 1 size=264.64`` for a scale of
+        # 629 points -- not merely wrong but not even a whole number.
         energy = _numbers(header.get("Dimension 1 scale", ""))
         angle = _numbers(header.get("Dimension 2 scale", ""))
         if regularise:
@@ -378,11 +505,16 @@ def read_parameter_file(path: str) -> dict:
                 out[name] = float(numbers[0])
             elif numbers.size:
                 out[name] = numbers
-        elif lowered.startswith("polarisation"):
+        elif lowered.startswith("polarisation") and value:
+            # Written either as the code its own label documents
+            # (``Polarisation [0:LV, 1:LH, ...] : 1``) or, by the newer
+            # station software, as the word itself (``Polarisation : LH``).
             numbers = _maybe_numbers(value)
             if numbers is not None and numbers.size:
                 out["polarisation"] = POLARISATIONS.get(int(numbers[-1]),
                                                         str(int(numbers[-1])))
+            else:
+                out["polarisation"] = value
     return out
 
 
@@ -457,6 +589,42 @@ def series_members(path: str):
     return sorted(found)
 
 
+#: What the browser calls a folder, by what was stepped across it.
+KIND_FOR_SERIES = {"theta": "Map", "hv": "kz map", "index": "Map"}
+
+SERIES_TITLES = {
+    "theta": "{n} spectra, polar angle stepped",
+    "hv": "{n} spectra, photon energy stepped",
+    "index": "{n} spectra, nothing stepped",
+}
+
+
+def series_kind(path: str) -> str:
+    """What the folder ``path`` belongs to is: ``"theta"``, ``"hv"`` or
+    ``"index"`` -- without reading a single spectrum.
+
+    The browser has to label a folder before anyone opens it, and at that
+    moment reading the spectra is out of the question: they are a megabyte
+    each and there are sixty of them. It does not have to. Which quantity
+    was stepped is recorded in the ``_i`` parameter files, which are a few
+    hundred bytes, so the whole folder can be characterised for about the
+    cost of one spectrum.
+
+    Falls back to ``"index"`` if the parameter files are missing, which is
+    also what an unstepped folder is -- both mean "nothing here says this is
+    more than a pile of spectra".
+    """
+    members = series_members(path)
+    if len(members) < 2:
+        return "index"
+    thetas, photon_energies = [], []
+    for _index, member in members:
+        parameters = read_parameter_file(parameter_path(member))
+        thetas.append(parameters.get("sample_theta_deg"))
+        photon_energies.append(parameters.get("photon_energy_eV"))
+    return _stepped_axis(thetas, photon_energies, len(members))[3]
+
+
 def _member_scan(path: str, median_filter: bool):
     """One member of a series: its region, plus the parameters beside it."""
     regions = parse_scienta(path, median_filter=median_filter)
@@ -465,6 +633,32 @@ def _member_scan(path: str, median_filter: bool):
     region = regions[0]
     parameters = read_parameter_file(parameter_path(path))
     return region, parameters
+
+
+def _even_steps(values: np.ndarray) -> np.ndarray:
+    """The evenly stepped axis the series was *meant* to be measured on.
+
+    A scan steps one motor by a fixed amount, so the axis is even by
+    intention. What the parameter files record is where the motor actually
+    stopped, which carries the mechanism's own error: a real 61-point polar
+    scan here asks for 0.5 deg a step and reads back 0.504, 0.504, 0.495,
+    0.504 ... That jitter is the instrument, not the sample.
+
+    It is straightened rather than kept, for two reasons. The viewers draw a
+    cube as an image, which places rows at even intervals whatever the axis
+    says -- so an uneven axis is not honoured, it is merely mislabelled. And
+    a k conversion differentiating along a jittering angle turns a 0.01 deg
+    readback error into a visible ripple.
+
+    The readbacks are kept in ``info`` (``cassiopee.axis0_measured``), so
+    nothing is thrown away and the spread can be checked.
+    """
+    values = np.asarray(values, dtype=float)
+    if values.size < 2:
+        return values
+    index = np.arange(values.size, dtype=float)
+    slope, intercept = np.polyfit(index, values, 1)
+    return index * slope + intercept
 
 
 def _stepped_axis(thetas, photon_energies, count):
@@ -481,16 +675,17 @@ def _stepped_axis(thetas, photon_energies, count):
         return len(finite) == len(values) and len(set(np.round(finite, 6))) > 1
 
     if varies(thetas):
-        return (np.asarray(thetas, dtype=float), "angle",
+        return (_even_steps(thetas), "angle",
                 "Polar angle theta (deg)", "theta")
     if varies(photon_energies):
-        return (np.asarray(photon_energies, dtype=float), "photon_energy",
+        return (_even_steps(photon_energies), "photon_energy",
                 "Photon energy (eV)", "hv")
     return (np.arange(1, count + 1, dtype=float), "other", "Index (cut)",
             "index")
 
 
-def load_series(path: str, median_filter: bool = False, progress=None) -> NxsScan:
+def load_series(path: str, median_filter: bool = False, progress=None,
+                energy_reference: str = "common") -> NxsScan:
     """Assemble the numbered series ``path`` belongs to into one map.
 
     The result is an ordinary ``map``: first axis whatever was stepped,
@@ -507,7 +702,7 @@ def load_series(path: str, median_filter: bool = False, progress=None) -> NxsSca
             f"{os.path.basename(path)} is not part of a numbered "
             f"<base>_<n>_ROI<n>_ series")
 
-    frames, thetas, photon_energies, first = [], [], [], None
+    frames, energies, thetas, photon_energies, first = [], [], [], [], None
     for position, (index, member) in enumerate(members):
         if progress is not None:
             progress(position, len(members), os.path.basename(member))
@@ -520,53 +715,258 @@ def load_series(path: str, median_filter: bool = False, progress=None) -> NxsSca
                 f"the first spectrum of the series is "
                 f"{first[0].values.shape}; they cannot be one map")
         frames.append(region.values)
+        energies.append(region.energy)
         thetas.append(parameters.get("sample_theta_deg"))
         photon_energies.append(parameters.get(
             "photon_energy_eV", region.info.get("photon_energy_eV")))
 
     region, parameters = first
-    stepped, role, label, kind = _stepped_axis(thetas, photon_energies,
-                                               len(members))
+    stepped, role, label, series = _stepped_axis(thetas, photon_energies,
+                                                 len(members))
     cube = np.stack(frames, axis=0)              # (step, angle, energy)
-
-    scan = NxsScan(kind="map", filename_prefix="")
-    scan.x, scan.k = stepped, region.angle
-    scan.value = cube
     energy_label = region.energy_label
+    notes = {}
 
-    if kind == "hv":
-        # A photon-energy scan is only comparable across its members once the
-        # energy axis is referred to the Fermi level: each spectrum was taken
-        # at a different hv, so the same kinetic energy is a different state.
-        # E - E_F = E_kin - hv + phi, as the MATLAB loader does.
-        reference_hv = float(photon_energies[0])
-        phi = work_function(reference_hv)
-        scan.z = region.energy - reference_hv + phi
-        energy_label = "E - E_F (eV)"
-        scan.info["cassiopee.work_function_eV"] = phi
-        scan.info["cassiopee.reference_photon_energy_eV"] = reference_hv
+    if series == "hv":
+        cube, energy_axis, energy_label, notes = _refer_to_fermi_level(
+            cube, energies, photon_energies, energy_reference)
+        kind = "kz_map"
     else:
-        scan.z = region.energy
-        if kind == "theta":
+        energy_axis = region.energy
+        kind = "map"
+        if series == "theta":
             reference_hv = photon_energies[0]
             if reference_hv is not None and np.isfinite(reference_hv):
-                scan.info["cassiopee.work_function_eV"] = \
+                notes["cassiopee.work_function_eV"] = \
                     work_function(float(reference_hv))
 
+    scan = NxsScan(kind=kind, filename_prefix="")
+    scan.x, scan.k, scan.z = stepped, region.angle, energy_axis
+    scan.value = cube
     scan.labels = {"x": label, "k": region.angle_label, "z": energy_label}
     scan.info.update(region.info)
     scan.info.update({f"cassiopee.{key}": value
                       for key, value in parameters.items()})
+    scan.info.update(notes)
     scan.info["axis0.role"] = role
-    scan.info["cassiopee.series"] = kind
+    scan.info["cassiopee.series"] = series
     scan.info["cassiopee.members"] = len(members)
-    if kind == "theta":
+
+    # What the motors actually read back, beside the even axis that replaced
+    # them (see _even_steps). Keeping both means the straightening can be
+    # checked, and undone, by whoever needs to.
+    measured = thetas if series == "theta" else (
+        photon_energies if series == "hv" else None)
+    if measured is not None and all(
+            value is not None and np.isfinite(value) for value in measured):
+        measured = np.asarray(measured, dtype=float)
+        scan.info["cassiopee.axis0_measured"] = measured
+        wobble = float(np.max(np.abs(measured - stepped)))
+        scan.info["cassiopee.axis0_readback_spread"] = f"{wobble:.4g}"
+
+    if series == "theta":
         scan.info["cassiopee.theta_range_deg"] = \
             f"{stepped.min():g} to {stepped.max():g}"
-    elif kind == "hv":
+    elif series == "hv":
         scan.info["cassiopee.photon_energy_range_eV"] = \
             f"{stepped.min():g} to {stepped.max():g}"
     return scan
+
+
+#: How a photon-energy scan's members are put on one energy axis. A cube
+#: has one energy axis and the members were each measured at a different
+#: photon energy, so this choice has to be made and there is no option that
+#: is right without an assumption.
+#:
+#: ``"common"``      **the default.** Assume every member covers the same
+#:                   binding-energy window, and take the first member's
+#:                   referred axis for all of them. Nothing is interpolated
+#:                   and nothing is trimmed. This is what the MATLAB loader
+#:                   does, and it is right whenever the operator set each
+#:                   spectrum's window from the Fermi level they measured --
+#:                   which is how an hv scan is normally taken, since the
+#:                   point is to have E_F in frame at every photon energy.
+#: ``"per_member"``  Refer each member by its own hv and phi(hv), then
+#:                   resample onto the range they all share. Trusts the
+#:                   nominal photon energies and the work-function table to
+#:                   place E_F. Correct when they are; when they are not, it
+#:                   trims the cube by however wrong they are -- and the part
+#:                   it trims off the top is E_F.
+#: ``"kinetic"``     No referencing at all: the first member's kinetic-energy
+#:                   axis, for calibrating by hand afterwards.
+#:
+#: Whichever is chosen, the two are compared and the disagreement reported,
+#: because that disagreement is the measurement telling you its photon-energy
+#: calibration needs a Fermi edge fitted per hv.
+ENERGY_REFERENCES = ("common", "per_member", "kinetic")
+
+
+def _refer_to_fermi_level(cube, energies, photon_energies,
+                          reference="common"):
+    """Put every member of a photon-energy scan on one binding-energy axis.
+
+    Each spectrum of an hv scan is taken at a different photon energy, so
+    the same *kinetic* energy is a different state in each one. Only
+    ``E - E_F = E_kin - hv + phi(hv)`` is comparable across the set, and a
+    cube needs one energy axis, so the members have to be brought onto a
+    common one.
+
+    ``load_Soleil_Cassiopee_folder_struct.m`` does this by taking the
+    **first** member's axis, shifting it by the **first** member's photon
+    energy, and using that for the whole cube. That is only correct if every
+    member was measured over the same kinetic-energy window. On the real
+    scans from this beamline they are not: across a 40-120 eV scan the
+    window drifts by about 1 eV -- 250 energy channels -- because the
+    operator sets it from each photon energy in turn. Using member one's
+    axis for member forty puts its data a whole electronvolt from where it
+    belongs, and nothing about the picture says so.
+
+    So each member is referred by its own hv, and then resampled onto the
+    common axis. The resampling is linear and along energy only. The axis
+    spans the *overlap* of the members rather than their union: outside it
+    some members have no data at all, and a cube half full of holes is
+    worse than a slightly shorter one.
+
+    What this cannot fix is that ``phi(hv)`` comes from a calibration table,
+    not from these measurements. If the members still do not line up after
+    referring them, the scan needs a Fermi edge fitted per photon energy --
+    which is a real step, not a detail, so the residual is measured here and
+    reported rather than left to be discovered in the picture.
+    """
+    if reference not in ENERGY_REFERENCES:
+        raise ValueError(
+            f"energy_reference must be one of {ENERGY_REFERENCES}, "
+            f"not {reference!r}")
+    if reference == "kinetic":
+        return (cube, np.asarray(energies[0], dtype=float),
+                "Kinetic energy (eV)",
+                {"cassiopee.energy_reference":
+                     "kinetic energy, first member's axis (not referred to "
+                     "the Fermi level)"})
+
+    hv = np.asarray(photon_energies, dtype=float)
+    if not np.all(np.isfinite(hv)):
+        # Nothing to refer them by. Fall back to the raw kinetic axis of the
+        # first member and say so, rather than inventing a Fermi level.
+        warnings.warn(
+            "this photon-energy scan has members with no photon energy "
+            "recorded; the energy axis is left as kinetic energy.")
+        return (cube, np.asarray(energies[0], dtype=float),
+                "Kinetic energy (eV)",
+                {"cassiopee.energy_reference": "kinetic (hv unknown)"})
+
+    with warnings.catch_warnings():
+        # One warning for the scan, not one per member, if the table is
+        # being extrapolated.
+        warnings.simplefilter("ignore", UserWarning)
+        phi = np.array([work_function(value) for value in hv])
+    outside = (hv < ANALYSER_WORK_FUNCTION["photon_energy_eV"][0]) | \
+              (hv > ANALYSER_WORK_FUNCTION["photon_energy_eV"][-1])
+    if outside.any():
+        warnings.warn(
+            f"{int(outside.sum())} of {hv.size} photon energies "
+            f"({hv[outside].min():g}-{hv[outside].max():g} eV) are outside "
+            f"the calibrated "
+            f"{ANALYSER_WORK_FUNCTION['photon_energy_eV'][0]:g}-"
+            f"{ANALYSER_WORK_FUNCTION['photon_energy_eV'][-1]:g} eV "
+            f"work-function table; their binding energies are extrapolated.")
+
+    binding = [np.asarray(e, dtype=float) - h + p
+               for e, h, p in zip(energies, hv, phi)]
+    spread = float(max(float(b[0]) for b in binding)
+                   - min(float(b[0]) for b in binding))
+    step = float(np.median(np.abs(np.diff(binding[0])))) if binding[0].size > 1 \
+        else 0.0
+
+    if reference == "common":
+        # Stack them as they are, on the first member's axis. Nothing is
+        # interpolated, nothing is trimmed, and every count stays where the
+        # file put it -- which is what makes this the honest default for a
+        # cube that is going to be calibrated properly later.
+        #
+        # It is an assumption, and worth naming: that each member's window
+        # was set from the Fermi level measured at that photon energy, so
+        # they already share a binding-energy scale. That is how an hv scan
+        # is normally taken. Where it does not hold, the fix is a Fermi edge
+        # fitted per photon energy -- a real step with its own tool, not
+        # something to guess at during a load. The numbers that step needs
+        # are recorded below rather than warned about, since a warning on
+        # every load of every hv scan is noise.
+        return cube, binding[0], "E - E_F (eV)", {
+            "cassiopee.energy_reference":
+                "E - E_F, first member's axis for all (members stacked as "
+                "measured; calibrate with a Fermi edge per photon energy)",
+            "cassiopee.work_function_eV": float(phi[0]),
+            "cassiopee.member_window_spread_eV": float(spread),
+            # Enough to rebuild every member's own kinetic-energy axis
+            # exactly -- they share a step and a length -- so a later
+            # calibration can place each one for itself without re-reading
+            # sixty megabytes of text.
+            "cassiopee.member_photon_energy_eV": hv,
+            "cassiopee.member_work_function_eV": phi,
+            "cassiopee.member_kinetic_start_eV": np.array(
+                [float(e[0]) for e in energies]),
+            "cassiopee.member_kinetic_step_eV": float(step),
+        }
+
+    low = max(float(b[0]) for b in binding)
+    high = min(float(b[-1]) for b in binding)
+    if not (high > low):
+        raise ValueError(
+            "the members of this photon-energy scan have no binding-energy "
+            "range in common once referred to the Fermi level, so they "
+            "cannot be one cube. Check that the photon energies in the "
+            "parameter files are right, or load it with "
+            "energy_reference='common'.")
+
+    points = max(int(b.size) for b in binding)
+    axis = np.linspace(low, high, points)
+
+    out = np.empty((cube.shape[0], cube.shape[1], points), dtype=float)
+    for index, b in enumerate(binding):
+        if np.array_equal(b, axis):
+            out[index] = cube[index]
+            continue
+        # np.interp needs an increasing sample axis; a scale written
+        # high-to-low is legal and does happen.
+        order = slice(None) if b[0] <= b[-1] else slice(None, None, -1)
+        source = b[order]
+        for channel in range(cube.shape[1]):
+            out[index, channel] = np.interp(axis, source,
+                                            cube[index, channel][order])
+
+    widest = (min(float(b[0]) for b in binding),
+              max(float(b[-1]) for b in binding))
+    trimmed = (low - widest[0]) + (widest[1] - high)
+    notes = {
+        "cassiopee.energy_reference": "E - E_F, per member (hv and phi(hv))",
+        "cassiopee.work_function_eV": f"{phi.min():.4f} to {phi.max():.4f}",
+        "cassiopee.binding_energy_range_eV": f"{low:.4f} to {high:.4f}",
+        "cassiopee.member_window_spread_eV": f"{spread:.4f}",
+        "cassiopee.energy_trimmed_eV": f"{trimmed:.4f}",
+    }
+    if step and spread > 5 * step:
+        # The members should land on top of each other once referred. That
+        # they do not means the nominal photon energies and the tabulated
+        # work function together do not describe this scan -- and since the
+        # common range is cut down by exactly that disagreement, the trim is
+        # being driven by the calibration error rather than by the data.
+        # Worth saying plainly, because the part trimmed off the top is the
+        # Fermi level, which is usually the whole point of the measurement.
+        notes["cassiopee.alignment_warning"] = (
+            "members disagree by more than a few energy steps; fit a Fermi "
+            "edge per photon energy to calibrate")
+        warnings.warn(
+            f"after referring each member to E_F by its own photon energy, "
+            f"their energy windows still differ by {spread:.3f} eV "
+            f"({spread / step:.0f} energy steps), and keeping only the range "
+            f"they all share cost {trimmed:.3f} eV. The nominal photon "
+            f"energies and the tabulated work function do not describe this "
+            f"scan between them. Fit a Fermi edge per photon energy to "
+            f"calibrate it, or load it with energy_reference='common' to "
+            f"keep the full window on the assumption that every member "
+            f"covers the same binding energies.")
+    return out, axis, "E - E_F (eV)", notes
 
 
 def load_cut(path: str, region_index: int = 0,
@@ -631,17 +1031,39 @@ class CassiopeeLoader(Loader):
         return SCIENTA_MARKER.encode("latin-1") in head
 
     def list_entries(self, path: str) -> list:
-        """One entry per region, plus the whole series if this file is in one.
+        """The whole folder first, then this one spectrum.
 
-        Offering both is the point: the same file is a spectrum in its own
-        right and a slice of a map, and which one is wanted depends on what
-        is being looked at.
+        A numbered folder here is *one measurement* -- the map is the point
+        and the individual spectra are its rows -- so the assembled series is
+        offered first and is what opening the folder gives you. The single
+        spectrum stays available below it, because checking one cut of a map
+        is a normal thing to want.
+
+        The series entry carries a ``path`` of its own: the folder's first
+        member, whichever member was actually clicked. That is what makes
+        selecting five files out of a folder add *one* map rather than five
+        copies of it -- the entry identifies the measurement, not the file
+        that happened to be picked.
         """
         entries = []
+        members = series_members(path)
+        if len(members) > 1:
+            base = SERIES_PATTERN.match(
+                os.path.splitext(os.path.basename(path))[0]).group("base")
+            stepped = series_kind(path)
+            entries.append({
+                "entry": "series",
+                "path": members[0][1],
+                "kind": KIND_FOR_SERIES.get(stepped, "Map"),
+                "name": f"{base} ({len(members)} cuts)",
+                "title": SERIES_TITLES.get(stepped, "").format(n=len(members)),
+                "start_time": None,
+            })
+
         try:
             regions = parse_scienta(path)
         except Exception:
-            return []
+            return entries
         for index, region in enumerate(regions):
             entries.append({
                 "entry": f"region {index + 1}" if len(regions) > 1 else "cut",
@@ -650,21 +1072,10 @@ class CassiopeeLoader(Loader):
                 "title": region.name,
                 "start_time": region.info.get("date"),
             })
-
-        members = series_members(path)
-        if len(members) > 1:
-            base = SERIES_PATTERN.match(
-                os.path.splitext(os.path.basename(path))[0]).group("base")
-            entries.append({
-                "entry": "series",
-                "kind": "Map",
-                "name": f"{base} ({len(members)} cuts)",
-                "title": f"{len(members)} spectra assembled",
-                "start_time": None,
-            })
         return entries
 
-    def __init__(self, median_filter: bool = False):
+    def __init__(self, median_filter: bool = False,
+                 energy_reference: str = "common"):
         #: Off, for the reason in the module docstring: filtering raw counts
         #: invisibly at load time is a processing step nobody downstream can
         #: see. The Process panel's despiking is the same operation, visible
@@ -672,11 +1083,15 @@ class CassiopeeLoader(Loader):
         #: :func:`load_cut` or :func:`load_series` with ``median_filter=True``,
         #: or register an instance of this class made with it on.
         self.median_filter = bool(median_filter)
+        #: How a photon-energy scan's members are put on one energy axis;
+        #: see :data:`ENERGY_REFERENCES`.
+        self.energy_reference = energy_reference
 
     def load(self, path: str, entry: str = None, progress=None):
         if entry == "series":
             return load_series(path, median_filter=self.median_filter,
-                               progress=progress)
+                               progress=progress,
+                               energy_reference=self.energy_reference)
         index = 0
         if entry and entry.startswith("region "):
             index = int(entry.split()[1]) - 1

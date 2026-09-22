@@ -87,13 +87,24 @@ def write_parameters(path, theta=0.0, photon_energy=150.0, phi=18.0,
 
 
 def make_series(folder, base="Map80eV_Phi18", count=4, thetas=None,
-                photon_energies=None, shape=(5, 4), roi=1):
-    """A numbered folder series, plus its parameter files."""
+                photon_energies=None, shape=(5, 4), roi=1, track_hv=False):
+    """A numbered folder series, plus its parameter files.
+
+    ``track_hv`` moves each member's kinetic-energy window along with its
+    photon energy, which is what a real hv scan looks like: the operator
+    sets the window around the Fermi level at each photon energy, so a
+    120 eV member is measured 80 eV higher than a 40 eV one. Without it
+    every member shares one window, which is fine for testing the stacking
+    but is not a scan any beamline would record.
+    """
     angle = np.linspace(-15.0, 15.0, shape[0])
-    energy = np.linspace(115.6, 116.0, shape[1])
+    base_energy = np.linspace(115.6, 116.0, shape[1])
     paths = []
     for index in range(1, count + 1):
         values = np.full(shape, float(index))
+        energy = base_energy
+        if track_hv and photon_energies:
+            energy = base_energy - photon_energies[0] + photon_energies[index - 1]
         spectrum = os.path.join(folder, f"{base}_{index}_ROI{roi}_.txt")
         write_spectrum(spectrum, energy, angle, values,
                        excitation_energy=(photon_energies[index - 1]
@@ -389,6 +400,72 @@ def test_an_hv_scan_is_referred_to_the_fermi_level(tmp_path):
     assert np.allclose(scan.z, expected)
     assert scan.labels["z"] == "E - E_F (eV)"
     assert scan.info["cassiopee.work_function_eV"] == pytest.approx(phi)
+
+
+def test_an_hv_scan_is_stacked_as_measured(tmp_path):
+    """The members go in untouched, on the first one's axis: no resampling
+    and no trimming. Whether their windows really line up is a calibration
+    question, answered later with a Fermi edge per photon energy, and not
+    something to guess at while reading files."""
+    paths = make_series(str(tmp_path), count=3,
+                        photon_energies=[80.0, 90.0, 100.0])
+    scan = cassiopee.load_series(paths[0])
+    assert scan.value.shape == (3, 5, 4)
+    # Each member was written as a constant equal to its index; if anything
+    # had been interpolated along energy these would no longer be exact.
+    for index in range(3):
+        assert np.all(scan.value[index] == float(index + 1))
+
+
+def test_members_whose_windows_cannot_overlap_are_refused_not_guessed(tmp_path):
+    """With per-member referencing, three spectra measured over the same
+    kinetic window at 80, 90 and 100 eV sit 20 eV apart in binding energy
+    and share no range at all. Stacking them anyway would make a cube out
+    of three unrelated measurements."""
+    paths = make_series(str(tmp_path), count=3,
+                        photon_energies=[80.0, 90.0, 100.0])
+    with pytest.raises(ValueError, match="no binding-energy range in common"):
+        cassiopee.load_series(paths[0], energy_reference="per_member")
+
+
+def test_an_hv_scan_records_what_a_calibration_will_need(tmp_path):
+    """A later Fermi-edge calibration has to place each member for itself.
+    Keeping the per-member photon energy, work function and energy-axis
+    start means it can, without re-reading sixty megabytes of text."""
+    paths = make_series(str(tmp_path), count=3,
+                        photon_energies=[80.0, 90.0, 100.0])
+    info = cassiopee.load_series(paths[0]).info
+    assert np.allclose(info["cassiopee.member_photon_energy_eV"],
+                       [80.0, 90.0, 100.0])
+    assert len(info["cassiopee.member_work_function_eV"]) == 3
+    assert np.allclose(info["cassiopee.member_kinetic_start_eV"], 115.6)
+    assert info["cassiopee.member_kinetic_step_eV"] > 0
+
+
+@pytest.mark.parametrize("mode", cassiopee.ENERGY_REFERENCES)
+def test_every_energy_reference_gives_a_usable_cube(tmp_path, mode):
+    paths = make_series(str(tmp_path), count=3,
+                        photon_energies=[80.0, 90.0, 100.0], track_hv=True)
+    scan = cassiopee.load_series(paths[0], energy_reference=mode)
+    assert scan.kind == "kz_map"
+    assert scan.value.ndim == 3
+    assert scan.z.size == scan.value.shape[2]
+    assert np.all(np.isfinite(scan.value))
+
+
+def test_the_kinetic_reference_does_not_shift_the_axis(tmp_path):
+    paths = make_series(str(tmp_path), count=3,
+                        photon_energies=[80.0, 90.0, 100.0])
+    scan = cassiopee.load_series(paths[0], energy_reference="kinetic")
+    assert np.allclose(scan.z, np.linspace(115.6, 116.0, 4))
+    assert scan.labels["z"] == "Kinetic energy (eV)"
+
+
+def test_an_unknown_energy_reference_is_refused(tmp_path):
+    paths = make_series(str(tmp_path), count=3,
+                        photon_energies=[80.0, 90.0, 100.0])
+    with pytest.raises(ValueError, match="energy_reference must be one of"):
+        cassiopee.load_series(paths[0], energy_reference="fermi-ish")
 
 
 def test_a_series_that_stepped_neither_is_indexed(tmp_path):

@@ -48,6 +48,7 @@ from tools.fermi import (PARAMETERS, PARAMETER_LABELS, K_B, initial_guess,
                        divide_fermi)
 from tools.dataops import (truncate, self_normalize, compress, ARRAY_AXES,
                         CONSTRUCTOR_AXES)
+from loader.nxs_file import CUBE_KINDS, energy_slot
 
 from ui.widgets import (SpatialImageView, FrameImageView, ImagePanel,
                                FrameWindow, KMapData, MemoryData, _SliceControl,
@@ -359,8 +360,7 @@ class ViewerWindow(QMainWindow):
         data = self.data
         scan = data.scan
         axes_names = CONSTRUCTOR_AXES.get(data.kind)
-        energy_name = {"cut": "y", "map": "z", "k_map": "z",
-                       "spem_4d": "z", "spem_1d": "z"}.get(data.kind)
+        energy_name = energy_slot(data.kind)
         if axes_names is None or energy_name is None:
             QMessageBox.warning(self, "Offset energy axis",
                                  f"{data.kind} has no energy axis to shift.")
@@ -402,8 +402,7 @@ class ViewerWindow(QMainWindow):
         data = self.data
         scan = data.scan
         axes_names = CONSTRUCTOR_AXES.get(data.kind)
-        energy_name = {"cut": "y", "map": "z", "k_map": "z",
-                       "spem_4d": "z", "spem_1d": "z"}.get(data.kind)
+        energy_name = energy_slot(data.kind)
         if axes_names is None or energy_name is None:
             return None
         values = scan.value4d if data.kind == "spem_4d" else scan.value
@@ -2666,7 +2665,11 @@ class ContourWindow(ViewerWindow):
         self.kconv_button.clicked.connect(self.open_k_conversion)
         self.arbcut_button.clicked.connect(self.open_arbitrary_cut)
         # Already in momentum space: converting again would be meaningless.
-        self.kconv_button.setVisible(data.kind != "k_map")
+        # A kz map is hidden too, for a different reason -- its first axis is
+        # a photon energy, and the in-plane formula does not apply to it.
+        # (The refusal in open_k_conversion() is still there as the backstop,
+        # and explains why; this just stops the button being offered.)
+        self.kconv_button.setVisible(data.kind not in ("k_map", "kz_map"))
         self.bz_button = QPushButton("Brillouin zone...")
         self.bz_button.setToolTip(
             "Overlay a Brillouin zone (or a moire zone) on this contour. "
@@ -2677,6 +2680,18 @@ class ContourWindow(ViewerWindow):
         # so it only means something once the axes are actually k, not angle
         # -- the mirror image of kconv_button's own gating above.
         self.bz_button.setVisible(data.kind == "k_map")
+        self.kz_button = QPushButton("kz map processing...")
+        self.kz_button.setToolTip(
+            "Fit the Fermi edge of every spectrum in this photon-energy "
+            "scan, shift each one to put its own edge at zero, and crop to "
+            "the energy range they all still cover.\n\n"
+            "The scan arrives stacked as measured, because nothing in the "
+            "files says where each spectrum's Fermi level is. This measures "
+            "it from the spectra themselves.")
+        self.kz_button.clicked.connect(self.open_kz_processing)
+        # Only a photon-energy scan needs this: it is the one kind whose
+        # members were each measured against a different reference.
+        self.kz_button.setVisible(data.kind == "kz_map")
         self.slices_button = QPushButton("Slice figure...")
         self.slices_button.setToolTip(
             "A page of slices through this cube as one figure for a paper -- "
@@ -2685,7 +2700,8 @@ class ContourWindow(ViewerWindow):
         self.slices_button.clicked.connect(self.open_slice_figure)
         self.build_toolbar((self.defl_cut_button, self.slit_cut_button,
                             self.arbcut_button, self.kconv_button,
-                            self.bz_button, self.slices_button))
+                            self.bz_button, self.kz_button,
+                            self.slices_button))
         self.figure_windows = []
 
         self.e_control = _SliceControl("Energy (eV)", "eV", 0.05, self)
@@ -2743,6 +2759,28 @@ class ContourWindow(ViewerWindow):
                             self.angle_defl, self.angle_slit)
         self.panel.sync_level_range()
         self.set_colormap(self.colormap, self.flip)
+
+    def open_kz_processing(self):
+        """Calibrate a photon-energy scan against its own Fermi edges.
+
+        Modeless, and for a reason that is not the usual one: the box it
+        works from is dragged on the *slit cut* window, which this opens
+        alongside. A modal dialog would make that impossible.
+        """
+        from ui.kzmap import KzMapProcessDialog
+
+        existing = getattr(self, "_kz_dialog", None)
+        if existing is not None:
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+        dialog = KzMapProcessDialog(self)
+        dialog.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        self._kz_dialog = dialog
+        dialog.finished.connect(lambda *_: setattr(self, "_kz_dialog", None))
+        dialog.show()
+        return dialog
 
     def open_cut(self, which: str):
         window = self.cut_windows.get(which)
@@ -3645,7 +3683,7 @@ def reference_frame(data):
         return (np.asarray(scan.x, dtype=float), np.asarray(scan.y, dtype=float),
                 np.asarray(scan.value, dtype=float),
                 scan.labels.get("x", "angle"), scan.labels.get("y", "E"))
-    if data.kind in ("map", "k_map"):
+    if data.kind in CUBE_KINDS:
         cube = np.asarray(scan.value, dtype=float)
         return (np.asarray(scan.k, dtype=float), np.asarray(scan.z, dtype=float),
                 np.nansum(cube, axis=0),
@@ -5007,7 +5045,7 @@ def open_viewer(data, filename: str, colormap: str, flip: bool):
         return SpatialScanWindow(data, filename, colormap, flip)
     if data.kind == "cut":
         return CutWindow(data, filename, colormap, flip)
-    if data.kind in ("map", "k_map"):
+    if data.kind in CUBE_KINDS:
         # A converted k-map is displayed exactly like the map it came from --
         # same contour, same two cuts -- with the axes labelled in A^-1.
         return ContourWindow(data, filename, colormap, flip)

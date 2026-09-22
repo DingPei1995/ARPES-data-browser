@@ -54,7 +54,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
 
 from tools import colormaps
 from tools import export
-from loader.nxs_file import load_soleil_nxs, to_kspace_cube, NxsScan, save_dataset
+from loader.nxs_file import (load_soleil_nxs, to_kspace_cube, NxsScan,
+                             save_dataset, CUBE_KINDS)
 
 pg.setConfigOption("background", (245, 241, 249))
 pg.setConfigOption("foreground", (102, 126, 161))
@@ -766,7 +767,7 @@ class NxsData:
         file and read back arrives here too -- same shape, same viewer, axes
         that are momenta and labelled as such. Returns (x, y, E, cube).
         """
-        assert self.kind in ("map", "k_map"), self.kind
+        assert self.kind in CUBE_KINDS, self.kind
         return self.scan.x, self.scan.k, self.scan.z, self.scan.value
 
     def kcube(self, kinetic_energy_eV=None):
@@ -822,7 +823,7 @@ class _MemScan:
             # value mirrors it so the generic paths (saving, the data
             # operations) need no special case.
             self.value4d = value
-        elif kind in ("map", "k_map"):
+        elif kind in CUBE_KINDS:
             # A map's second axis is the analyser's, which the viewers reach
             # as either .k or .y depending on which of them is asking.
             self.y = self.k
@@ -905,7 +906,7 @@ class MemoryData:
         a k-map, whose axes are momenta: renaming it would mean forking the
         viewer for no gain, and the axis *labels* say A^-1, which is what
         the user reads."""
-        assert self.kind in ("map", "k_map"), self.kind
+        assert self.kind in CUBE_KINDS, self.kind
         return self.scan.x, self.scan.k, self.scan.z, self.scan.value
 
     def close(self):

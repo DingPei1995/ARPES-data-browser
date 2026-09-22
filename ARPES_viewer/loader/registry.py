@@ -243,9 +243,11 @@ def apply_options(scan, options: LoadOptions):
     written a better label than a generic one. Anything that said nothing is
     an angle, which is what every file read before roles existed was.
     """
+    from loader.nxs_file import CUBE_KINDS
+
     if options.permutation:
         scan = permute_axes(scan, options.permutation)
-    if scan.kind not in ("map", "k_map"):
+    if scan.kind not in CUBE_KINDS:
         return scan
 
     chosen = options.axis0_role

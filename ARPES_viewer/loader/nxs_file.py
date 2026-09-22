@@ -582,9 +582,35 @@ AXIS_SLOTS = {
     "cut": {"array": ("x", "y"), "constructor": ("x", "y")},
     "map": {"array": ("x", "k", "z"), "constructor": ("x", "k", "z")},
     "k_map": {"array": ("x", "k", "z"), "constructor": ("x", "k", "z")},
+    "kz_map": {"array": ("x", "k", "z"), "constructor": ("x", "k", "z")},
     "spem_1d": {"array": ("x", "y", "z"), "constructor": ("x", "y", "z")},
     "spem_4d": {"array": ("y", "x", "k", "z"),
                 "constructor": ("x", "y", "k", "z")},
+}
+
+#: The kinds that are a three-axis cube of (scanned axis, analyser angle or
+#: momentum, energy). They share a viewer, a 3-D view and a processing
+#: panel, and differ only in what their first axis *means* -- which is
+#: exactly the distinction the program is otherwise careless about, so it is
+#: worth having the set written down once:
+#:
+#: ``map``     deflector or polar angle, and so convertible to momentum
+#: ``k_map``   already converted: in-plane momentum
+#: ``kz_map``  photon energy, i.e. an out-of-plane (k_z) scan. Not
+#:             convertible by the in-plane formula -- turning a photon
+#:             energy into k_z needs the inner potential, which is a
+#:             property of the sample and not of the measurement.
+CUBE_KINDS = ("map", "k_map", "kz_map")
+
+#: What each kind is called in the file browser's "kind" column. A kind with
+#: no entry shows its internal name, which is better than showing nothing.
+KIND_LABELS = {
+    "cut": "Cut",
+    "map": "Map",
+    "k_map": "k-map",
+    "kz_map": "kz map",
+    "spem_4d": "SPEM",
+    "spem_1d": "SPEM",
 }
 
 
@@ -593,6 +619,21 @@ def axis_slots(kind: str, order: str = "array") -> tuple:
     axes-and-array form (``unsupported``). ``order`` is "array" or
     "constructor" -- see :data:`AXIS_SLOTS`."""
     return AXIS_SLOTS.get(kind, {}).get(order, ())
+
+
+def energy_slot(kind: str):
+    """Which axis of ``kind`` is the energy, or ``None`` if it has none.
+
+    Derived rather than tabulated. Energy is the last axis a dataset is
+    constructed with, for every kind there is: a cut is (angle, energy), a
+    cube is (scanned, angle, energy), a 4-D scan is (x, y, angle, energy).
+    Two panels each carried their own hand-written ``{"cut": "y", "map":
+    "z", ...}`` copy of that, which is two more places to forget when a kind
+    is added -- and both would have silently refused to shift the energy
+    axis of a ``kz_map`` with "has no energy axis to shift".
+    """
+    slots = axis_slots(kind, "constructor")
+    return slots[-1] if slots else None
 
 
 @dataclass
@@ -1122,8 +1163,7 @@ def _entry_kind(f: h5py.File, g: str) -> Optional[str]:
         kind = _decode(f[g].attrs.get(NATIVE_ATTR, ""))
         if isinstance(kind, np.ndarray):
             kind = str(kind.reshape(-1)[0])
-        return {"map": "Map", "cut": "Cut", "spem_4d": "SPEM",
-                "spem_1d": "SPEM"}.get(str(kind), str(kind) or None)
+        return KIND_LABELS.get(str(kind), str(kind) or None)
     if case == 2:
         return "SPEM"
     if case in (3, 4):

@@ -337,7 +337,8 @@ def test_a_four_dimensional_spatial_scan_keeps_all_four_axes(store):
 
 
 @pytest.mark.parametrize("kind,n_axes", [
-    ("cut", 2), ("map", 3), ("k_map", 3), ("spem_1d", 3), ("spem_4d", 4),
+    ("cut", 2), ("map", 3), ("k_map", 3), ("kz_map", 3),
+    ("spem_1d", 3), ("spem_4d", 4),
 ])
 def test_every_kind_has_one_axis_slot_per_dimension(kind, n_axes):
     from loader.nxs_file import axis_slots
@@ -345,6 +346,35 @@ def test_every_kind_has_one_axis_slot_per_dimension(kind, n_axes):
     assert len(axis_slots(kind, "constructor")) == n_axes
     # the two orders are permutations of each other, never different sets
     assert set(axis_slots(kind, "array")) == set(axis_slots(kind, "constructor"))
+
+
+def test_every_kind_has_an_energy_axis():
+    """``energy_slot`` is derived from the axis table rather than written
+    out, so a kind added to the table gets one for free -- which is the
+    point, since the two panels that used to carry their own copy would
+    otherwise refuse to shift a new kind's energy axis."""
+    from loader.nxs_file import AXIS_SLOTS, energy_slot
+    for kind in AXIS_SLOTS:
+        assert energy_slot(kind) is not None, kind
+    assert energy_slot("cut") == "y"          # a cut is (angle, energy)
+    assert energy_slot("kz_map") == "z"
+    assert energy_slot("unsupported") is None
+
+
+def test_the_cube_kinds_are_exactly_the_three_axis_cubes():
+    """CUBE_KINDS is what the viewers, the 3-D view and the processing
+    panels branch on. It has to stay in step with the axis table, or a kind
+    gets a window and no processing, or the reverse."""
+    from loader.nxs_file import AXIS_SLOTS, CUBE_KINDS
+    for kind in CUBE_KINDS:
+        assert AXIS_SLOTS[kind]["array"] == ("x", "k", "z"), kind
+    assert set(CUBE_KINDS) == {"map", "k_map", "kz_map"}
+
+
+def test_every_kind_has_a_name_a_person_can_read():
+    from loader.nxs_file import AXIS_SLOTS, KIND_LABELS
+    for kind in AXIS_SLOTS:
+        assert KIND_LABELS.get(kind), kind
 
 
 def test_the_derived_tables_match_the_authority():

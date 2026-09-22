@@ -44,7 +44,7 @@ from tools import system
 from ui import notify
 import numpy as np
 
-from loader.nxs_file import list_datasets, save_dataset
+from loader.nxs_file import list_datasets, save_dataset, CUBE_KINDS
 from tools.dataops import axis_summary, same_format, ARRAY_AXES
 from ui.widgets import NxsData, MemoryData, DEFAULT_COLORMAP
 # Imported under short names, not as `import ui.jobs`: the launcher's own
@@ -85,6 +85,17 @@ session = nxs_session.SessionStore()
 #: itself, gigabytes of it, and writing a copy after every operation would
 #: cost more than it protects. Everything smaller is written.
 NO_AUTOSAVE_KINDS = ("spem_4d", "spem_1d")
+
+#: What a kind is called in the list and in the Data Information panel.
+#: The internal names are terse on purpose; these are what a person reads.
+KIND_LABELS = {
+    "cut": "Cut",
+    "map": "Map",
+    "k_map": "k-map",
+    "kz_map": "kz map",
+    "spem_4d": "SPEM",
+    "spem_1d": "SPEM",
+}
 
 
 # --------------------------------------------------------------------------
@@ -186,16 +197,24 @@ def _add_scanned(scanned, options=None):
 
         multiple = len(datasets) > 1
         for info in datasets:
-            key = (os.path.abspath(path), info["entry"])
+            # An entry may name the file it should really be read from. A
+            # CASSIOPEE folder uses this: every member of a numbered series
+            # offers the same assembled map, and each names the folder's
+            # first member as its path. So the key is the same whether one
+            # file was selected or all sixty, and the folder is listed once
+            # instead of sixty times over.
+            source = info.get("path") or path
+            key = (os.path.abspath(source), info["entry"])
             if key in loaded_items:
                 continue
             # A loader may know what the dataset is actually called -- the
             # native one does, because the name was saved with it. Only fall
             # back to the filename when nothing better is offered.
             row_name = info.get("name") or name
-            loaded_items[key] = {"path": path, "memory": None,
+            loaded_items[key] = {"memory": None,
                                  "backing": None, "exported": True,
-                                 "options": options, **info, "name": row_name}
+                                 "options": options, **info,
+                                 "path": source, "name": row_name}
 
             # Only name the entry when the file holds more than one, so
             # ordinary single-measurement files stay uncluttered.
@@ -274,9 +293,8 @@ def add_memory_dataset(data, label: str):
     """
     # Show the same word a file's row shows for that kind, so a computed map
     # and a measured one read alike in the list.
-    kind = {"map": "Map", "cut": "Cut", "spem_4d": "SPEM",
-            "spem_1d": "SPEM"}.get(getattr(data, "kind", ""),
-                                   getattr(data, "kind", "unknown"))
+    kind = KIND_LABELS.get(getattr(data, "kind", ""),
+                           getattr(data, "kind", "unknown"))
     label = unique_name(label)
     key = ("<converted>", f"{label}#{len(loaded_items)}")
     backing = autosave(data, label)
@@ -792,6 +810,7 @@ DATA_INFO_AXES = {
     "cut": (("x", "angle"), ("y", "energy")),
     "map": (("x", "angle/k"), ("k", "angle/k"), ("z", "energy")),
     "k_map": (("x", "k"), ("k", "k"), ("z", "energy")),
+    "kz_map": (("x", "photon energy"), ("k", "angle/k"), ("z", "energy")),
     "spem_4d": (("x", "spatial"), ("y", "spatial"), ("k", "angle"), ("z", "energy")),
     "spem_1d": (("x", "spatial"), ("k", "angle"), ("z", "energy")),
 }
@@ -1164,7 +1183,7 @@ def open_processing():
             traceback.print_exc()
             problems.append(f"{label_for(key)}: could not be read ({exc})")
             continue
-        if data.kind not in ("cut", "map", "k_map"):
+        if data.kind not in ("cut",) + CUBE_KINDS:
             problems.append(f"{label_for(key)}: {data.kind} is not a cut or a map")
             continue
         datasets.append((label_for(key), data))
@@ -1272,7 +1291,7 @@ def open_volume_view():
     except Exception as exc:
         QMessageBox.warning(win, "3D view", str(exc))
         return None
-    if data.kind not in ("map", "k_map"):
+    if data.kind not in CUBE_KINDS:
         QMessageBox.information(
             win, "3D view",
             "The 3-D views need a cube: a Map or a converted k-map.")
