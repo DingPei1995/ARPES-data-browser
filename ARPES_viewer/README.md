@@ -176,7 +176,10 @@ panels, which axis is the energy -- derives from it.
 - **A cut** opens as the E-vs-k spectrum, with EDC/MDC curves and a
   draggable slice.
 - **A cube** opens on its constant-energy contour. Two buttons open the
-  orthogonal cuts, each in a further window.
+  orthogonal cuts, each in a further window. They belong to the map:
+  closing the map closes them too (and any dialog a viewer opened closes
+  with that viewer). Snapshots popped out of a viewer are copies and stay
+  open.
 - **A spatial scan** opens the real-space map together with the E-vs-k
   spectrum at the cursor.
 - **A curve** (EDC, MDC, spin EDC) opens in the **curve viewer** -- see
@@ -221,6 +224,8 @@ axis ranges.
   parameters it constrains; a 3-D preview shows how the cut plane sits.
 - **kz map processing** and **kz -> momentum** -- see below.
 - **The curve viewer**, its **curve fit** and **spin analysis** -- see below.
+- **De-grid** -- remove the detector's grid (MCP pattern or mesh) from a map
+  or a cut; see below.
 
 ### kz map processing
 
@@ -376,6 +381,59 @@ wrong.
   and P is recovered unbiased with a planted ε = 0.05.
 - **P to list** (P and σ P), **I↑ / I↓ to list** (both, with σ), and
   **As a figure**.
+
+### De-grid
+
+Removes the periodic pattern the detector prints on every image -- the
+hexagonal MCP structure (ANTARES, the CASSIOPEE MBS end station; ~5 px) or
+the square mesh (CASSIOPEE Scienta; ~11 px, 10 % contrast). **Do it first**:
+only data still on the detector's pixels can be de-gridded, so the button
+refuses anything k-converted, Fermi-surface corrected, kz-aligned,
+interpolated along a path, smoothed or differentiated, and says why.
+
+**A map or kz map** -- **De-grid map...** on the contour window or on its
+slit-cut window; the whole map is done at once. No reference measurement is
+needed: the map is its own reference. The grid stays on the same pixels in
+every slice while the photoemission moves, so it survives an average over
+the slices that the photoemission does not. From that average:
+
+1. what depends on energy only is divided out (the Fermi edge and flat
+   bands sit at the same kinetic energy in every slice and are not grid);
+2. only the grid's own peaks in k-space are kept -- found automatically,
+   shown in red, typically 1.5 % of k-space -- so nothing else in the image
+   can be touched;
+3. every slice gets its own grid contrast and sub-pixel shift, fitted to it,
+   refined locally over 5 × 5 tiles; the grid is re-estimated with the
+   slices shifted back into register; each slice is divided by it.
+
+Measured on held-out slices (grid from the other half of the map), the
+grid's power over that of the same k-space regions without a grid:
+
+| map | before | after |
+|---|---|---|
+| ANTARES WSe2 (MBS, hexagonal) | 60 | 1.4 |
+| CASSIOPEE Map80eV (Scienta θ map, 28 counts/px) | 9.7 | 1.01 |
+| CASSIOPEE LHhv (Scienta hν map) | 448 | 1.5 |
+
+1 is no grid left. The per-slice contrast matters most on a kz map, where it
+falls as the count rate rises (their correlation was −0.99 on LHhv). A
+113-slice ANTARES map takes about a minute, with a progress bar.
+
+**A cut** -- **De-grid...** on the cut viewer. Best is a grid from a map
+taken with the same lens mode and pass energy: tick **Also list the grid
+pattern** when de-gridding the map and a `[grid]` dataset goes to the list;
+the cut's window finds it (same detector frame) and chooses it when the
+settings match. With no such grid, the cut's own high-frequency grid peaks
+are notched out of I / smooth(I): the grid goes completely, and so does the
+photoemission in the same k-space regions -- the window says so when the
+power left drops below 1. A grid from other settings is offered but not
+chosen (pass energy 20 → 50 eV: 88 % of the grid's power removed).
+
+The window shows the slice before and after on one colour scale (and as
+−∂²I/∂E², where any grid is obvious), the grid found, its k-space regions,
+the contrast and shift of every slice, and the numbers above. **Advanced**
+holds the parameters; the defaults are the tested best and are what the
+button uses.
 
 ### Cut arithmetic
 
@@ -553,6 +611,7 @@ you what it may depend on.
 | `tools/kzconv.py` | The k_z conversion: the analytic forward and inverse maps, the resampling, and the inner-potential scan. |
 | `tools/curves.py` | One-dimensional data as tables: channel names, the σ convention, and the σ-aware crop / bin / normalise / background operations. |
 | `tools/spin.py` | Spin channels from their labels, the cross ratio, the instrumental asymmetry, polarisation and spin-resolved spectra with counting errors. |
+| `tools/degrid.py` | Removing the detector grid: the map's own grid estimate, the per-slice contrast / shift / local fit, the single-cut paths, and the pixel-lock check. |
 | `tools/cutops.py` | Arithmetic between two cuts: scaling, resampling, dichroism, reference division, Poisson uncertainty, and which recorded conditions differ. |
 | `tools/cleavage.py` | From a measured k_z period to which lattice planes could have produced it. |
 | `tools/fermi.py`, `tools/peaks.py`, `tools/dispersion.py` | The Fermi-edge model, MDC/EDC peak fitting, and what the fitted band says (`v_F`, `m*`, self-energy). |
@@ -566,6 +625,7 @@ you what it may depend on.
 | `ui/kzmap.py` | The kz map processing window. |
 | `ui/kzconv.py` | The kz-to-momentum window: V0, the zone lines, the period tool. |
 | `ui/cutops.py` | The cut arithmetic window. |
+| `ui/degrid.py` | The De-grid window. |
 | `ui/curves.py` | The curve viewer, its curve fit panel and the spin analysis panel. |
 | `ui/jobs.py` | Running one long operation at a time off the GUI thread. |
 | `ui/figure.py`, `ui/fit.py`, `ui/process.py`, `ui/volume.py` | The figure composer, the MDC/EDC fit panel, and the 2-D and 3-D processing panels. |
@@ -645,5 +705,5 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 455 of them, no display needed -- `conftest.py` puts the
+from this folder. 476 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`.

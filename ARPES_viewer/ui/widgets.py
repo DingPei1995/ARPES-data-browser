@@ -68,6 +68,26 @@ pg.setConfigOption("antialias", True)
 # windows in.
 pg.setConfigOptions(imageAxisOrder="row-major")
 
+
+def _register_view_without_name(self, name=None):
+    """Stand-in for ``pg.ViewBox.register``: every view is still listed, but
+    none is registered under a name.
+
+    pyqtgraph names a view so that other views can link axes to it from the
+    context menu, a feature this program never offers. The name costs a
+    ``destroyed`` callback that, when the view goes, walks *every* other
+    view to update its link menu. Every image viewer here is an
+    ``ImageView`` and gets the same name, so two viewers closed and then
+    reclaimed together -- a map and its slit cut, or any two windows freed
+    in one garbage collection -- run that walk over views already half torn
+    down, and the interpreter crashes (a segmentation fault, no traceback).
+    """
+    pg.ViewBox.AllViews[self] = None
+    self.name = None
+
+
+pg.ViewBox.register = _register_view_without_name
+
 RED_PEN = pg.mkPen("#bd4921", width=3)
 EDC_COLOR = "#bd4921"   # the EDC curve and the vertical line that feeds it
 MDC_COLOR = "#0d7377"   # the MDC curve and the horizontal line that feeds it
@@ -612,13 +632,42 @@ class NxsData:
         """
         key = (os.path.abspath(nxs_path), entry, _options_key(options))
         existing = cls._open_files.get(key)
-        if existing is not None:
+        if existing is not None and existing.alive():
             existing._refs += 1
             return existing
+        if existing is not None:
+            # Its file handle died under it. Handing it out again is the
+            # "identifier is not of specified type" crash on the first read;
+            # drop it and open the file afresh instead.
+            cls._open_files.pop(key, None)
+            existing._key = None
         data = cls(nxs_path, entry, options=options, progress=progress)
         data._key = key
         cls._open_files[key] = data
         return data
+
+    def retain(self):
+        """Take one more reference (released by :meth:`close`) and return
+        self. For a holder that did not get this object from
+        :meth:`acquire` -- the memory budget handing out what it caches --
+        so that every holder owns exactly one reference and closes exactly
+        once."""
+        self._refs += 1
+        return self
+
+    def alive(self) -> bool:
+        """Whether this dataset can still be read: an in-memory one always
+        can; a lazy one only while its HDF5 dataset is open."""
+        for value in (getattr(self.scan, "value", None),
+                      getattr(self.scan, "value4d", None)):
+            dset = getattr(value, "_dset", None)
+            if dset is not None:
+                try:
+                    if not dset.id.valid:
+                        return False
+                except Exception:                           # noqa: BLE001
+                    return False
+        return self._refs > 0
 
     def close(self):
         """Release one reference; the file closes when the last one goes."""
@@ -911,6 +960,13 @@ class MemoryData:
 
     def close(self):
         pass
+
+    def retain(self):
+        """Nothing to count for an in-memory dataset; see NxsData.retain."""
+        return self
+
+    def alive(self) -> bool:
+        return True
 
 
 def KMapData(kx, ky, energy, cube, *, source_label: str, parameters: dict,

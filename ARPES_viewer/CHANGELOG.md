@@ -10,6 +10,154 @@ file is the record of how it got that way.
 
 ---
 
+## Thirty-seventh round: two crashes on closing windows
+
+### "identifier is not of specified type" after closing a viewer
+
+Reported: open a viewer, close it quickly, open another one -- the program
+hangs, then fails in `refresh_contour` with h5py's
+`OSError: Can't synchronously read data (identifier is not of specified type)`,
+i.e. a read from a dataset whose file had been closed. Three ways a file
+could be closed under somebody still reading it, all fixed:
+
+- **The memory budget did not count its own reference.** A dataset re-read
+  from its auto-saved copy (anything computed, and every row recovered from
+  an earlier session) was handed to the list *and* the budget as one
+  reference, and later budget hits were handed out without taking one. The
+  first viewer to close released the only reference and closed the file;
+  the budget went on handing out the dead object, and the next viewer failed
+  on its first read. The budget now takes a reference in `put`, gives it
+  back on eviction, replacement or discard, never hands out a dataset whose
+  file is gone, and `load_dataset` gives every caller one of its own.
+- **Short looks at a file opened a second handle on it.** Choosing the
+  reader (`can_open`), listing entries and probing the kind opened the file
+  with `h5py.File` and closed it again -- on every load. HDF5 keeps one
+  handle per file per process, and on some builds (the Windows one among
+  them) closing the second invalidates datasets read through the first.
+  All of these now borrow the shared handle (`HANDLES.borrow`), which never
+  closes a file somebody else holds. A release for a handle the registry has
+  since replaced no longer counts against the new one, `NxsData.acquire`
+  replaces a cached dataset whose file died instead of handing it out, and
+  saving over a file that is open in a viewer is refused with a message
+  (it would otherwise be truncated under the viewer).
+- **A window closed twice released twice.** Qt delivers a close event again
+  to a window that is already closed; the second release took a reference
+  that belonged to another window on the same file. Viewers (and the curve
+  viewer, which did not release at all) now give their reference back once.
+
+Tools opened from the main panel that kept their own reference for good --
+stack plot, MDC/EDC fit, 3-D view, Process, cut arithmetic -- now give it
+back when they close, so a file is really closed once nothing uses it (and
+can then be saved over).
+
+### A segmentation fault after closing a map whose slit cut was open
+
+Suspected in the report and confirmed: open a map, open its slit cut, close
+the map, carry on -- the interpreter dies at the next garbage collection,
+with no traceback. Every image viewer is a pyqtgraph `ImageView`, which
+registers its plot under a name ("FrameImageView") so other plots can link
+axes to it from a menu; every viewer gets the *same* name, and the
+unregistering callback walks all other plots while the collector is tearing
+the closed windows down. The program never offers that linking menu, so
+views are no longer registered under a name at all.
+
+Two related changes, so that no window is ever left reachable only through
+a closed one:
+
+- **Closing a map now closes its slit and deflector cut windows** (they
+  follow the map's cursor and use its De-grid; they were views into a
+  window that no longer existed), and any dialog a viewer opened -- De-grid,
+  k conversion, arbitrary cut, fits -- closes with it.
+- Snapshots popped out of a viewer stay open after it closes, held by a
+  registry of their own rather than by the closed window.
+
+Tests: `test/test_lifetimes.py` (budget references, borrowed handles, stale
+releases, the self-healing acquire, the save guard, closing twice, a map
+closing its cuts and dialogs, snapshots outliving their viewer, and the
+map + slit crash run in a child interpreter).
+
+---
+
+## Thirty-sixth round: De-grid
+
+The detector's grid -- the hexagonal MCP pattern on ANTARES and the MBS end
+station, the square mesh on the CASSIOPEE Scienta -- removed from a cut or
+from a whole map (angle maps and kz maps), with no reference measurement.
+
+### Why not the FFT filter it was modelled on
+
+The lab's `fftFilter_demo2.m` notches the grid's Fourier peaks using a
+separate grid image and a reference image. Tested before anything was
+written:
+
+- its keep-mask is "reference strong OR grid weak", and at the thresholds
+  in the file (10⁻³ of the zero-frequency amplitude) any real ARPES image
+  is "strong" everywhere, so it kept **100 %** of k-space and removed
+  nothing;
+- it works on the linear intensity, while the grid multiplies it;
+- a notch removes the photoemission in the same k-space regions as well --
+  on the ANTARES cut about 15 % of the grid's own amplitude -- and part of
+  the grid (periods of 17–22 px) sits among the band structure's own
+  frequencies.
+
+### What was measured, and what that decided
+
+On the uploaded ANTARES WSe2 map (113 slices), and on the CASSIOPEE Map80eV
+and LHhv maps:
+
+- the grid is multiplicative and **locked to the pixels**: grids estimated
+  from the odd and the even slices correlate at 0.97, 0.997 and 1.000;
+- so **a map is its own reference**: averaging `Σ I / Σ smooth(I)` over the
+  slices keeps the grid and loses the photoemission, which moves;
+- but not everything in that average is grid: the Fermi edge and flat bands
+  sit at the same kinetic energy in every slice. They are divided out as
+  "what depends on energy only", and only the grid's k-space peaks are kept;
+- the grid is **not rigid**: per slice its contrast varies (by 0.98–1.08 on
+  ANTARES; on the kz map it falls with the count rate, correlation −0.99)
+  and it moves by tenths of a pixel -- rigidly on ANTARES, where one
+  displacement fits all three fundamental phases to 2°. Both are fitted per
+  slice, then refined over 5 × 5 tiles.
+
+On held-out slices (the grid from the other half), grid-to-background power
+in the grid regions: ANTARES 60 → 1.4, Map80eV 9.7 → 1.01 (the counting-noise
+floor), LHhv 448 → 1.5. The local tiles did most of the last factor of two;
+a second registration pass gained nothing, and the default is one.
+
+The grid's wavevectors were the same on Map80eV (pass energy 20) and LHhv
+(pass energy 50), but its image was not quite: the Map80eV grid removes
+88 % of the LHhv grid's power, against 99.9 % for LHhv's own. So a single
+cut uses a `[grid]` from a map with the **same** settings when there is
+one, and the notch otherwise.
+
+### Details worth knowing
+
+- **Pixel lock is checked from the provenance**, not only the kind: k
+  conversion, FS correction, kz map processing, arbitrary cuts, cut
+  arithmetic, smoothing or derivatives, a "per_member" CASSIOPEE stack, or a
+  previous de-grid all refuse with the reason. Truncation is fine.
+- **Tiles scale with the image**: a tile must be ~100 px or more, or its
+  fit measures the noise. Found on a 150 × 190 test image, where 5 × 5 tiles
+  pushed the grid regions below the noise floor.
+- **Slow "peaks" are not fundamentals.** A 33 px peak from photoemission
+  that had not averaged out (24 slices) was taken as the strongest grid peak
+  and dragged the shift fit. Grid regions now start at 25 px periods and the
+  shift is fitted from peaks of 20 px or less; the real grids are 5 and
+  11 px, and the real-data results did not change.
+- A stored `[grid]` is band-limited, so its regions are read off its own
+  spectrum rather than searched for again (the search saw peaks everywhere
+  against a background of zero).
+- A map is read into memory once for the three passes: from a compressed
+  file, re-reading every slice each pass took 95 s on the ANTARES map
+  against 55 s.
+
+476 tests (21 new, on synthetic maps with a known grid, contrast and
+shifts, a moving band structure and a Fermi edge that does not move). A
+headless run drives the buttons on the ANTARES map, its slit-cut window, the
+To_degrid cut (which finds and chooses the map's `[grid]`), the Scienta θ
+map on the worker thread and the kz map.
+
+---
+
 ## Thirty-fifth round: the spin end station, and one-dimensional data
 
 CASSIOPEE's spin-resolved end station writes MBS A-1 files, which nothing

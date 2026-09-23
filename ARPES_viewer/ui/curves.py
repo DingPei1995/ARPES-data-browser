@@ -541,8 +541,19 @@ class CurveWindow(QMainWindow):
         return window
 
     def closeEvent(self, event):
+        # Everything is copied into memory at construction, so the file
+        # reference the launcher handed over goes back now -- once, however
+        # many close events arrive (see ViewerWindow.closeEvent).
+        if getattr(self, "_released", False):
+            super().closeEvent(event)
+            return
+        self._released = True
         for dialog in list(self._dialogs):
             dialog.close()
+        try:
+            self.data.close()
+        except Exception:
+            pass
         self.closed.emit(self)
         super().closeEvent(event)
 

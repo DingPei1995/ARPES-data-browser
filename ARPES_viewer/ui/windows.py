@@ -57,6 +57,45 @@ from ui.widgets import (SpatialImageView, FrameImageView, ImagePanel,
                                COLORMAP_NAMES)
 
 
+#: Windows that must stay open after the window that made them has closed:
+#: a popped-out snapshot, or a viewer opened for a computed dataset with no
+#: launcher to hold it. Without this their only reference would be a list on
+#: the closed window, and when Python's cycle collector reclaimed that
+#: window it would take a still-visible window with it -- which pyqtgraph
+#: does not survive (its named ViewBoxes unregister from a ``destroyed``
+#: callback that runs mid-collection and crashes the interpreter).
+_DETACHED = []
+
+
+def keep_alive(window):
+    """Hold ``window`` until it is closed; see :data:`_DETACHED`."""
+    if window in _DETACHED:
+        return window
+    _DETACHED.append(window)
+    signal = getattr(window, "closed", None)
+    if signal is not None:
+        signal.connect(lambda *_: _DETACHED.remove(window)
+                       if window in _DETACHED else None)
+    return window
+
+
+def close_child_windows(owner):
+    """Close every window Qt parents to ``owner`` that is still on screen.
+
+    A dialog or panel opened from a viewer belongs to it: it acts on the
+    viewer's data and draws on its plots. Left open after the viewer
+    closes, it would be a window whose owner is garbage -- see
+    :data:`_DETACHED` for why that ends in a crash, not just in a stale
+    window.
+    """
+    for child in owner.findChildren(QWidget):
+        try:
+            if child.isWindow() and child.isVisible():
+                child.close()
+        except RuntimeError:          # deleted by an earlier close
+            pass
+
+
 class ViewerWindow(QMainWindow):
     """Shared scaffolding for every viewer: title, colormap propagation,
     export of whatever this window currently shows, and deregistration on
@@ -663,11 +702,28 @@ class ViewerWindow(QMainWindow):
         self.resize(int(min(max(width, min_w), max_w)), int(height))
 
     def closeEvent(self, event):
-        # Each window owns its own NxsData (and therefore its own open file
-        # handle), so closing the window releases it. Snapshot windows hold
-        # plain numpy copies and are unaffected.
+        # Each window owns one reference to its NxsData (and so to the open
+        # file), and closing the window gives it back -- once. Qt delivers a
+        # close event again to a window that is already closed (close() on a
+        # hidden window, or the launcher closing everything at exit), and a
+        # second release would take the reference of another window that
+        # shares the file: the next read there fails with "identifier is not
+        # of specified type".
+        if getattr(self, "_released", False):
+            super().closeEvent(event)
+            return
+        self._released = True
         for window in list(getattr(self, "figure_windows", ())):
             window.close()
+        # Snapshots hold numpy copies of their own: they stay open, but must
+        # not be left hanging off this window once it is gone.
+        for window in list(self.popout_windows):
+            try:
+                if window.isVisible():
+                    keep_alive(window)
+            except RuntimeError:
+                pass
+        close_child_windows(self)
         try:
             self.data.close()
         except Exception:
@@ -1007,8 +1063,15 @@ class CutWindow(ViewerWindow):
             "(A \u2212 B)/(A + B). After pressing it, click the other cut in "
             "the main list.")
         self.arith_button.clicked.connect(lambda: self.open_cut_arithmetic())
+        self.degrid_button = QPushButton("De-grid...")
+        self.degrid_button.setToolTip(
+            "Remove the detector's grid from this cut -- with a grid found on "
+            "a map taken with the same settings if one is in the list, by "
+            "notching the cut's own grid peaks otherwise.")
+        self.degrid_button.clicked.connect(self.open_degrid)
         self.build_toolbar((self.fermi_button, self.fs_button, self.kconv_button,
-                            self.fit_button, self.arith_button))
+                            self.fit_button, self.arith_button,
+                            self.degrid_button))
 
         self.view = FrameImageView()
         # Titled from the axes themselves: a cut read from a file is an
@@ -1150,6 +1213,37 @@ class CutWindow(ViewerWindow):
     def fs_angle_label(self) -> str:
         return self.data.scan.labels.get("x", "angle")
 
+    # -- the detector grid ----------------------------------------------------
+    def open_degrid(self):
+        """The De-grid window for this cut (see :mod:`ui.degrid`)."""
+        from tools.degrid import not_pixel_locked
+        from ui.degrid import DegridDialog, grid_candidates
+
+        reason = not_pixel_locked(self.data.scan.info)
+        if reason:
+            QMessageBox.information(
+                self, "De-grid",
+                f"This cut cannot be de-gridded: {reason}. The grid is only "
+                f"where the detector put it in data as measured -- de-grid "
+                f"the original, then do the rest.")
+            return None
+        existing = getattr(self, "_degrid_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            return existing
+        candidates = grid_candidates(getattr(self, "_dataset_entries", None),
+                                     getattr(self, "_dataset_loader", None),
+                                     np.shape(self.data.cut_frame),
+                                     self.data.scan.info)
+        dialog = DegridDialog(self, self.data, self.filename,
+                              candidates=candidates, colormap=self.colormap,
+                              flip=self.flip, existing_names=self.existing_names)
+        dialog.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        self._degrid_dialog = dialog
+        dialog.show()
+        return dialog
+
     # -- combining with another cut -----------------------------------------
     def open_cut_arithmetic(self, other=None):
         """This cut as A, and another as B, in the cut arithmetic window.
@@ -1205,10 +1299,15 @@ class CutWindow(ViewerWindow):
                 region_source=self.view.selection_corners,
                 existing_names=self.existing_names)
         except ValueError as exc:
+            data.close()        # the reference the list handed over
             QMessageBox.information(self, "Cut arithmetic", str(exc))
             return None
         dialog.datasetsCreated.connect(
             lambda made: [self.datasetCreated.emit(one) for one in made])
+        # The other cut was loaded for this dialog; its reference goes back
+        # when the dialog does (this cut's belongs to the viewer).
+        released = []
+        dialog.finished.connect(lambda *_: released or (released.append(1), data.close()))
         dialog.show()
         self._arith_dialog = dialog
         return dialog
@@ -2896,10 +2995,21 @@ class ContourWindow(ViewerWindow):
             "a row of constant-energy contours, or a row of cuts -- with a "
             "shared colour scale and labels only on the outer edges.")
         self.slices_button.clicked.connect(self.open_slice_figure)
+        self.degrid_button = QPushButton("De-grid map...")
+        self.degrid_button.setToolTip(
+            "Remove the detector's grid from the whole map, using the map "
+            "itself as the reference: the grid stays on the same pixels while "
+            "the photoemission moves. Do this first -- before the k or kz "
+            "conversion, a Fermi-surface correction or kz map processing.")
+        self.degrid_button.clicked.connect(self.open_degrid)
+        # Only while the data are still on the detector's pixels; a map in
+        # momentum has been resampled and has no pattern left to find.
+        self.degrid_button.setVisible(data.kind in ("map", "kz_map"))
         self.build_toolbar((self.defl_cut_button, self.slit_cut_button,
                             self.arbcut_button, self.kconv_button,
                             self.bz_button, self.kz_button,
-                            self.kzconv_button, self.slices_button))
+                            self.kzconv_button, self.degrid_button,
+                            self.slices_button))
         self.figure_windows = []
 
         self.e_control = _SliceControl("Energy (eV)", "eV", 0.05, self)
@@ -3002,6 +3112,48 @@ class ContourWindow(ViewerWindow):
         dialog.finished.connect(lambda *_: setattr(self, "_kz_dialog", None))
         dialog.show()
         return dialog
+
+    def open_degrid(self):
+        """De-grid the whole map (see :mod:`ui.degrid`)."""
+        from tools.degrid import not_pixel_locked
+        from ui.degrid import DegridDialog
+
+        reason = not_pixel_locked(self.data.scan.info)
+        if self.data.kind not in ("map", "kz_map"):
+            reason = reason or "it is in momentum, resampled off the detector's pixels"
+        if reason:
+            QMessageBox.information(
+                self, "De-grid",
+                f"This map cannot be de-gridded: {reason}. The grid is only "
+                f"where the detector put it in data as measured -- de-grid "
+                f"the original map, then do the rest.")
+            return None
+        existing = getattr(self, "_degrid_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            return existing
+        dialog = DegridDialog(self, self.data, self.filename,
+                              colormap=self.colormap, flip=self.flip,
+                              existing_names=self.existing_names)
+        dialog.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        self._degrid_dialog = dialog
+        dialog.show()
+        return dialog
+
+    def closeEvent(self, event):
+        # The cut windows are views into this map -- they follow its cursor
+        # and hand their De-grid button to it -- so they close with it.
+        # Leaving them open would also leave them reachable only through
+        # this closed window, which the cycle collector then reclaims while
+        # they are still on screen (a hard crash in pyqtgraph).
+        for window in list(self.cut_windows.values()):
+            try:
+                window.close()
+            except RuntimeError:
+                pass
+        self.cut_windows.clear()
+        super().closeEvent(event)
 
     def open_cut(self, which: str):
         window = self.cut_windows.get(which)
@@ -3399,7 +3551,14 @@ class MapCutWindow(ViewerWindow):
             "Straighten a curved feature along the slit and apply the same "
             "shift to the whole cube, giving a corrected map in the file list.")
         self.fs_button.clicked.connect(self.open_fs_correction)
-        self.build_toolbar((self.fs_button,) if which == "slit" else ())
+        self.degrid_button = QPushButton("De-grid map...")
+        self.degrid_button.setToolTip(
+            "Remove the detector's grid from the whole map this cut belongs "
+            "to -- every slit cut of it at once.")
+        self.degrid_button.clicked.connect(lambda: self.contour.open_degrid())
+        self.degrid_button.setVisible(contour.data.kind in ("map", "kz_map"))
+        self.build_toolbar((self.fs_button, self.degrid_button)
+                           if which == "slit" else ())
         self.control = _SliceControl(f"Integrate over {sum_label}", "deg", 0.1, self)
         self.root.addWidget(self.control)
 

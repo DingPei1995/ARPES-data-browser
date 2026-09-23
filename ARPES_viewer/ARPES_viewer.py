@@ -1012,11 +1012,12 @@ def load_dataset(key):
     if record.get("memory") is not None:
         return record["memory"]
 
+    # Whatever comes back is the caller's own reference, to close once.
     backing = record.get("backing")
     if backing:
         cached = session.budget.get(backing)
         if cached is not None:
-            return cached
+            return cached.retain()
         data = _reload_backing(record, backing)
         if data is not None:
             return data
@@ -1081,13 +1082,13 @@ def _reload_backing(record, backing):
     if not os.path.isfile(backing):
         return None
     try:
-        data = NxsData.acquire(backing, None)
+        data = NxsData.acquire(backing, None)          # the caller's reference
     except Exception as exc:                               # noqa: BLE001
         traceback.print_exc()
         ui.statusbar.showMessage(
             f"Could not re-read '{record['name']}' from its auto-saved copy: {exc}")
         return None
-    session.budget.put(backing, data)
+    session.budget.put(backing, data)                  # ...and the budget's own
     return data
 
 
@@ -1212,8 +1213,10 @@ def open_processing():
             continue
         if data.kind not in ("cut",) + CUBE_KINDS:
             problems.append(f"{label_for(key)}: {data.kind} is not a cut or a map")
+            data.close()
             continue
         datasets.append((label_for(key), data))
+    release = release_once(*[data for _, data in datasets])
 
     if not datasets:
         QMessageBox.warning(
@@ -1229,6 +1232,7 @@ def open_processing():
             win, "Data processing",
             "Cuts and maps need different panels, so they cannot be processed "
             "in one go. Select one kind at a time.")
+        release()
         return None
 
     if kinds == {"cut"}:
@@ -1236,6 +1240,7 @@ def open_processing():
     else:
         dialog = VolumeProcessDialog(datasets, win, default_colormap, default_flip)
     dialog.datasetsCreated.connect(_list_computed)
+    dialog.finished.connect(release)
     dialog.show()
     dialog.raise_()
     global process_dialog
@@ -1258,15 +1263,19 @@ def open_stack_plot():
         QMessageBox.warning(win, "Stack plot", str(exc))
         return None
     if data.kind != "cut":
+        data.close()
         QMessageBox.information(
             win, "Stack plot",
             "A stack is made of curves across a 2-D dataset. Open a map and "
             "take a slice of it first, or convert it to a cut.")
         return None
     scan = data.scan
-    window = StackWindow(scan.value, (scan.x, scan.y),
-                         (scan.labels.get("x", "x"), scan.labels.get("y", "y")),
-                         label_for(key), win, default_colormap)
+    try:
+        window = StackWindow(scan.value, (scan.x, scan.y),
+                             (scan.labels.get("x", "x"), scan.labels.get("y", "y")),
+                             label_for(key), win, default_colormap)
+    finally:
+        data.close()                     # the window holds a copy
     window.datasetsCreated.connect(_list_computed)
     window.show()
     viewer_windows.append(window)
@@ -1295,12 +1304,14 @@ def open_curve_fit():
         return None
     reason = momentum_cut_reason(data)
     if reason:
+        data.close()
         QMessageBox.information(win, "MDC / EDC fit", reason + ".")
         return None
 
     window = FitPanel(data, label_for(key), win, default_colormap, default_flip)
     window.datasetsCreated.connect(_list_computed)
     window.closed.connect(_forget_viewer)
+    window.closed.connect(release_once(data))
     window.show()
     viewer_windows.append(window)
     return window
@@ -1308,8 +1319,6 @@ def open_curve_fit():
 
 def open_volume_view():
     """The 3-D views of the selected map, over a chosen region."""
-    from ui.volume import VolumeWindow, VolumeRangeDialog
-
     key = selected_key()
     if key is None:
         return None
@@ -1319,10 +1328,20 @@ def open_volume_view():
         QMessageBox.warning(win, "3D view", str(exc))
         return None
     if data.kind not in CUBE_KINDS:
+        data.close()
         QMessageBox.information(
             win, "3D view",
             "The 3-D views need a cube: a Map or a converted k-map.")
         return None
+    try:
+        return _open_volume_view(key, data)
+    finally:
+        data.close()          # the 3-D window is built from a resampled copy
+
+
+def _open_volume_view(key, data):
+    from ui.volume import VolumeWindow, VolumeRangeDialog
+
     x, k, z, cube = data.angle_cube
     scan = data.scan
     labels = (scan.labels.get("x", "x"), scan.labels.get("k", "y"),
@@ -1366,6 +1385,7 @@ def open_cut_arithmetic():
     pair = []
     for key in keys:
         if str(loaded_items.get(key, {}).get("kind", "")).lower() != "cut":
+            release_once(*[data for _, data in pair])()
             QMessageBox.information(
                 win, "Cut arithmetic",
                 f"{label_for(key)} is not a cut. Cut arithmetic works on two "
@@ -1374,16 +1394,20 @@ def open_cut_arithmetic():
         try:
             data = load_dataset(key)
         except Exception as exc:
+            release_once(*[data for _, data in pair])()
             QMessageBox.warning(win, "Cut arithmetic", str(exc))
             return None
         pair.append((label_for(key), data))
+    release = release_once(*[data for _, data in pair])
     try:
         dialog = CutArithmeticDialog(pair[0], pair[1], win, default_colormap,
                                      default_flip, existing_names=listed_names)
     except ValueError as exc:
+        release()
         QMessageBox.information(win, "Cut arithmetic", str(exc))
         return None
     dialog.datasetsCreated.connect(_list_computed)
+    dialog.finished.connect(release)
     dialog.show()
     global process_dialog
     process_dialog = dialog
@@ -1431,6 +1455,7 @@ def await_list_selection(on_chosen, *, kind: str = "cut", exclude=None,
                 on_rejected(f"\u201c{label}\u201d could not be read: {exc}")
             return
         if exclude is not None and data is exclude:
+            data.close()                    # our reference, not the viewer's
             if on_rejected:
                 on_rejected("That is the cut this was opened from. Pick "
                             "another one.")
@@ -1446,6 +1471,28 @@ def await_list_selection(on_chosen, *, kind: str = "cut", exclude=None,
 
     widget.itemSelectionChanged.connect(changed)
     return cancel
+
+
+def release_once(*datasets):
+    """A callback that gives back one reference to each of ``datasets`` --
+    the first time it is called, and never again.
+
+    Every :func:`load_dataset` hands its caller a reference of its own, to
+    be closed exactly once when the caller is done. A window or dialog that
+    keeps the dataset connects this to its ``closed`` / ``finished`` signal;
+    those can fire more than once, and a second release would take away a
+    reference that belongs to someone else.
+    """
+    pending = list(datasets)
+
+    def release(*_):
+        while pending:
+            data = pending.pop()
+            try:
+                data.close()
+            except Exception:                              # noqa: BLE001
+                pass
+    return release
 
 
 def _list_computed(datasets):
