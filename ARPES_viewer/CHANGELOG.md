@@ -10,6 +10,125 @@ file is the record of how it got that way.
 
 ---
 
+## Thirty-fifth round: the spin end station, and one-dimensional data
+
+CASSIOPEE's spin-resolved end station writes MBS A-1 files, which nothing
+here could read; and EDCs, MDCs and spin spectra had nowhere to live. Three
+additions, in the order they depend on each other.
+
+### A reader for MBS `.krx` and `.txt`: `loader/cassiopee_spin.py`
+
+There is no public description of `.krx`, so the layout was read off the
+files and checked three ways:
+
+- a **64-bit pointer table** -- `3 × n_images`, then `(offset in 32-bit
+  words, n_angle, n_energy)` per image; older MBS versions write it in
+  32-bit integers, and both are accepted;
+- `int32` images, row-major (angle × energy), each followed by a
+  **length-prefixed text header**;
+- verified against the `.txt` export of the same cut (identical to the
+  count, both axes identical), against the header's own sizes for all three
+  files, and against the 96 MB map (41 × 705 × 837, deflector −10…10°).
+
+The header decides the kind: spin system on with the main detector off is a
+spin EDC (one spectrum per `SpinComp#n`), several images a deflector map,
+one image a cut. The energy is `Start K.E. + i × Step Size`, which
+reproduces the `.txt` energy column exactly in swept mode and centres a
+fixed-mode window on `Center K.E.` to 1e-5 eV.
+
+The files carry **no photon energy, sample angles, temperature or work
+function**, so the energy axis stays kinetic and is labelled so. The Scienta
+`.txt` files of the other CASSIOPEE reader are not claimed: neither reader
+recognises the other's header.
+
+### One-dimensional kinds, and a viewer for them
+
+`edc`, `mdc` and `spin_edc` join `AXIS_SLOTS` as **tables**: the physical
+axis against channels. Keeping them 2-D (points × channels) meant the save
+format, the memory wrapper and the session autosave needed no change at
+all. Channel names travel in `info`; a channel called `σ <name>` is the
+uncertainty of `<name>`. That convention is why curves have their own
+operations (`tools/curves.py`) and the generic data operations now refuse
+them: compressing by averaging would have shrunk an error bar by √n too
+much.
+
+`energy_slot("mdc")` is `None` -- the first kind without an energy axis. The
+test that asserted every kind has one was updated to say so; the point of it
+(no kind silently missing from the table) still holds.
+
+**EDC → list / MDC → list** are on every panel that draws the readout
+curves: the cut viewer, a map's cut windows, the spatial scan's spectrum.
+The listed curve is exactly what is on screen (the image summed over the ±
+window -- checked against a direct sum over the 39 columns of a ±1° window),
+records its position, window and slice, and is typed by its own axis rather
+than by the button pressed.
+
+### Curve fitting
+
+Reuses what exists rather than adding a third fitter: peaks go through
+`tools.peaks.fit_line` (which gained an optional explicit σ, so a
+spin-resolved spectrum is weighted by its real errors rather than √N), and
+the edge through `tools.fermi.fit_fermi_edge`.
+
+The Fermi edge on the real MBS cut is what shaped this panel. With a window
+of 41.20–41.55 eV the standard starting guess put E_F at the window's top,
+and the fit "succeeded" there (E_F = 41.536 ± 0.23 eV, reduced χ² 434) --
+because a band rises just below the edge and the half-height crossing is
+fooled by it. Two changes:
+
+- the start is now the **steepest drop** in the window
+  (`tools.fermi.steepest_drop`): the same window then gives
+  E_F = 41.414 ± 0.0008 eV, 29 meV resolution, χ² 14.6, matching the step
+  visible in the raw counts between 41.39 and 41.43 eV;
+- the kz-map processing's **"did it find an edge?"** check (E_F not pinned to
+  the window, a significant step) is now public (`tools.kzmap.is_an_edge`)
+  and applied here. A window that includes the secondary-electron tail still
+  fits the tail, and is now reported as "no edge found" with the shift
+  disabled, instead of offering a number that looks like an answer.
+
+### Spin analysis: `tools/spin.py`
+
+The four channels in these files form a balanced design: at each target
+magnetisation the two manipulator settings count opposite signs of Z. The
+**cross ratio** -- geometric mean of the +Z channels over that of the −Z
+channels -- therefore cancels both the settings' transmissions and the
+magnetisation-dependent reflectivity exactly, which a single pair cannot.
+The two single-pair asymmetries measure the instrumental asymmetry
+directly, ε = (A₁ − A₂)/2.
+
+On the uploaded spin file ε = +0.0186 ± 0.0005. At S = 0.2 that biases a
+single-pair polarisation by ≈ 0.09, larger than the weighted-mean
+polarisation of the spectrum (+0.026 ± 0.002) -- which is the case for
+making the cross ratio the default.
+
+Validated against Poisson Monte Carlo (4 channels, ~400 counts, planted
+P = 0.3, ε = 0.05, S = 0.2): P recovered as 0.301, predicted σ_P 2.3 % below
+the actual scatter, ε recovered as 0.0505; the single pair gives 0.552,
+matching its expected bias. On exact expected counts the cross ratio returns
+P to 1e-12 for any ε.
+
+**S_eff = 0.2** by default: the value used for this end station's FERRUM
+VLEED detector in Sci. Rep. 2023 (doi:10.1038/s41598-023-40145-1). It is a
+detector calibration, not a constant, and is recorded with every result.
+
+### Also fixed
+
+- **Line-only figure panels were half empty.** A panel of curves (the EDC/MDC
+  stack plot's figure, and now every curve figure) carries a blank 2 × 2
+  placeholder image for its axes, and the extent grew it by half a pixel at
+  each end -- which, for two pixels, doubled both ranges. A `stack` panel's
+  extent is now its data range, with a 4 % margin in y.
+- pyqtgraph renders legends as HTML, so a spin channel's `<0,0>` vanished
+  from the legend as an unknown tag; legend text is escaped.
+
+455 tests (27 new: the reader on synthetic `.krx`/`.txt` in the real
+layout, including a 32-bit table, an interrupted map and a refused 4-D map;
+the σ-aware operations; the spin model against exact and Monte Carlo
+counts; the figure extent). A headless run on the four uploaded files
+drives everything above through the launcher.
+
+---
+
 ## Thirty-fourth round: arithmetic between two cuts, and one name for it
 
 A window for combining two cuts -- LH − LV linear dichroism, circular

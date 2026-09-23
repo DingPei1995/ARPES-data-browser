@@ -91,6 +91,29 @@ what a proper per-photon-energy Fermi-edge calibration will need later.
 above), `"per_member"` (place each member by its own hv and keep only the
 range they share) and `"kinetic"` (no referencing at all).
 
+### CASSIOPEE spin end station (MBS)
+
+The spin-resolved end station's MBS A-1 analyser writes `.krx` (binary)
+and `.txt` (its text export). Both are read by **SOLEIL CASSIOPEE spin
+(MBS)**, and the header -- not the file name -- decides what a file is:
+
+| in the file | opens as |
+|---|---|
+| one image, main detector | `cut` (Y angle × kinetic energy) |
+| one image per deflector step (`MapNoXSteps` > 1) | `map` (deflector × Y angle × kinetic energy) |
+| spin system on, main detector off: one spectrum per `SpinComp#n` | `spin_edc` |
+
+- **Energy stays kinetic.** These files record no photon energy, sample
+  angles, temperature or work function. Find E_F from the data: the cut
+  viewer's **Fermi level**, or the curve fit's Fermi edge (which lists a copy
+  with E_F = 0).
+- The `.krx` and `.txt` of the same cut read identically, to the count.
+- A map with fewer images than planned (interrupted) is read as far as it
+  goes and says so in `info["mbs.map_note"]`; a two-direction (X and Y)
+  deflector map is refused, since it is 4-D.
+- Every header field is kept in `info` as `mbs.<field>`; the spin channels'
+  labels as `spin.component.<n>`.
+
 ---
 
 ## What the main panel is
@@ -121,12 +144,22 @@ view, and each viewer exports what it itself shows.
 | `kz_map_k` | (k_z, k_par, E) | that scan converted to momentum |
 | `spem_1d` | (x, k, E) | a real-space line scan |
 | `spem_4d` | (x, y, k, E) | a real-space raster scan |
+| `edc` | (E, channel) | one or more curves against energy |
+| `mdc` | (angle/k, channel) | one or more curves against angle or momentum |
+| `spin_edc` | (E, spin channel) | a spin-resolved EDC: one curve per spin channel |
 
 `map`, `k_map`, `kz_map` and `kz_map_k` are the three-axis cubes
 (`CUBE_KINDS`): they share a viewer, the 3-D view and the processing panels,
 and differ only in what their first two axes mean. `k_map` and `kz_map_k` are
 the ones already in momentum (`MOMENTUM_KINDS`), so nothing that converts
 angles is offered for them.
+
+The three curve kinds (`CURVE_KINDS`) are tables: the physical axis, and
+one or more **channels**. The channel names travel in
+`info["curve.channels"]`; a channel called `σ <name>` is the standard
+deviation of `<name>`, so a polarisation and its error bar, or a spin-up
+spectrum and its counting error, stay together through saving and reloading.
+An `mdc` is the one kind with no energy axis.
 
 A `kz_map` gets its own conversion rather than the in-plane one: turning a
 photon energy into k_z needs the inner potential, which is a property of the
@@ -146,6 +179,14 @@ panels, which axis is the energy -- derives from it.
   orthogonal cuts, each in a further window.
 - **A spatial scan** opens the real-space map together with the E-vs-k
   spectrum at the cursor.
+- **A curve** (EDC, MDC, spin EDC) opens in the **curve viewer** -- see
+  below.
+
+Every panel with an EDC/MDC readout has **EDC → list** and **MDC → list**
+under it: the curve on screen, summed over its ± window, becomes a dataset
+in the main list, named with where it was taken (and, from a map's cut
+window, the slice). Its kind follows its own axis: a profile along an angle
+is listed as an MDC even if it was the "EDC" of a constant-energy contour.
 
 Every image panel has the same view controls in a strip rather than buried in
 a right-click menu: colormap, flip, gamma, level bar, interpolation, and the
@@ -179,6 +220,7 @@ axis ranges.
   moiré zone, on a converted contour. Space group first, then the lattice
   parameters it constrains; a 3-D preview shows how the cut plane sits.
 - **kz map processing** and **kz -> momentum** -- see below.
+- **The curve viewer**, its **curve fit** and **spin analysis** -- see below.
 
 ### kz map processing
 
@@ -254,6 +296,86 @@ the window is built around choosing it:
   reciprocal lattice vector within 15% and the matching planes are listed —
   which says how the crystal cleaved. Centring is handled: in a body-centred
   lattice the period along [001] is 4π/a, not 2π/a, and the answer says so.
+
+### The curve viewer
+
+Every channel of a curve dataset, with error bars where it has a σ channel.
+Channels can be hidden, offset into a waterfall (**Offset**), and read off
+with the cursor. **Range** is a draggable x window used by the operations
+and the panels below.
+
+**Operations** each make a new dataset in the list, with the step recorded:
+
+| operation | what it does | uncertainties |
+|---|---|---|
+| Crop to the range | keeps the Range | kept |
+| Bin | merges *n* neighbours, by sum (counts stay counts) or mean | combined in quadrature: √Σσ², or /n for a mean |
+| Normalise | to the maximum, the area, or the mean over the Range; one factor for all channels (default) or each its own | divided by the same factor |
+| Subtract a background | constant (mean over the Range), linear (a line through the Range), or Shirley | left as they were |
+| Shift the axis | subtracts a value; relabels as E − E_F | kept |
+| Add counting errors | σ = √N for each raw-count channel without one | new |
+
+The generic data operations refuse curves, because averaging a σ channel
+would shrink it by the wrong factor.
+
+### Curve fit
+
+On one channel, over a fit window (typed, or taken from the viewer's Range):
+
+- **Peaks on a background** -- Lorentzian, Gaussian or Voigt peaks
+  (placed by clicking the plot, or **Find peaks**), a none / constant /
+  linear / Shirley background, an optional instrumental resolution, and an
+  optional Fermi-edge cut-off for EDC peaks near E_F. The solver is the
+  MDC/EDC fitter's, so the same peak fitted here and on a cut gives the same
+  number. Weighting is the channel's own σ when it has one, √N for raw
+  counts, or uniform.
+- **Fermi edge** -- the Fermi-level dialog's model. The start is the
+  steepest drop in the window, so a band just below E_F does not pull the
+  edge to the end of the window; a fit that converged without finding an
+  edge (E_F pinned to the window's end, or no significant step) is
+  **reported as such** and cannot be used to shift the data. **List a copy
+  with E_F = 0** shifts the whole dataset.
+
+Results: every parameter with its error (scaled by √χ²), the residual in
+units of σ, **Fit to list** (data, fit, residual and each component as one
+curve dataset, parameters in `info`), and **Copy results** (tab-separated).
+
+### Spin analysis
+
+From a spin EDC's viewer. The channel table shows what each `SpinComp` label
+says -- manipulator setting, target magnetisation, the axis and sign it
+counts as "up" -- and the axis and sign can be overridden if a label is
+wrong.
+
+- **Cross ratio** (default when the channels allow it): the geometric mean
+  of the +axis channels against that of the −axis channels. With the usual
+  four channels -- +Z counted at (<0,0>, +X) and (<90,180>, −X), −Z at
+  (<0,0>, −X) and (<90,180>, +X) -- every setting's transmission and every
+  magnetisation's target reflectivity appear once on each side and
+  **cancel exactly**. The panel says which of the two cancel for the
+  channels actually present.
+- **One pair** (one manipulator setting): available, and drawn as dashed
+  lines beside the cross ratio, but it carries the instrumental asymmetry.
+- **Instrumental asymmetry ε** is measured from the two pairs
+  (ε = (A₁ − A₂)/2) and reported with its error. On the uploaded file
+  `Cut20260528222027_5S.krx` it is ε = +0.0186 ± 0.0005, which is a bias of
+  ≈ ε/S ≈ 0.09 on a single-pair P at S = 0.2 -- larger than the polarisation
+  there.
+- **S_eff** defaults to 0.2, the value published for this end station's
+  FERRUM VLEED detector (Sci. Rep. 2023, doi:10.1038/s41598-023-40145-1).
+  Use the end station's own calibration where there is one: P and its error
+  bar both scale as 1/S.
+- **Bin** sums neighbouring points first (they stay counts). **Zero
+  reference** optionally takes P = 0 over a window you know is unpolarised;
+  it removes real polarisation too if the window has any, and is recorded.
+- Counting statistics throughout: σ_A = ½(1 − A²)·√(Σ 1/Iᵢ)/k for k
+  channels a side (the textbook √((1 − A²)/N) for one pair), σ_P = σ_A/S,
+  and I↑,↓ = I(1 ± P)/2 with their errors. Checked against Monte Carlo:
+  the predicted σ_P is 2.3 % below the actual scatter at ~400 counts per
+  channel,
+  and P is recovered unbiased with a planted ε = 0.05.
+- **P to list** (P and σ P), **I↑ / I↓ to list** (both, with σ), and
+  **As a figure**.
 
 ### Cut arithmetic
 
@@ -418,6 +540,7 @@ you what it may depend on.
 | `loader/registry.py` | Which beamline wrote a file and who reads it, plus the load-time axis order and scanned-axis role. |
 | `loader/soleil.py` | The SOLEIL/ANTARES reader. **Copy this file to add an HDF5 beamline.** |
 | `loader/cassiopee.py` | The SOLEIL/CASSIOPEE reader: Scienta text spectra, and folders of them assembled into a map or a kz map. |
+| `loader/cassiopee_spin.py` | CASSIOPEE's spin end station: MBS A-1 `.krx` and `.txt` files, as a cut, a map or a spin EDC. |
 | `loader/native.py` | This program's own saved format -- detected, never chosen. |
 | `loader/nxs_file.py` | The SOLEIL parser, the saved format's reader and writer, `NxsScan`, the axis-slot table, and the lazy arrays that keep a measurement on disk. Start here. |
 | `loader/session.py` | Where a computed dataset lives: the folder it is written to as soon as it exists, the memory budget, and the operations log. |
@@ -428,6 +551,8 @@ you what it may depend on.
 | `tools/process.py`, `tools/volume.py` | Smoothing, derivatives, curvature, backgrounds, symmetrisation -- in 2-D and over a cube. |
 | `tools/kzmap.py` | Calibrating a photon-energy scan against its own Fermi edges: fit per spectrum, align, crop, normalise. |
 | `tools/kzconv.py` | The k_z conversion: the analytic forward and inverse maps, the resampling, and the inner-potential scan. |
+| `tools/curves.py` | One-dimensional data as tables: channel names, the σ convention, and the σ-aware crop / bin / normalise / background operations. |
+| `tools/spin.py` | Spin channels from their labels, the cross ratio, the instrumental asymmetry, polarisation and spin-resolved spectra with counting errors. |
 | `tools/cutops.py` | Arithmetic between two cuts: scaling, resampling, dichroism, reference division, Poisson uncertainty, and which recorded conditions differ. |
 | `tools/cleavage.py` | From a measured k_z period to which lattice planes could have produced it. |
 | `tools/fermi.py`, `tools/peaks.py`, `tools/dispersion.py` | The Fermi-edge model, MDC/EDC peak fitting, and what the fitted band says (`v_F`, `m*`, self-energy). |
@@ -441,6 +566,7 @@ you what it may depend on.
 | `ui/kzmap.py` | The kz map processing window. |
 | `ui/kzconv.py` | The kz-to-momentum window: V0, the zone lines, the period tool. |
 | `ui/cutops.py` | The cut arithmetic window. |
+| `ui/curves.py` | The curve viewer, its curve fit panel and the spin analysis panel. |
 | `ui/jobs.py` | Running one long operation at a time off the GUI thread. |
 | `ui/figure.py`, `ui/fit.py`, `ui/process.py`, `ui/volume.py` | The figure composer, the MDC/EDC fit panel, and the 2-D and 3-D processing panels. |
 | **`devtools/`, `test/`** | |
@@ -519,5 +645,5 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 428 of them, no display needed -- `conftest.py` puts the
+from this folder. 455 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`.

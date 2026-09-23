@@ -157,6 +157,11 @@ def _is_an_edge(fit, lo: float, hi: float, margin: float) -> bool:
     return True
 
 
+#: Public name for the check, for anything else that fits one edge and
+#: must not take a converged fit for a found edge (the curve fit panel).
+is_an_edge = _is_an_edge
+
+
 def fit_levels(cube, energy, index_region, *, temperature: float = 30.0,
                fixed=("temperature",), progress=None):
     """Fit the Fermi edge of every spectrum in the stack.

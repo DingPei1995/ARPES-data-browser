@@ -315,16 +315,23 @@ def _solve_linear(design, y, sigma, n_peaks):
 
 
 def fit_line(x, y, bands, settings: FitSettings, *, guesses=None,
-             position: float = float("nan")) -> LineFit:
+             position: float = float("nan"), sigma=None) -> LineFit:
     """Fit one MDC or EDC with the given bands.
 
     ``guesses`` is an optional ``{name: (centre, width, height)}`` from the
     seeds or from the previous line; without it each band's own seeds are
     interpolated to ``position``.
+
+    ``sigma``, if given, is each point's standard deviation and replaces
+    the weighting in ``settings`` -- for a curve that carries its own
+    uncertainties (a spin-resolved spectrum, where they are not sqrt(N)).
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     good = np.isfinite(x) & np.isfinite(y)
+    if sigma is not None:
+        sigma = np.asarray(sigma, dtype=float)
+        good &= np.isfinite(sigma) & (sigma > 0)
     if good.sum() < 3 * len(bands) + 2:
         raise ValueError("not enough valid points for that many bands")
     order = np.argsort(x[good])
@@ -380,7 +387,10 @@ def fit_line(x, y, bands, settings: FitSettings, *, guesses=None,
     upper = np.asarray(upper, dtype=float)
     params0 = np.clip(params0, lower + 1e-12, upper - 1e-12)
 
-    sigma = _weights(yf, settings.weighting)
+    if sigma is None:
+        sigma = _weights(yf, settings.weighting)
+    else:
+        sigma = sigma[good][order]
     fermi_cache = _occupation(xf, settings)
     n_bands = len(bands)
 

@@ -1879,8 +1879,28 @@ def panel_from_arrays(array, x, y, x_label="", y_label="", name="", info=None,
 
 
 def panel_from_dataset(data, name="") -> Panel:
-    """A Cut (or anything with a 2-D ``scan.value``) as a panel."""
+    """A Cut (or anything with a 2-D ``scan.value``) as a panel; a curve
+    dataset as its curves, with ±σ where it carries uncertainties."""
     scan = data.scan
+    from loader.nxs_file import CURVE_KINDS
+    if getattr(data, "kind", None) in CURVE_KINDS:
+        from tools import curves as C
+        from ui.curves import curve_panel, _colour
+
+        values = np.asarray(scan.value, dtype=float)
+        values = values[:, None] if values.ndim == 1 else values
+        names = C.channel_names(scan.info, values.shape[1], data.kind)
+        columns, errors = [], {}
+        for index in C.data_channels(names):
+            columns.append((names[index], values[:, index], _colour(index)))
+            sigma = C.sigma_of(names, index)
+            if sigma is not None:
+                errors[names[index]] = values[:, sigma]
+        labels = getattr(scan, "labels", {}) or {}
+        return curve_panel(scan.x, columns, x_label=labels.get("x", ""),
+                           y_label=C.value_label(scan.info),
+                           name=name or getattr(data, "source_label", "") or "curve",
+                           errors=errors)
     if getattr(scan, "value", None) is None or np.asarray(scan.value).ndim != 2:
         raise ValueError("only a two-dimensional dataset can be a panel on "
                          "its own; take a slice of a map first")

@@ -587,7 +587,23 @@ AXIS_SLOTS = {
     "spem_1d": {"array": ("x", "y", "z"), "constructor": ("x", "y", "z")},
     "spem_4d": {"array": ("y", "x", "k", "z"),
                 "constructor": ("x", "y", "k", "z")},
+    # One-dimensional data, as a table: ``x`` is the physical axis (energy,
+    # or angle/momentum for an MDC), ``y`` numbers the channels -- one for a
+    # plain EDC, one per spin channel, or a curve with its uncertainty
+    # beside it. Channel names travel in ``info["curve.channels"]``; see
+    # :mod:`tools.curves`.
+    "edc": {"array": ("x", "y"), "constructor": ("x", "y")},
+    "mdc": {"array": ("x", "y"), "constructor": ("x", "y")},
+    "spin_edc": {"array": ("x", "y"), "constructor": ("x", "y")},
 }
+
+#: The one-dimensional kinds: curves against one axis, several channels
+#: each, drawn by the curve viewer rather than as an image.
+CURVE_KINDS = ("edc", "mdc", "spin_edc")
+
+#: Which axis of a curve kind is the energy. An MDC has none; that is the
+#: one kind for which "the last axis is the energy" does not hold.
+_CURVE_ENERGY = {"edc": "x", "spin_edc": "x", "mdc": None}
 
 #: The kinds that are a three-axis cube of (scanned axis, analyser angle or
 #: momentum, energy). They share a viewer, a 3-D view and a processing
@@ -622,6 +638,9 @@ KIND_LABELS = {
     "kz_map_k": "kz map (k)",
     "spem_4d": "SPEM",
     "spem_1d": "SPEM",
+    "edc": "EDC",
+    "mdc": "MDC",
+    "spin_edc": "Spin EDC",
 }
 
 
@@ -643,6 +662,8 @@ def energy_slot(kind: str):
     is added -- and both would have silently refused to shift the energy
     axis of a ``kz_map`` with "has no energy axis to shift".
     """
+    if kind in _CURVE_ENERGY:
+        return _CURVE_ENERGY[kind]
     slots = axis_slots(kind, "constructor")
     return slots[-1] if slots else None
 

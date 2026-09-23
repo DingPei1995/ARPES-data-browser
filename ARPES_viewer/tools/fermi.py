@@ -194,6 +194,28 @@ def initial_guess(energy, intensity, temperature: float = 30.0) -> dict:
             "dos0": dos0, "dos1": dos1, "bkg0": bkg0, "bkg1": bkg1}
 
 
+def steepest_drop(energy, intensity) -> float:
+    """Where the intensity falls fastest -- a starting E_F for a window
+    that holds more than the edge.
+
+    :func:`initial_guess` reads E_F off the half-height crossing, which is
+    right for a window around the edge but can land at the window's top when
+    a band rises just below E_F. The steepest *drop* of the lightly smoothed
+    curve is where the edge is, whatever sits beside it. The two points at
+    each end are left out, where the smoothing runs off the data.
+    """
+    e = np.asarray(energy, dtype=float)
+    i = np.asarray(intensity, dtype=float)
+    order = np.argsort(e)
+    e, i = e[order], i[order]
+    if e.size < 7:
+        return float(e[e.size // 2])
+    smooth = np.convolve(i, np.ones(3) / 3.0, mode="same")
+    slope = np.gradient(smooth, e)
+    slope[:2] = slope[-2:] = 0.0
+    return float(e[int(np.argmin(slope))])
+
+
 # --------------------------------------------------------------------------
 # The fit
 # --------------------------------------------------------------------------

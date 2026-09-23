@@ -2987,7 +2987,16 @@ class CurveReadout(QObject):
 
     The names are literal only when the vertical axis really is energy; on
     other axis pairs the titles fall back to generic profiles.
+
+    **EDC → list / MDC → list** put the curve on screen in the launcher's
+    list as a one-dimensional dataset, to open in the curve viewer, fit, or
+    save. :attr:`curveToList` carries it out as a plain dict; the window
+    that owns the panel turns it into a dataset, since it knows the source.
     """
+
+    #: ``{"which": "edc"|"mdc", "x", "y", "x_label", "position",
+    #: "position_label", "half_width", "n_summed"}``
+    curveToList = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3043,6 +3052,18 @@ class CurveReadout(QObject):
         # area 30 px below the image's and break the shared-axis alignment.
         self.info_label = QLabel("-")
         row.addWidget(self.info_label)
+        self.edc_button = QPushButton("EDC → list")
+        self.edc_button.setToolTip(
+            "Put this EDC (summed over its ± window) in the main list as a "
+            "curve of its own: open, fit, or save it from there.")
+        self.edc_button.clicked.connect(lambda: self.export_curve("edc"))
+        self.mdc_button = QPushButton("MDC → list")
+        self.mdc_button.setToolTip(
+            "Put this MDC (summed over its ± window) in the main list as a "
+            "curve of its own.")
+        self.mdc_button.clicked.connect(lambda: self.export_curve("mdc"))
+        row.addWidget(self.edc_button)
+        row.addWidget(self.mdc_button)
         row.addStretch(1)
 
         self.edc_width.valueChanged.connect(self.refresh)
@@ -3075,6 +3096,15 @@ class CurveReadout(QObject):
     def set_cursor(self, ix: int, iy: int):
         self._ix, self._iy = int(ix), int(iy)
         self.refresh()
+
+    def export_curve(self, which: str):
+        """Send the EDC (``"edc"``) or MDC (``"mdc"``) now on screen out
+        through :attr:`curveToList`. Returns the payload, or None if there
+        is no curve yet."""
+        payload = _curve_payload(self, which)
+        if payload is not None:
+            self.curveToList.emit(payload)
+        return payload
 
     @staticmethod
     def _window(axis, centre_idx, half_width):
@@ -3110,9 +3140,35 @@ class CurveReadout(QObject):
 
         edc_name = "EDC" if energy_like else "profile"
         mdc_name = "MDC" if energy_like else "profile"
+        self.edc_button.setText(f"{edc_name} → list")
+        self.mdc_button.setText(f"{mdc_name} → list")
         self.info_label.setText(
             f"{edc_name} @ {self._xarray[xi]:.4g} ({len(xw)} pt{'s' if len(xw) > 1 else ''})"
             f"   |   {mdc_name} @ {self._yarray[yi]:.4g} ({len(yw)} pt{'s' if len(yw) > 1 else ''})")
+
+
+def _curve_payload(readout: "CurveReadout", which: str):
+    frame, xs, ys = readout._frame, readout._xarray, readout._yarray
+    if frame is None or xs is None or ys is None:
+        return None
+    xi = int(np.clip(readout._ix, 0, frame.shape[0] - 1))
+    yi = int(np.clip(readout._iy, 0, frame.shape[1] - 1))
+    if which == "edc":
+        window = readout._window(xs, xi, readout.edc_width.value())
+        return {"which": "edc", "x": np.asarray(ys, dtype=float).copy(),
+                "y": np.nansum(np.asarray(frame, dtype=float)[window, :], axis=0),
+                "x_label": readout._y_label, "position": float(xs[xi]),
+                "position_label": readout._x_label,
+                "half_width": float(readout.edc_width.value()),
+                "n_summed": int(len(window))}
+    window = readout._window(ys, yi, readout.mdc_width.value())
+    return {"which": "mdc", "x": np.asarray(xs, dtype=float).copy(),
+            "y": np.nansum(np.asarray(frame, dtype=float)[:, window], axis=1),
+            "x_label": readout._x_label, "position": float(ys[yi]),
+            "position_label": readout._y_label,
+            "half_width": float(readout.mdc_width.value()),
+            "n_summed": int(len(window))}
+
 
 
 def separator() -> QFrame:
@@ -3402,6 +3458,8 @@ class ImagePanel(QWidget):
     """
 
     selectionApplied = pyqtSignal()
+    #: an EDC or MDC to list (see :attr:`CurveReadout.curveToList`)
+    curveToList = pyqtSignal(dict)
 
     def __init__(self, title: str, view: "_InteractiveImageBase",
                  equal_ratio_option: bool = False, curves: bool = False,
@@ -3435,6 +3493,8 @@ class ImagePanel(QWidget):
         # A grid, not nested boxes: the curves have to share a cell edge with
         # the image for their linked axes to line up on screen.
         self.curves = CurveReadout(self) if curves else None
+        if self.curves is not None:
+            self.curves.curveToList.connect(self.curveToList.emit)
         # The image and its curves live in a widget of their own so that the
         # whole block can be reshaped as one: a locked ratio is enforced by
         # giving the plotting area the data's shape (see AspectBox), and on a

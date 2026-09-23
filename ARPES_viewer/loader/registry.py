@@ -328,7 +328,8 @@ def _install_default_loaders():
     """Import the loaders that ship with the program, so that importing this
     module is enough to have them. Kept in a function so the import order is
     explicit and a broken third-party loader cannot stop the rest loading."""
-    for module in ("loader.native", "loader.soleil", "loader.cassiopee"):
+    for module in ("loader.native", "loader.soleil", "loader.cassiopee",
+                   "loader.cassiopee_spin"):
         try:
             __import__(module)
         except Exception as exc:                        # noqa: BLE001

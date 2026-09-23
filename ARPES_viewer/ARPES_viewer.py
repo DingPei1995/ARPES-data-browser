@@ -44,7 +44,7 @@ from tools import system
 from ui import notify
 import numpy as np
 
-from loader.nxs_file import list_datasets, save_dataset, CUBE_KINDS
+from loader.nxs_file import list_datasets, save_dataset, CUBE_KINDS, CURVE_KINDS
 from tools.dataops import axis_summary, same_format, ARRAY_AXES
 from ui.widgets import NxsData, MemoryData, DEFAULT_COLORMAP
 # Imported under short names, not as `import ui.jobs`: the launcher's own
@@ -96,6 +96,9 @@ KIND_LABELS = {
     "kz_map_k": "kz map (k)",
     "spem_4d": "SPEM",
     "spem_1d": "SPEM",
+    "edc": "EDC",
+    "mdc": "MDC",
+    "spin_edc": "Spin EDC",
 }
 
 
@@ -821,6 +824,9 @@ DATA_INFO_AXES = {
     "kz_map_k": (("x", "kz"), ("k", "k"), ("z", "energy")),
     "spem_4d": (("x", "spatial"), ("y", "spatial"), ("k", "angle"), ("z", "energy")),
     "spem_1d": (("x", "spatial"), ("k", "angle"), ("z", "energy")),
+    "edc": (("x", "energy"), ("y", "channel")),
+    "mdc": (("x", "angle/k"), ("y", "channel")),
+    "spin_edc": (("x", "energy"), ("y", "channel")),
 }
 
 
@@ -1135,6 +1141,13 @@ def open_data_operations():
             continue
         if data.kind not in ARRAY_AXES:
             problems.append(f"{label_for(key)}: {data.kind} has no axes to work on")
+            continue
+        if data.kind in CURVE_KINDS:
+            # Their second axis numbers channels, and one of those may be an
+            # uncertainty -- which compressing by averaging would get wrong.
+            # The curve viewer's own operations know which channel is which.
+            problems.append(f"{label_for(key)}: a {data.kind} is a curve; "
+                            f"use Crop / bin / normalise in its own viewer")
             continue
         datasets.append((label_for(key), data))
 

@@ -48,7 +48,7 @@ from tools.fermi import (PARAMETERS, PARAMETER_LABELS, K_B, initial_guess,
                        divide_fermi)
 from tools.dataops import (truncate, self_normalize, compress, ARRAY_AXES,
                         CONSTRUCTOR_AXES)
-from loader.nxs_file import CUBE_KINDS, MOMENTUM_KINDS, energy_slot
+from loader.nxs_file import CUBE_KINDS, CURVE_KINDS, MOMENTUM_KINDS, energy_slot
 
 from ui.widgets import (SpatialImageView, FrameImageView, ImagePanel,
                                FrameWindow, KMapData, MemoryData, _SliceControl,
@@ -511,6 +511,59 @@ class ViewerWindow(QMainWindow):
         if view_bar is not None and not view_bar.panels:
             view_bar.bind(self.image_panels())
         self.arm_panel_exports()
+        self._wire_curve_exports()
+
+    # -- EDC / MDC to the list ----------------------------------------------
+    def _wire_curve_exports(self):
+        """Connect every panel's EDC/MDC export to this window, once."""
+        wired = self.__dict__.setdefault("_curve_wired", set())
+        for panel in self.image_panels():
+            if id(panel) in wired or getattr(panel, "curves", None) is None:
+                continue
+            panel.curveToList.connect(self.curve_to_list)
+            wired.add(id(panel))
+
+    def curve_to_list(self, payload: dict):
+        """List the EDC or MDC a panel sent out, as a one-dimensional
+        dataset that remembers where it was taken.
+
+        The kind follows the curve's own axis, not the button: an "EDC" of
+        a constant-energy contour runs along an angle, and is listed as an
+        MDC-like profile, because what matters downstream is whether its
+        axis is an energy.
+        """
+        from ui.curves import curve_dataset
+        from ui.widgets import _is_energy_label
+
+        kind = "edc" if _is_energy_label(payload["x_label"]) else "mdc"
+        word = kind.upper()
+        where = f"{payload['position']:.4g}"
+        width = payload["half_width"]
+        suffix = f"{word} @ {where}" + (f" ±{width:g}" if width > 0 else "")
+        label = self.slice_label()
+        name = f"{self.filename} [{suffix}]" + (f" {label}" if label else "")
+        taken = set(self.existing_names())
+        if name in taken:
+            n = 2
+            while f"{name} ({n})" in taken:
+                n += 1
+            name = f"{name} ({n})"
+        position_label = payload.get("position_label") or "position"
+        parameters = {"curve": word, "position": payload["position"],
+                      "position_axis": position_label,
+                      "half_width": width, "points_summed": payload["n_summed"],
+                      "slice": label or ""}
+        data = curve_dataset(
+            kind, payload["x"], np.asarray(payload["y"], dtype=float)[:, None],
+            [word], x_label=payload["x_label"],
+            value_label=(f"Intensity (sum of {payload['n_summed']})"
+                         if payload["n_summed"] > 1 else "Intensity"),
+            name=name, step=f"take_{kind}", parameters=parameters,
+            source_info=dict(getattr(self.data.scan, "info", {}) or {}),
+            source=self.filename, source_path=getattr(self.data, "path", ""))
+        self.datasetCreated.emit(data)
+        self.statusBar().showMessage(f"Added “{name}” to the list")
+        return data
 
     def _arm_figure_source(self, window):
         """Let a popped-out panel's figure composer reach the launcher's
@@ -5217,4 +5270,7 @@ def open_viewer(data, filename: str, colormap: str, flip: bool):
         # A converted k-map is displayed exactly like the map it came from --
         # same contour, same two cuts -- with the axes labelled in A^-1.
         return ContourWindow(data, filename, colormap, flip)
+    if data.kind in CURVE_KINDS:
+        from ui.curves import CurveWindow
+        return CurveWindow(data, filename, colormap, flip)
     return None

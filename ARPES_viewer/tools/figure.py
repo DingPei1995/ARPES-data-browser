@@ -272,6 +272,15 @@ class Panel:
         """The data's outer bounds: the axis range grown by half a pixel at
         each end, since a pixel is centred on its value."""
         x, y = np.asarray(self.data.x, float), np.asarray(self.data.y, float)
+        if self.data.kind == "stack":
+            # Curves only: the "image" is a blank placeholder of two pixels,
+            # and growing it by half a pixel doubled both ranges -- the curves
+            # sat in the middle half of the panel. A curve is not a pixel:
+            # its x range is its own, and y gets a small margin so the lines
+            # do not run along the frame.
+            margin = 0.04 * (float(np.nanmax(y) - np.nanmin(y)) or 1.0)
+            return (float(np.nanmin(x)), float(np.nanmax(x)),
+                    float(np.nanmin(y) - margin), float(np.nanmax(y) + margin))
         dx = (x[1] - x[0]) if x.size > 1 else 1.0
         dy = (y[1] - y[0]) if y.size > 1 else 1.0
         return (float(x[0] - dx / 2), float(x[-1] + dx / 2),
