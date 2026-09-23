@@ -346,3 +346,65 @@ def test_an_unseen_contour_closes_with_its_last_cut(app):
     cut.close()
     assert shown.isVisible() and shown.cursor_link.members
     shown.close()
+
+
+# -- menus: greyed entries that look greyed, tooltips without a delay -------------
+def _text_darkness(image, rect):
+    """How dark the darkest text in ``rect`` of a grabbed menu is (0-255)."""
+    lum = 255
+    for x in range(rect.left() + 2, rect.right() - 2):
+        for y in range(rect.top() + 2, rect.bottom() - 2):
+            c = image.pixelColor(x, y)
+            lum = min(lum, (c.red() * 299 + c.green() * 587 + c.blue() * 114) // 1000)
+    return 255 - lum
+
+
+def test_disabled_entries_look_disabled_under_the_panel_stylesheet(app):
+    """The main panel's stylesheet colours every widget's text; without its
+    :disabled rules a greyed-out entry of the list's menu looked enabled."""
+    from PyQt5.QtCore import QPoint, qInstallMessageHandler
+    from PyQt5.QtWidgets import QMainWindow, QMenu
+    from ui import main_window
+    warnings = []
+    qInstallMessageHandler(lambda mode, ctx, msg: warnings.append(msg))
+    try:
+        window = QMainWindow()
+        main_window.Ui_MainWindow().setupUi(window)
+        menu = QMenu(window.centralWidget())
+        on = menu.addAction("Enabled entry")
+        off = menu.addAction("Disabled entry")
+        off.setEnabled(False)
+        menu.popup(QPoint(0, 0))
+        app.processEvents()
+        image = menu.grab().toImage()
+        dark_on = _text_darkness(image, menu.actionGeometry(on))
+        dark_off = _text_darkness(image, menu.actionGeometry(off))
+        menu.close()
+        window.close()
+    finally:
+        qInstallMessageHandler(None)
+    assert not [w for w in warnings if "parse" in w.lower()]
+    assert dark_on - dark_off > 40, (dark_on, dark_off)
+
+
+def test_menu_tooltips_follow_the_pointer_at_once(app):
+    from PyQt5.QtCore import QPoint
+    from PyQt5.QtTest import QTest
+    from PyQt5.QtWidgets import QMenu, QToolTip
+    from ui.functions_menu import instant_tooltips
+    menu = instant_tooltips(QMenu())
+    first = menu.addAction("First")
+    first.setToolTip("about the first")
+    second = menu.addAction("Second...")
+    second.setToolTip("why the second is greyed out")
+    second.setEnabled(False)
+    plain = menu.addAction("Plain...")          # no tooltip of its own
+    menu.popup(QPoint(0, 0))
+    app.processEvents()
+    QTest.mouseMove(menu, menu.actionGeometry(first).center())
+    assert QToolTip.text() == "about the first"
+    QTest.mouseMove(menu, menu.actionGeometry(second).center())
+    assert QToolTip.text() == "why the second is greyed out"      # disabled too
+    QTest.mouseMove(menu, menu.actionGeometry(plain).center())
+    assert menu._instant_tooltips.current is plain
+    menu.close()
