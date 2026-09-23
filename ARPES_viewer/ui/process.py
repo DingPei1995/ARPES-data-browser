@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (QSizePolicy, QWidget, QMainWindow, QVBoxLayout, QHB
 
 import tools.process as P
 import tools.volume as V
-from ui.widgets import (MemoryData, apply_colormap, separator,
+from ui.widgets import (add_button, MemoryData, apply_colormap, separator,
                                section_label, COLORMAP_NAMES, strip_stock_menu,
                                plain_image_view, show_frame, fit_frame_view)
 
@@ -457,12 +457,12 @@ class ProcessDialog(QDialog):
             "Recompute the right-hand picture whenever a setting changes.\n"
             "Turn off for a very large dataset, then use Preview.")
         buttons.addButton(self.live, QDialogButtonBox.ResetRole)
-        preview_button = buttons.addButton("Preview", QDialogButtonBox.ActionRole)
+        preview_button = add_button(buttons,"Preview", QDialogButtonBox.ActionRole)
         preview_button.clicked.connect(self.refresh)
-        apply_button = buttons.addButton("Apply", QDialogButtonBox.AcceptRole)
+        apply_button = add_button(buttons,"Apply", QDialogButtonBox.AcceptRole)
         apply_button.clicked.connect(self.apply)
         apply_button.setToolTip("Add the result to the main list as a new dataset.")
-        close = buttons.addButton("Close", QDialogButtonBox.RejectRole)
+        close = add_button(buttons,"Close", QDialogButtonBox.RejectRole)
         close.clicked.connect(self.reject)
         layout.addWidget(buttons)
 

@@ -38,7 +38,7 @@ from PyQt5.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox,
 from tools import kzmap
 from tools.process import Step, record_step
 from ui import jobs as nxs_jobs
-from ui.widgets import MemoryData
+from ui.widgets import add_button, MemoryData
 
 __all__ = ["KzMapProcessDialog"]
 
@@ -157,10 +157,10 @@ class KzMapProcessDialog(QDialog):
         layout.addWidget(found, stretch=1)
 
         buttons = QDialogButtonBox()
-        self.fit_button = buttons.addButton("Fit and assemble",
+        self.fit_button = add_button(buttons,"Fit and assemble",
                                             QDialogButtonBox.AcceptRole)
         self.fit_button.clicked.connect(self.run)
-        buttons.addButton("Close", QDialogButtonBox.RejectRole)
+        add_button(buttons,"Close", QDialogButtonBox.RejectRole)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 

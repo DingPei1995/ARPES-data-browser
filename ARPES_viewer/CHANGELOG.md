@@ -10,6 +10,154 @@ file is the record of how it got that way.
 
 ---
 
+## Thirty-ninth round: independent integration widths; Functions in the curve viewer; a crash on opening and closing windows
+
+### The cursor is shared; integration widths are not
+
+Round 38 tied the widths along each axis together (the contour's energy ±
+was the cuts' MDC ±, and so on). That is undone, and nothing about width
+passes between windows any more:
+
+- a cut window's EDC ± and MDC ± set that window's EDC and MDC and nothing
+  else, and are shaded around that window's cursor only;
+- each cut's "Integrate over ±" is its own, and is not shown on the contour;
+- the contour's energy ± is its own, and is not passed to the cuts;
+- the contour's cursor shows no width at all.
+
+Only positions pass: the contour's cursor sets the slit cut's deflector
+position and the deflector cut's slit position, its energy slider sets the
+cuts' cursor energy, and moving a cut's cursor moves the contour's point
+(and energy slice) back. (`CursorLink.add` lost its `width_spins`.)
+
+### Functions menu in the curve viewer
+
+The curve viewer follows the image viewers: its top row keeps the display
+controls (error bars, offset, Range); **Functions** holds Curve fit and Spin
+analysis (spin EDCs only), the six operations, and As a figure. The
+Operations strip under the plot is hidden until an operation is chosen from
+the menu, which opens it on that operation; **Close** puts it away. The
+menu code moved to `ui/functions_menu.py` (`FunctionsMenuMixin`), shared by
+both kinds of viewer. `fit_button` / `spin_button` / `figure_button` became
+`fit_action` / `spin_action` / `figure_action`.
+
+### Random crashes when windows are opened and closed
+
+Found while testing this round, and present in the round-38 package too:
+after a number of viewers had been opened and closed, the interpreter could
+die with a segmentation fault (no traceback) in whatever Qt call came next
+-- closing a window, or pyqtgraph building a new plot. On this machine the
+full test suite, which opens and closes a few hundred windows, crashed in 6
+of 8 runs; the round-38 package in 5 of 5.
+
+Traced down with gdb and heap checks: the object Qt was touching had
+already been freed (its vtable pointer was garbage), and no single piece of
+code caused it -- removing any one signal connection made it go away, only
+because that changed *when* the garbage collector ran. The cause is
+Python's cyclic garbage collector running in the middle of a Qt call (it
+fires on allocation, so it can start inside anything that runs Python
+code), and freeing Qt objects that the C++ code on the stack is still
+using.
+
+The fix is the standard one for PyQt programs, and the one pyqtgraph ships
+as `pyqtgraph.GarbageCollector`: `ui/gcguard.py` switches automatic
+collection off at start-up and collects from a 1-second timer instead, so a
+collection only ever runs from the event loop, between Qt calls. Reference
+counting, which frees almost everything, is unchanged; only reference
+cycles wait up to a second. The test suite applies the same rule
+(`test/conftest.py`: collection between tests only).
+
+After the fix: 9 of 9 full test runs clean, and a stress repeat of the
+window tests (both GUI test modules four times in one process) 6 of 6
+clean, where it had crashed 3 of 3 before. Confidence is good but not
+complete: the tests reproduce the crash and its absence, but the timing in
+the program is the event loop's, and it has not yet been exercised by long
+interactive use.
+
+Also changed on the way, defensively: the image views' right-click actions,
+the Export submenu and the dialog buttons that are kept as attributes are
+now created from Python (`_menu_action`, `add_button` in ui/widgets.py), so
+PyQt is told when they are deleted. On its own this did not stop the crash.
+
+Tests: `test/test_viewer_ui.py` -- widths independent and drawn only where
+set, no width on the contour, the curve viewer's menu, an operation opening
+the strip, spin analysis offered only for a spin EDC; `test/test_lifetimes.py`
+-- the collector guard (automatic collection off, the timer collects).
+
+---
+
+## Thirty-eighth round: a leaner viewer, and one cursor for a map
+
+### Functions menu
+
+The map and cut viewers had grown a row of up to nine tool buttons, then the
+colormap and slice actions, then a second row of view controls. Now:
+
+- **one row**: the colormap and the view controls (axis ranges, Auto, Inv,
+  Reset, Grid) side by side, plus a **Functions** menu. A map keeps its
+  **Deflector cut** and **Slit cut** buttons on the row; a cut keeps none.
+- **Functions** holds every tool, in sections -- Analysis, Data operations,
+  Visualization, Slice -- including the slice's *Save to the main list* and
+  *Open in a new panel*. The menu is laid out each time it opens: entries
+  that do not apply to the data are left out, and a section with nothing in
+  it is not shown. An entry that applies but cannot run says why in its
+  tooltip.
+- `ViewerWindow.add_function(...)` is how a viewer offers a tool, and it is
+  the default for anything new.
+- The one-line hints above the images went to the status bar.
+
+The tools themselves are unchanged. In code, the `*_button` attributes for
+them became `*_action` (a `QAction`: `trigger()`, `isVisible()`).
+
+### One readout cursor for a map and its cuts
+
+A map is a cube (deflector, slit, energy), and the contour and its two cut
+windows are three planes through it, so a cursor in one is a point in all of
+them. `ui/cursorlink.py` keeps it that way:
+
+- switching the cursor on or off in any of the three windows does the same
+  in the others, and a cut window opened while it is on opens with it on;
+- moving it in any window -- dragging it, typing a position, or moving that
+  window's own slider -- moves it in the others and re-slices their images
+  through the point: the slit cut goes to the cursor's deflector angle, the
+  deflector cut to its slit angle, the contour to its energy;
+- each axis has **one integration half-width**. The contour's energy ± is the
+  MDC ± of both cuts, the slit cut's "integrate over deflector ±" is the
+  deflector cut's EDC ±, and the reverse; changing one changes the others,
+  and a width a slider cannot take (wider than half its axis) is clamped
+  everywhere. So the region summed is the same box around the same point in
+  every window, and every window shades that box around its cursor --
+  translucent, with dashed edges so a blue band still shows on the blue end
+  of a colormap. The contour, which has no EDC/MDC of its own, shows the
+  deflector and slit windows its cuts are summed over.
+
+**Colours by axis**: deflector red, slit green, energy blue, in every
+window. A cursor line takes the colour of the axis it holds constant, and
+the EDC or MDC it feeds is drawn in that colour (a lone cut: slit green,
+energy blue). This replaces the EDC orange / MDC teal pairing.
+
+**A Cursor row** under every image, shown while the cursor is on: the
+position on each axis, which can be typed -- Enter moves the cursor there
+(and the linked windows with it). A value outside the data leaves the
+cursor where it is, with a red message beside the boxes and in the status
+bar.
+
+Two things fixed along the way: the integration bands had always been drawn
+*behind* the image (z = −10) and so were never seen; they are now on top of
+it. And the readout label has a light backing, so it can be read on any
+colormap.
+
+Re-slicing is coalesced. On the 113 × 800 × 983 ANTARES map read lazily
+from its file, a re-slice costs ~0.1 s per window (the HDF5 read), so after
+one slow update the link waits for the mouse to pause (120 ms) instead of
+re-slicing on every move; a map in memory follows the mouse live.
+
+Tests: `test/test_viewer_ui.py` (the menu and the row; the cursor switched
+on and off together, moved from the contour, from a cut and from the energy
+slider; typed positions; out-of-range refusals; linked and clamped widths;
+colours; a cut opened later; a lone cut's cursor row).
+
+---
+
 ## Thirty-seventh round: two crashes on closing windows
 
 ### "identifier is not of specified type" after closing a viewer

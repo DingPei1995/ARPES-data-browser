@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (QComboBox, QDialog, QDialogButtonBox,
 from tools import cutops
 from tools import process as P
 from ui.process import PreviewPair
-from ui.widgets import (MemoryData, apply_colormap, fit_frame_view,
+from ui.widgets import (add_button, MemoryData, apply_colormap, fit_frame_view,
                         plain_image_view, show_frame)
 
 __all__ = ["CutArithmeticDialog"]
@@ -127,20 +127,20 @@ class CutArithmeticDialog(QDialog):
         layout.addWidget(self.report)
 
         buttons = QDialogButtonBox()
-        self.to_list = buttons.addButton("Result to list",
+        self.to_list = add_button(buttons,"Result to list",
                                          QDialogButtonBox.ActionRole)
         self.to_list.clicked.connect(self.export_result)
-        self.sigma_to_list = buttons.addButton("Uncertainty to list",
+        self.sigma_to_list = add_button(buttons,"Uncertainty to list",
                                                QDialogButtonBox.ActionRole)
         self.sigma_to_list.setToolTip(
             "The propagated Poisson uncertainty of the result, as a cut of "
             "its own -- to mask with, or to show next to the result. Only "
             "available when both cuts are raw counts on the same grid.")
         self.sigma_to_list.clicked.connect(self.export_sigma)
-        figure = buttons.addButton("All three as a figure",
+        figure = add_button(buttons,"All three as a figure",
                                    QDialogButtonBox.ActionRole)
         figure.clicked.connect(self.to_figure)
-        buttons.addButton("Close", QDialogButtonBox.RejectRole).clicked.connect(
+        add_button(buttons,"Close", QDialogButtonBox.RejectRole).clicked.connect(
             self.reject)
         layout.addWidget(buttons)
 

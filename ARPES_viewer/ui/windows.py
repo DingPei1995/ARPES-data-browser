@@ -32,6 +32,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPainterPath
+from ui.functions_menu import FunctionsMenuMixin
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                               QLabel, QPushButton, QFileDialog, QMessageBox,
                               QComboBox, QCheckBox, QDialog, QFormLayout,
@@ -50,10 +51,12 @@ from tools.dataops import (truncate, self_normalize, compress, ARRAY_AXES,
                         CONSTRUCTOR_AXES)
 from loader.nxs_file import CUBE_KINDS, CURVE_KINDS, MOMENTUM_KINDS, energy_slot
 
+from ui.cursorlink import CursorLink
 from ui.widgets import (SpatialImageView, FrameImageView, ImagePanel,
                                FrameWindow, KMapData, MemoryData, _SliceControl,
                                ViewOptionsBar, apply_colormap, separator,
                                section_label, scroll_strip, strip_stock_menu,
+                               AXIS_COLORS,
                                COLORMAP_NAMES)
 
 
@@ -96,7 +99,7 @@ def close_child_windows(owner):
             pass
 
 
-class ViewerWindow(QMainWindow):
+class ViewerWindow(FunctionsMenuMixin, QMainWindow):
     """Shared scaffolding for every viewer: title, colormap propagation,
     export of whatever this window currently shows, and deregistration on
     close."""
@@ -135,20 +138,25 @@ class ViewerWindow(QMainWindow):
         return []
 
     # -- shared behaviour ----------------------------------------------
-    def build_toolbar(self, extra_widgets=()):
-        """The two control rows along the top of every viewer.
+    # The Functions menu (add_function, function_actions) comes from
+    # FunctionsMenuMixin, shared with the curve viewer.
 
-        Row 1, left to right: any window-specific buttons (the cut and
-        conversion buttons on a map), this window's colormap, and what to do
-        with the slice on screen. Vertical rules separate the blocks so the
-        row reads as groups rather than one strip of buttons.
+    def build_toolbar(self, extra_widgets=()):
+        """The one control row along the top of every viewer.
+
+        Left to right: the few buttons a window keeps in sight (a map's
+        Deflector cut and Slit cut), the **Functions** menu with everything
+        else this window can do, the colormap, and the view controls (axis
+        ranges, invert, grid). Vertical rules separate the blocks.
+
+        Tools are in the menu rather than in a row of buttons because a map
+        can do a dozen things and a row of a dozen buttons is a window that
+        cannot be made narrow -- and a contour wants to open at its data's
+        aspect ratio. New tools go in the menu too (:meth:`add_function`).
 
         Exporting is deliberately *not* here: it belongs to the panel being
         looked at, not to the window, and a window can hold two of them. It
         lives in each panel's own right-click menu instead.
-
-        Row 2 is the :class:`ViewOptionsBar`: axis ranges, invert, grid and
-        alpha, which used to be buried in pyqtgraph's right-click menu.
 
         The colormap lives here rather than in the launcher so two windows can
         be tinted differently -- useful when comparing a faint map against a
@@ -162,6 +170,23 @@ class ViewerWindow(QMainWindow):
             bar.addWidget(widget)
         if extra_widgets:
             bar.addWidget(separator())
+
+        # What to do with the slice on screen: last in the menu, for every
+        # viewer.
+        self.save_slice_action = self.add_function(
+            "Save slice to the main list", self.save_slice_to_list,
+            "Put the slice on screen in the launcher's list as a dataset of its "
+            "own, to reopen, compare or save to a file later.", section="Slice")
+        self.popout_action = self.add_function(
+            "Open slice in a new panel", self.pop_out_slice,
+            "Open the slice on screen in its own frozen panel, for comparing "
+            "two positions side by side.", section="Slice")
+
+        bar.addWidget(self.make_functions_button())
+        self.functions_button.setToolTip(
+            "Everything this window can do: analysis, conversions, figures, "
+            "and saving or popping out the slice on screen.")
+        bar.addWidget(separator())
 
         bar.addWidget(section_label("Colormap"))
         self.colormap_combo = QComboBox()
@@ -177,33 +202,17 @@ class ViewerWindow(QMainWindow):
         self.colormap_combo.currentTextChanged.connect(self._on_colormap_control_changed)
         self.flip_cb.toggled.connect(self._on_colormap_control_changed)
 
+        # The view controls on the same row: axis ranges, invert, grid --
+        # what used to be buried in pyqtgraph's right-click menu.
         bar.addWidget(separator())
-        bar.addWidget(section_label("Slice"))
-        self.save_slice_button = QPushButton("Save to the main list")
-        self.save_slice_button.setToolTip(
-            "Put the slice on screen in the launcher's list as a dataset of its "
-            "own, to reopen, compare or save to a file later.")
-        self.save_slice_button.clicked.connect(self.save_slice_to_list)
-        self.popout_button = QPushButton("Open in a new panel")
-        self.popout_button.setToolTip(
-            "Open the slice on screen in its own frozen panel, for comparing "
-            "two positions side by side.")
-        self.popout_button.clicked.connect(self.pop_out_slice)
-        bar.addWidget(self.save_slice_button)
-        bar.addWidget(self.popout_button)
-
+        self.view_bar = ViewOptionsBar(self)
+        bar.addWidget(self.view_bar)
         bar.addStretch(1)
 
-        # In a scroll strip like the row below it: a map window carries three
-        # buttons plus the colormap and the slice actions, and without this
-        # their combined width becomes the window's minimum -- which would
-        # defeat opening a tall-narrow map at its own aspect ratio.
+        # In a scroll strip: the row is wider than a narrow window, and
+        # without this its width would become the window's minimum -- which
+        # would defeat opening a tall-narrow map at its own aspect ratio.
         self.root.addWidget(scroll_strip(bar_widget))
-
-        # Directly under the colormap, as one visible row rather than three
-        # levels of right-click menu.
-        self.view_bar = ViewOptionsBar(self)
-        self.root.addWidget(scroll_strip(self.view_bar))
 
     # -- the slice on screen, as a dataset or its own window --------------
     def slice_label(self) -> str:
@@ -745,13 +754,11 @@ class SpatialScanWindow(ViewerWindow):
         scan = data.scan
         labels = scan.labels
 
-        hint = QLabel(
+        self.build_toolbar()
+        self.statusBar().showMessage(
             "Drag the red target to move the readout pixel. Right-click a panel for the "
             "readout cursor (EDC/MDC), a selection box and its integration, or a new "
             "window at this position.")
-        hint.setWordWrap(True)
-        self.root.addWidget(hint)
-        self.build_toolbar()
 
         panels = QHBoxLayout()
         self.spatial_view = SpatialImageView()
@@ -1013,65 +1020,56 @@ class CutWindow(ViewerWindow):
     def __init__(self, data, filename, colormap, flip):
         super().__init__(data, filename, colormap, flip)
         scan = data.scan
-        hint = QLabel("Right-click for the readout cursor: it reports the coordinates and "
-                      "value under it and draws the EDC and MDC through that point.")
-        hint.setWordWrap(True)
-        self.root.addWidget(hint)
-        self.fermi_button = QPushButton("Fermi level")
-        self.fermi_button.setToolTip(
+        self.statusBar().showMessage(
+            "Right-click the image for the readout cursor: it reports the "
+            "coordinates and value under it and draws the EDC and MDC through "
+            "that point.")
+        self.fermi_action = self.add_function(
+            "Fermi level...", self.open_fermi_fit,
             "Fit the Fermi edge of this cut: E_F, the resolution, and -- in its "
             "Advanced corner -- dividing the cut-off out and fitting E_F channel "
-            "by channel.")
-        self.fermi_button.clicked.connect(self.open_fermi_fit)
-        self.fs_button = QPushButton("FS correction")
-        self.fs_button.setToolTip(
-            "Straighten a curved feature: click along it, fit a polynomial, and "
-            "shift every angle column in energy so it comes out flat.")
-        self.fs_button.clicked.connect(self.open_fs_correction)
-        self.kconv_button = QPushButton("Cut k conversion")
-        self.kconv_button.setToolTip(
-            "Convert this cut from degrees to Å⁻¹. Needs to be "
-            "told where Γ is, since a cut is a line that generally misses "
-            "it -- inherit that from a converted map, or type the angles.")
-        self.kconv_button.clicked.connect(self.open_cut_k_conversion)
-        blocked = cut_k_conversion_blocked(data)
-        if blocked:
-            self.kconv_button.setEnabled(False)
-            self.kconv_button.setToolTip(
-                f"Not available here: {blocked}.")
-        self.fit_button = QPushButton("MDC / EDC fit")
-        self.fit_button.setToolTip(
+            "by channel.", section="Analysis")
+        self.fit_action = self.add_function(
+            "MDC / EDC fit...", self.open_mdc_edc_fit,
             "Fit peaks line by line and read the band off the fitted centres: "
-            "Fermi velocity, effective mass, self-energy.")
-        self.fit_button.clicked.connect(self.open_mdc_edc_fit)
+            "Fermi velocity, effective mass, self-energy.", section="Analysis")
         # Deliberately only for converted cuts. A band fitted in degrees has
         # a slope in eV/degree, and every quantity built on it -- v_F, m*,
-        # the self-energy -- would silently be in the wrong units. The button
+        # the self-energy -- would silently be in the wrong units. The entry
         # says why rather than disappearing, so the route to it is obvious.
         from ui.fit import momentum_cut_reason
         reason = momentum_cut_reason(data)
         if reason:
-            self.fit_button.setEnabled(False)
+            self.fit_action.setEnabled(False)
             # Only the first sentence: the rest of the explanation is the
             # message box's job, and a three-paragraph tooltip is unreadable.
-            self.fit_button.setToolTip(
+            self.fit_action.setToolTip(
                 f"Not available here: {reason.split(chr(10))[0]}")
-        self.arith_button = QPushButton("Cut arithmetic...")
-        self.arith_button.setToolTip(
+        self.fs_action = self.add_function(
+            "FS correction...", self.open_fs_correction,
+            "Straighten a curved feature: click along it, fit a polynomial, and "
+            "shift every angle column in energy so it comes out flat.")
+        self.kconv_action = self.add_function(
+            "Cut k conversion...", self.open_cut_k_conversion,
+            "Convert this cut from degrees to \u00c5\u207b\u00b9. Needs to be "
+            "told where \u0393 is, since a cut is a line that generally misses "
+            "it -- inherit that from a converted map, or type the angles.")
+        blocked = cut_k_conversion_blocked(data)
+        if blocked:
+            self.kconv_action.setEnabled(False)
+            self.kconv_action.setToolTip(f"Not available here: {blocked}.")
+        self.arith_action = self.add_function(
+            "Cut arithmetic...", lambda: self.open_cut_arithmetic(),
             "Combine this cut (A) with another (B): linear or circular "
             "dichroism, dividing by a reference, A \u2212 B, A / B, "
-            "(A \u2212 B)/(A + B). After pressing it, click the other cut in "
+            "(A \u2212 B)/(A + B). After choosing it, click the other cut in "
             "the main list.")
-        self.arith_button.clicked.connect(lambda: self.open_cut_arithmetic())
-        self.degrid_button = QPushButton("De-grid...")
-        self.degrid_button.setToolTip(
+        self.degrid_action = self.add_function(
+            "De-grid...", self.open_degrid,
             "Remove the detector's grid from this cut -- with a grid found on "
             "a map taken with the same settings if one is in the list, by "
             "notching the cut's own grid peaks otherwise.")
-        self.degrid_button.clicked.connect(self.open_degrid)
-        self.build_toolbar((self.fermi_button, self.fs_button, self.kconv_button,
-                            self.fit_button, self.arith_button,
-                            self.degrid_button))
+        self.build_toolbar()
 
         self.view = FrameImageView()
         # Titled from the axes themselves: a cut read from a file is an
@@ -1980,8 +1978,8 @@ class BrillouinZoneDialog(QDialog):
     (see :meth:`_InteractiveImageBase.set_bz_layer`); "Clear overlay" is the
     explicit way to take it off again.
 
-    Only ever opened on a k-space map (:attr:`ContourWindow.bz_button` is
-    hidden otherwise, matching ``kconv_button``'s own gating the other way
+    Only ever opened on a k-space map (:attr:`ContourWindow.bz_action` is
+    hidden otherwise, matching ``kconv_action``'s own gating the other way
     round): a Brillouin zone is a statement about the crystal's momentum-
     space periodicity, so it only means something once the contour's axes
     are actually momenta.
@@ -2928,88 +2926,77 @@ class ContourWindow(ViewerWindow):
         self.energy_label = labels.get("z", "Energy (eV)")
         self.cut_windows = {}
 
+        # Kept on the window itself: the two cuts are how a map is navigated.
         self.defl_cut_button = QPushButton("Deflector cut")
         self.defl_cut_button.setToolTip(
             "Open the deflector-vs-energy cut, integrated over the slit-angle window.")
         self.slit_cut_button = QPushButton("Slit cut")
         self.slit_cut_button.setToolTip(
             "Open the slit-vs-energy cut, integrated over the deflector-angle window.")
-        self.kconv_button = QPushButton("Map k conversion")
-        self.arbcut_button = QPushButton("Arbitrary cut")
-        self.arbcut_button.setToolTip(
-            "Cut along a path of up to six points picked on this contour, "
-            "instead of along one of the two axes.")
-        self.defl_cut_button.setMinimumWidth(100)
-        self.slit_cut_button.setMinimumWidth(90)
-        self.kconv_button.setToolTip(
-            "Convert this map from angle space to momentum space (A^-1). "
-            "Pick the point on the contour that should become k = (0, 0).")
         self.defl_cut_button.clicked.connect(lambda: self.open_cut("deflector"))
         self.slit_cut_button.clicked.connect(lambda: self.open_cut("slit"))
-        self.kconv_button.clicked.connect(self.open_k_conversion)
-        self.arbcut_button.clicked.connect(self.open_arbitrary_cut)
+
+        # Everything else is in the Functions menu.
+        self.arbcut_action = self.add_function(
+            "Arbitrary cut...", self.open_arbitrary_cut,
+            "Cut along a path of up to six points picked on this contour, "
+            "instead of along one of the two axes.")
         # Already in momentum space: converting again would be meaningless.
         # A kz map is hidden too, for a different reason -- its first axis is
         # a photon energy, and the in-plane formula does not apply to it.
         # (The refusal in open_k_conversion() is still there as the backstop,
-        # and explains why; this just stops the button being offered.)
-        self.kconv_button.setVisible(data.kind not in MOMENTUM_KINDS
-                                     and data.kind != "kz_map")
-        self.bz_button = QPushButton("Brillouin zone...")
-        self.bz_button.setToolTip(
-            "Overlay a Brillouin zone (or a moire zone) on this contour. "
-            "Needs momentum, not angle -- only available once a map has "
-            "been converted to k-space.")
-        self.bz_button.clicked.connect(self.open_brillouin_zone)
-        # A Brillouin zone is a statement about momentum-space periodicity,
-        # so it only means something once the axes are actually k, not angle
-        # -- the mirror image of kconv_button's own gating above.
-        self.bz_button.setVisible(data.kind == "k_map")
-        self.kz_button = QPushButton("kz map processing...")
-        self.kz_button.setToolTip(
+        # and explains why; this just stops the entry being offered.)
+        self.kconv_action = self.add_function(
+            "Map k conversion...", self.open_k_conversion,
+            "Convert this map from angle space to momentum space (A^-1). "
+            "Pick the point on the contour that should become k = (0, 0).",
+            visible=data.kind not in MOMENTUM_KINDS and data.kind != "kz_map")
+        # Only a photon-energy scan needs this: it is the one kind whose
+        # members were each measured against a different reference. Once
+        # converted it is a kz_map_k and both are done with.
+        self.kz_action = self.add_function(
+            "kz map processing...", self.open_kz_processing,
             "Fit the Fermi edge of every spectrum in this photon-energy "
             "scan, shift each one to put its own edge at zero, and crop to "
             "the energy range they all still cover.\n\n"
             "The scan arrives stacked as measured, because nothing in the "
             "files says where each spectrum's Fermi level is. This measures "
-            "it from the spectra themselves.")
-        self.kz_button.clicked.connect(self.open_kz_processing)
-        # Only a photon-energy scan needs this: it is the one kind whose
-        # members were each measured against a different reference. Once
-        # converted it is a kz_map_k and both are done with.
-        self.kz_button.setVisible(data.kind == "kz_map")
-
-        self.kzconv_button = QPushButton("kz -> momentum...")
-        self.kzconv_button.setToolTip(
+            "it from the spectra themselves.",
+            visible=data.kind == "kz_map")
+        self.kzconv_action = self.add_function(
+            "kz -> momentum...", self.open_kz_conversion,
             "Convert this photon-energy scan to (k_z, k_par) in A^-1, "
             "choosing the inner potential.\n\n"
             "Flatten the Fermi surface first: the conversion reads the "
             "energy axis literally, so a Fermi edge that bends across the "
             "analyser angle becomes a bend in k_z that looks like "
-            "dispersion.")
-        self.kzconv_button.clicked.connect(self.open_kz_conversion)
-        self.kzconv_button.setVisible(data.kind == "kz_map")
-        self.slices_button = QPushButton("Slice figure...")
-        self.slices_button.setToolTip(
-            "A page of slices through this cube as one figure for a paper -- "
-            "a row of constant-energy contours, or a row of cuts -- with a "
-            "shared colour scale and labels only on the outer edges.")
-        self.slices_button.clicked.connect(self.open_slice_figure)
-        self.degrid_button = QPushButton("De-grid map...")
-        self.degrid_button.setToolTip(
+            "dispersion.",
+            visible=data.kind == "kz_map")
+        # Only while the data are still on the detector's pixels; a map in
+        # momentum has been resampled and has no pattern left to find.
+        self.degrid_action = self.add_function(
+            "De-grid map...", self.open_degrid,
             "Remove the detector's grid from the whole map, using the map "
             "itself as the reference: the grid stays on the same pixels while "
             "the photoemission moves. Do this first -- before the k or kz "
-            "conversion, a Fermi-surface correction or kz map processing.")
-        self.degrid_button.clicked.connect(self.open_degrid)
-        # Only while the data are still on the detector's pixels; a map in
-        # momentum has been resampled and has no pattern left to find.
-        self.degrid_button.setVisible(data.kind in ("map", "kz_map"))
-        self.build_toolbar((self.defl_cut_button, self.slit_cut_button,
-                            self.arbcut_button, self.kconv_button,
-                            self.bz_button, self.kz_button,
-                            self.kzconv_button, self.degrid_button,
-                            self.slices_button))
+            "conversion, a Fermi-surface correction or kz map processing.",
+            visible=data.kind in ("map", "kz_map"))
+        # A Brillouin zone is a statement about momentum-space periodicity,
+        # so it only means something once the axes are actually k, not angle
+        # -- the mirror image of the k conversion's own gating above.
+        self.bz_action = self.add_function(
+            "Brillouin zone...", self.open_brillouin_zone,
+            "Overlay a Brillouin zone (or a moire zone) on this contour. "
+            "Needs momentum, not angle -- only available once a map has "
+            "been converted to k-space.",
+            section="Visualization", visible=data.kind == "k_map")
+        self.slices_action = self.add_function(
+            "Slice figure...", self.open_slice_figure,
+            "A page of slices through this cube as one figure for a paper -- "
+            "a row of constant-energy contours, or a row of cuts -- with a "
+            "shared colour scale and labels only on the outer edges.",
+            section="Visualization")
+        self.build_toolbar((self.defl_cut_button, self.slit_cut_button))
         self.figure_windows = []
 
         self.e_control = _SliceControl("Energy (eV)", "eV", 0.05, self)
@@ -3032,6 +3019,13 @@ class ContourWindow(ViewerWindow):
         # stretch; without this a tall-narrow map leaves wide empty margins.
         self.size_to_data_aspect(self.view)
         self.view.fit_to_data()
+
+        # One cursor for this contour and its cut windows (ui.cursorlink):
+        # red for the deflector axis, green for the slit, blue for energy.
+        self.panel.set_axis_colors(AXIS_COLORS["defl"], AXIS_COLORS["slit"])
+        self.cursor_link = CursorLink(self)
+        self.cursor_link.add(self, self.panel, x_axis="defl", y_axis="slit",
+                             control=self.e_control, control_axis="energy")
 
     def image_panels(self):
         return (self.panel,)
@@ -3160,13 +3154,20 @@ class ContourWindow(ViewerWindow):
         if window is not None:
             window.raise_()
             window.activateWindow()
-            return
+            return window
         window = MapCutWindow(self, which)
         self.adopt_child(window)
         window.closed.connect(lambda w, key=which: self.cut_windows.pop(key, None))
         self.cut_windows[which] = window
         window.set_colormap(self.colormap, self.flip)
+        # Its cursor is this contour's, seen from the side: the slit cut's
+        # horizontal axis is the slit angle and its slider the deflector
+        # angle; the deflector cut the other way round.
+        along, across = (("slit", "defl") if which == "slit" else ("defl", "slit"))
+        self.cursor_link.add(window, window.panel, x_axis=along, y_axis="energy",
+                             control=window.control, control_axis=across)
         window.show()
+        return window
 
     def exportable_panels(self):
         if self.view.last_frame is None:
@@ -3546,19 +3547,17 @@ class MapCutWindow(ViewerWindow):
         # The correction is fitted along the analyser's slit, because that is
         # the direction its curvature lives in; a deflector-vs-E cut is a
         # different axis entirely, so the button is only offered here.
-        self.fs_button = QPushButton("FS correction")
-        self.fs_button.setToolTip(
-            "Straighten a curved feature along the slit and apply the same "
-            "shift to the whole cube, giving a corrected map in the file list.")
-        self.fs_button.clicked.connect(self.open_fs_correction)
-        self.degrid_button = QPushButton("De-grid map...")
-        self.degrid_button.setToolTip(
-            "Remove the detector's grid from the whole map this cut belongs "
-            "to -- every slit cut of it at once.")
-        self.degrid_button.clicked.connect(lambda: self.contour.open_degrid())
-        self.degrid_button.setVisible(contour.data.kind in ("map", "kz_map"))
-        self.build_toolbar((self.fs_button, self.degrid_button)
-                           if which == "slit" else ())
+        if which == "slit":
+            self.fs_action = self.add_function(
+                "FS correction...", self.open_fs_correction,
+                "Straighten a curved feature along the slit and apply the same "
+                "shift to the whole cube, giving a corrected map in the file list.")
+            self.degrid_action = self.add_function(
+                "De-grid map...", lambda: self.contour.open_degrid(),
+                "Remove the detector's grid from the whole map this cut belongs "
+                "to -- every slit cut of it at once.",
+                visible=contour.data.kind in ("map", "kz_map"))
+        self.build_toolbar()
         self.control = _SliceControl(f"Integrate over {sum_label}", "deg", 0.1, self)
         self.root.addWidget(self.control)
 
@@ -3573,6 +3572,8 @@ class MapCutWindow(ViewerWindow):
 
         self.view.set_axis_labels(self.x_label, contour.energy_label)
         self.view.enable_selection_action(False)
+        self.panel.set_axis_colors(AXIS_COLORS["slit" if which == "slit" else "defl"],
+                                   AXIS_COLORS["energy"])
         self.control.configure(len(self.sum_axis), self.sum_axis)
         self.control.changed.connect(self.refresh_cut)
         self.refresh_cut()

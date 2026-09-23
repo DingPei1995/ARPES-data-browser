@@ -37,7 +37,7 @@ from scipy.ndimage import gaussian_filter
 
 from tools import degrid as DG
 from tools import process as P
-from ui.widgets import MemoryData, apply_colormap, plain_image_view, show_frame
+from ui.widgets import add_button, MemoryData, apply_colormap, plain_image_view, show_frame
 
 __all__ = ["DegridDialog", "grid_candidates", "default_source"]
 
@@ -264,14 +264,14 @@ class DegridDialog(QDialog):
         layout.addWidget(self.report)
 
         buttons = QDialogButtonBox()
-        self.to_list = buttons.addButton("Result to list", QDialogButtonBox.ActionRole)
+        self.to_list = add_button(buttons,"Result to list", QDialogButtonBox.ActionRole)
         self.to_list.clicked.connect(self.export)
         self.to_list.setEnabled(False)
         self.with_grid = QCheckBox("Also list the grid pattern (for cuts taken "
                                    "later with the same settings)")
         self.with_grid.setChecked(self.is_map)
         self.with_grid.setVisible(self.is_map)
-        buttons.addButton("Close", QDialogButtonBox.RejectRole).clicked.connect(self.reject)
+        add_button(buttons,"Close", QDialogButtonBox.RejectRole).clicked.connect(self.reject)
         bottom = QHBoxLayout()
         bottom.addWidget(self.with_grid)
         bottom.addStretch(1)

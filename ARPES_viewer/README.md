@@ -175,8 +175,8 @@ panels, which axis is the energy -- derives from it.
 
 - **A cut** opens as the E-vs-k spectrum, with EDC/MDC curves and a
   draggable slice.
-- **A cube** opens on its constant-energy contour. Two buttons open the
-  orthogonal cuts, each in a further window. They belong to the map:
+- **A cube** opens on its constant-energy contour. **Deflector cut** and
+  **Slit cut** open the orthogonal cuts, each in a further window. They belong to the map:
   closing the map closes them too (and any dialog a viewer opened closes
   with that viewer). Snapshots popped out of a viewer are copies and stay
   open.
@@ -191,9 +191,64 @@ in the main list, named with where it was taken (and, from a map's cut
 window, the slice). Its kind follows its own axis: a profile along an angle
 is listed as an MDC even if it was the "EDC" of a constant-energy contour.
 
-Every image panel has the same view controls in a strip rather than buried in
-a right-click menu: colormap, flip, gamma, level bar, interpolation, and the
-axis ranges.
+### The top row, and the Functions menu
+
+Every viewer has **one row** along its top: the colormap (and Flip) and the
+view controls (axis ranges, Auto, Inv, Reset, Grid) side by side, and a
+**Functions** menu. A map's window also keeps its **Deflector cut** and
+**Slit cut** buttons there, since the cuts are how a map is navigated.
+
+Everything else a viewer can do is in **Functions**, in sections:
+
+| Viewer | Analysis | Data operations | Visualization | Slice |
+|---|---|---|---|---|
+| map / kz map / k-map | | Arbitrary cut, Map k conversion (angle maps), kz map processing and kz -> momentum (kz maps), De-grid map (maps as measured) | Brillouin zone (k-maps), Slice figure | Save slice to the main list, Open slice in a new panel |
+| cut | Fermi level, MDC / EDC fit | FS correction, Cut k conversion, Cut arithmetic, De-grid | | same |
+| slit cut of a map | | FS correction, De-grid map | | same |
+| curve (EDC, MDC, spin EDC) | Curve fit, Spin analysis (spin EDCs) | Crop, Bin, Normalise, Subtract a background, Shift the axis, Add counting errors (√N) | As a figure | |
+
+In the curve viewer the top row keeps the display controls (error bars,
+waterfall offset, the Range); an operation chosen from Functions opens the
+**Operations** strip under the plot on that operation, to set it up and
+**Apply** (**Close** puts the strip away).
+
+An entry that does not apply to the data is not listed (Brillouin zone on
+an angle map); one that applies but cannot run yet is greyed, and its
+tooltip says why (MDC / EDC fit on a cut still in degrees). New tools go in
+this menu too, unless they need to be always in sight.
+
+Every image panel has, under its own title, the level bar, gamma and
+interpolation.
+
+### The readout cursor
+
+Right-click an image for **Readout cursor**. It reads the data point under
+it; on a cut it also draws the EDC and MDC through that point, summed over
+their **±** windows. Under the image a **Cursor** row shows its position:
+type a value and press **Enter** to move it there. A value outside the data
+leaves the cursor where it is and says so, in red.
+
+**On a map the cursor is one point in the cube, shared by the contour and
+its cut windows.** Switching it on (or off) in any of them does the same in
+the others. Moving it anywhere -- dragging, typing, or moving a window's
+own slider -- moves it everywhere and re-slices the other windows through
+the new point: the slit cut is taken at the cursor's deflector angle, the
+deflector cut at its slit angle, and the contour at its energy.
+
+The three axes keep one colour each in every window: **deflector red, slit
+green, energy blue**. A cursor line is the colour of the axis it holds
+constant, and the EDC or MDC it feeds is drawn in the same colour.
+
+**Integration widths are each window's own and are never passed between
+windows.** A cut window's EDC ± and MDC ± set only that window's EDC and MDC,
+and only that window shades them around its cursor (translucent, dashed
+edges, in the axis colours). Each cut's "Integrate over ±" and the contour's
+energy ± are likewise its own. The contour's cursor has no width. Only the
+*point* is shared.
+
+On a large map read lazily from its file, re-slicing takes about 0.1 s per
+window, so while a cursor is being dragged the other windows wait for the
+mouse to pause; a map held in memory follows it live.
 
 ---
 
@@ -230,8 +285,8 @@ axis ranges.
 ### kz map processing
 
 A photon-energy scan arrives stacked as measured, because nothing in the
-files says where each spectrum's Fermi level actually is. **kz map
-processing...** on a kz map's viewer measures it from the spectra
+files says where each spectrum's Fermi level actually is. **Functions → kz
+map processing...** on a kz map's viewer measures it from the spectra
 themselves:
 
 1. The slit cut opens alongside with a selection box on it. Drag the box
@@ -261,7 +316,7 @@ calibration can be checked or reused later.
 
 ### kz -> momentum
 
-**kz -> momentum...** on a kz map's viewer converts it to `(k_z, k_par, E)`
+**Functions → kz -> momentum...** on a kz map's viewer converts it to `(k_z, k_par, E)`
 in Å⁻¹, with k_z along the first axis.
 
 The conversion is a coordinate change:
@@ -309,7 +364,8 @@ Channels can be hidden, offset into a waterfall (**Offset**), and read off
 with the cursor. **Range** is a draggable x window used by the operations
 and the panels below.
 
-**Operations** each make a new dataset in the list, with the step recorded:
+**Operations** (**Functions → Data operations**) each make a new dataset in
+the list, with the step recorded:
 
 | operation | what it does | uncertainties |
 |---|---|---|
@@ -391,8 +447,8 @@ only data still on the detector's pixels can be de-gridded, so the button
 refuses anything k-converted, Fermi-surface corrected, kz-aligned,
 interpolated along a path, smoothed or differentiated, and says why.
 
-**A map or kz map** -- **De-grid map...** on the contour window or on its
-slit-cut window; the whole map is done at once. No reference measurement is
+**A map or kz map** -- **Functions → De-grid map...** on the contour window
+or on its slit-cut window; the whole map is done at once. No reference measurement is
 needed: the map is its own reference. The grid stays on the same pixels in
 every slice while the photoemission moves, so it survives an average over
 the slices that the photoemission does not. From that average:
@@ -419,7 +475,7 @@ grid's power over that of the same k-space regions without a grid:
 falls as the count rate rises (their correlation was −0.99 on LHhv). A
 113-slice ANTARES map takes about a minute, with a progress bar.
 
-**A cut** -- **De-grid...** on the cut viewer. Best is a grid from a map
+**A cut** -- **Functions → De-grid...** on the cut viewer. Best is a grid from a map
 taken with the same lens mode and pass energy: tick **Also list the grid
 pattern** when de-gridding the map and a `[grid]` dataset goes to the list;
 the cut's window finds it (same detector frame) and chooses it when the
@@ -443,7 +499,7 @@ ratios and sums. Cuts only -- a map has to be sliced first.
 
 Two ways in, the same window either way:
 
-- In a cut's viewer, press **Cut arithmetic...**. That cut is **A**. A small
+- In a cut's viewer, choose **Functions → Cut arithmetic...**. That cut is **A**. A small
   prompt asks you to click the other cut in the main list; the window opens
   on that click. Clicking a map, or A's own row, is refused in the prompt
   and it keeps waiting; closing the prompt stops the wait.
@@ -621,6 +677,9 @@ you what it may depend on.
 | **`ui/`** | |
 | `ui/main_window.py` | The launcher window's layout. |
 | `ui/windows.py`, `ui/widgets.py` | The per-file viewers, and the image panels they are built from. |
+| `ui/functions_menu.py` | The Functions menu shared by every viewer (`add_function`). |
+| `ui/gcguard.py` | Cyclic garbage collection from the event loop only, never inside a Qt call (prevents random crashes on opening and closing windows). |
+| `ui/cursorlink.py` | The readout cursor shared by a map's contour and its cut windows (positions only; widths stay in each window). |
 | `ui/loader_dialog.py` | The Load-data window: files, reader, axis options. |
 | `ui/kzmap.py` | The kz map processing window. |
 | `ui/kzconv.py` | The kz-to-momentum window: V0, the zone lines, the period tool. |
@@ -705,5 +764,7 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 476 of them, no display needed -- `conftest.py` puts the
-project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`.
+from this folder. 509 of them, no display needed -- `conftest.py` puts the
+project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`, and
+`test/conftest.py` runs garbage collection only between tests, the rule
+`ui/gcguard.py` applies in the program.

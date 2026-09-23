@@ -49,7 +49,8 @@ from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
 from tools import curves as C
 from tools import process as P
 from tools import spin as S
-from ui.widgets import MemoryData, _is_energy_label
+from ui.functions_menu import FunctionsMenuMixin
+from ui.widgets import add_button, MemoryData, _is_energy_label, section_label, separator
 
 __all__ = ["CurveWindow", "CurveFitDialog", "SpinAnalysisDialog",
            "curve_dataset", "curve_panel", "CHANNEL_COLOURS"]
@@ -159,8 +160,15 @@ OPERATIONS = (
 )
 
 
-class CurveWindow(QMainWindow):
-    """One-dimensional data: every channel as a curve."""
+class CurveWindow(FunctionsMenuMixin, QMainWindow):
+    """One-dimensional data: every channel as a curve.
+
+    Like the image viewers, its top row keeps only the display controls
+    (error bars, waterfall offset, the Range); the fits, the operations and
+    the figure are in its **Functions** menu. An operation chosen there
+    opens the Operations strip under the plot with that operation selected,
+    to set its parameters and Apply.
+    """
 
     closed = pyqtSignal(object)
     datasetCreated = pyqtSignal(object)
@@ -200,23 +208,32 @@ class CurveWindow(QMainWindow):
         root.setContentsMargins(4, 4, 4, 4)
 
         bar = QHBoxLayout()
-        self.fit_button = QPushButton("Curve fit...")
-        self.fit_button.setToolTip(
+        self.fit_action = self.add_function(
+            "Curve fit...", self.open_fit,
             "Peaks on a background (optionally cut off by a Fermi edge), or "
-            "the Fermi edge itself, with uncertainties on every parameter.")
-        self.fit_button.clicked.connect(self.open_fit)
-        bar.addWidget(self.fit_button)
-        self.spin_button = QPushButton("Spin analysis...")
-        self.spin_button.setToolTip(
+            "the Fermi edge itself, with uncertainties on every parameter.",
+            section="Analysis")
+        self.spin_action = self.add_function(
+            "Spin analysis...", self.open_spin_analysis,
             "Polarisation from the spin channels, the instrumental "
-            "asymmetry, and the spin-resolved spectra.")
-        self.spin_button.clicked.connect(self.open_spin_analysis)
-        self.spin_button.setVisible(self.kind == "spin_edc")
-        bar.addWidget(self.spin_button)
-        self.figure_button = QPushButton("As a figure...")
-        self.figure_button.clicked.connect(self.to_figure)
-        bar.addWidget(self.figure_button)
-        bar.addSpacing(12)
+            "asymmetry, and the spin-resolved spectra.",
+            section="Analysis", visible=self.kind == "spin_edc")
+        # One entry per operation; each opens the Operations strip on it.
+        self.operation_actions = {}
+        for key, text in OPERATIONS:
+            self.operation_actions[key] = self.add_function(
+                text + ("" if key == "poisson" else "..."),
+                lambda key=key: self.show_operation(key),
+                "Opens the Operations strip under the plot on this operation: "
+                "set it up there and press Apply. Each makes a new dataset in "
+                "the list.")
+        self.figure_action = self.add_function(
+            "As a figure...", self.to_figure,
+            "The channels shown, as a figure to adjust and export.",
+            section="Visualization")
+        bar.addWidget(self.make_functions_button())
+        bar.addWidget(separator())
+        bar.addWidget(section_label("View"))
         self.errors_box = QCheckBox("Error bars")
         self.errors_box.setChecked(True)
         self.errors_box.toggled.connect(self.redraw)
@@ -277,7 +294,9 @@ class CurveWindow(QMainWindow):
         self.region.sigRegionChanged.connect(self._range_dragged)
         self._range_dragged()
 
-        root.addWidget(self._operations())
+        self.operations_box = self._operations()
+        self.operations_box.setVisible(False)
+        root.addWidget(self.operations_box)
         self.statusBar()
 
     def _operations(self) -> QWidget:
@@ -339,7 +358,24 @@ class CurveWindow(QMainWindow):
         apply = QPushButton("Apply")
         apply.clicked.connect(lambda: self.apply_operation())
         row.addWidget(apply)
+        hide = QPushButton("Close")
+        hide.setToolTip("Put the Operations strip away again (Functions opens it).")
+        hide.clicked.connect(lambda: box.setVisible(False))
+        row.addWidget(hide)
         return box
+
+    def show_operation(self, key: str):
+        """Open the Operations strip on ``key``, to set it up and Apply."""
+        index = self.operation.findData(key)
+        if index >= 0:
+            self.operation.setCurrentIndex(index)
+        self.operations_box.setVisible(True)
+        if key in ("crop",) or (key == "normalise"
+                                and self.norm_how.currentData() == "region"):
+            if not self.range_box.isChecked():
+                self.statusBar().showMessage(
+                    "Switch the Range on and drag it over what to keep.", 6000)
+        return self.operations_box
 
     # -- the range -----------------------------------------------------------
     def _toggle_range(self, on: bool):
@@ -691,14 +727,14 @@ class CurveFitDialog(QDialog):
         layout.addWidget(self.report)
 
         box = QDialogButtonBox()
-        fit = box.addButton("Fit", QDialogButtonBox.ActionRole)
+        fit = add_button(box,"Fit", QDialogButtonBox.ActionRole)
         fit.clicked.connect(lambda: self.run_fit())
-        self.to_list = box.addButton("Fit to list", QDialogButtonBox.ActionRole)
+        self.to_list = add_button(box,"Fit to list", QDialogButtonBox.ActionRole)
         self.to_list.clicked.connect(self.export)
         self.to_list.setEnabled(False)
-        copy = box.addButton("Copy results", QDialogButtonBox.ActionRole)
+        copy = add_button(box,"Copy results", QDialogButtonBox.ActionRole)
         copy.clicked.connect(self.copy_results)
-        box.addButton("Close", QDialogButtonBox.RejectRole).clicked.connect(
+        add_button(box,"Close", QDialogButtonBox.RejectRole).clicked.connect(
             self.reject)
         layout.addWidget(box)
 
@@ -1155,14 +1191,14 @@ class SpinAnalysisDialog(QDialog):
         layout.addWidget(self.report)
 
         box = QDialogButtonBox()
-        self.p_button = box.addButton("P to list", QDialogButtonBox.ActionRole)
+        self.p_button = add_button(box,"P to list", QDialogButtonBox.ActionRole)
         self.p_button.clicked.connect(self.export_polarisation)
-        self.ud_button = box.addButton("I↑ / I↓ to list",
+        self.ud_button = add_button(box,"I↑ / I↓ to list",
                                        QDialogButtonBox.ActionRole)
         self.ud_button.clicked.connect(self.export_spin_resolved)
-        figure = box.addButton("As a figure", QDialogButtonBox.ActionRole)
+        figure = add_button(box,"As a figure", QDialogButtonBox.ActionRole)
         figure.clicked.connect(self.to_figure)
-        box.addButton("Close", QDialogButtonBox.RejectRole).clicked.connect(
+        add_button(box,"Close", QDialogButtonBox.RejectRole).clicked.connect(
             self.reject)
         layout.addWidget(box)
         self._channels_edited()

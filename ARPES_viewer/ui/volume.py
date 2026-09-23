@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import (QSizePolicy, QWidget, QMainWindow, QVBoxLayout, QHB
 from tools import colormaps
 import tools.process as P
 import tools.volume as V
-from ui.widgets import MemoryData, COLORMAP_NAMES
+from ui.widgets import add_button, MemoryData, COLORMAP_NAMES
 from ui.process import spin, whole, _decimate
 
 
@@ -895,14 +895,14 @@ class VolumeProcessDialog(QDialog):
         layout.addWidget(self.note)
 
         buttons = QDialogButtonBox()
-        preview = buttons.addButton("Preview", QDialogButtonBox.ActionRole)
+        preview = add_button(buttons,"Preview", QDialogButtonBox.ActionRole)
         preview.clicked.connect(self.refresh)
-        apply_button = buttons.addButton("Apply to the whole cube",
+        apply_button = add_button(buttons,"Apply to the whole cube",
                                          QDialogButtonBox.AcceptRole)
         apply_button.clicked.connect(self.apply)
-        view = buttons.addButton("Open the 3D view", QDialogButtonBox.ActionRole)
+        view = add_button(buttons,"Open the 3D view", QDialogButtonBox.ActionRole)
         view.clicked.connect(self.open_view)
-        buttons.addButton("Close", QDialogButtonBox.RejectRole).clicked.connect(
+        add_button(buttons,"Close", QDialogButtonBox.RejectRole).clicked.connect(
             self.reject)
         layout.addWidget(buttons)
 

@@ -1737,6 +1737,10 @@ def DumpUIWidgets(values):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # Cyclic garbage collection from the event loop only, never inside a Qt
+    # call -- see ui/gcguard.py for the crash this prevents.
+    from ui import gcguard
+    gcguard.install(app)
     win = _MainWindow()
     ui = main_window_ui.Ui_MainWindow()
     ui.setupUi(win)

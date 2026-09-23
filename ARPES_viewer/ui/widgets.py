@@ -50,7 +50,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
                               QPushButton, QComboBox, QFrame, QSizePolicy,
                               QScrollArea, QSpinBox, QDialog, QTabWidget,
                               QFormLayout, QLineEdit, QFileDialog, QMessageBox,
-                              QMenu)
+                              QMenu, QAction)
 
 from tools import colormaps
 from tools import export
@@ -91,6 +91,21 @@ pg.ViewBox.register = _register_view_without_name
 RED_PEN = pg.mkPen("#bd4921", width=3)
 EDC_COLOR = "#bd4921"   # the EDC curve and the vertical line that feeds it
 MDC_COLOR = "#0d7377"   # the MDC curve and the horizontal line that feeds it
+
+#: One colour per axis of a map, used by every readout cursor: a line at
+#: constant deflector angle is red wherever it is drawn, one at constant slit
+#: angle green, one at constant energy blue -- so the same coordinate is the
+#: same colour in the contour and in both of its cuts, and the EDC or MDC a
+#: line feeds is drawn in that line's colour. A lone cut (slit angle against
+#: energy) uses the slit and energy colours.
+AXIS_COLORS = {"defl": "#d62728", "slit": "#2ca02c", "energy": "#1f77b4"}
+#: Opacity (0-255) of the shaded EDC/MDC integration windows around a cursor.
+BAND_ALPHA = 60
+
+
+def _rgba(color: str, alpha: int):
+    qcolor = QColor(color)
+    return (qcolor.red(), qcolor.green(), qcolor.blue(), int(alpha))
 # Selection rectangle: deliberately heavy so the box and its corner grips
 # stand out against dense ARPES data, and easy to grab.
 ROI_PEN = pg.mkPen("#1f6f8b", width=4)
@@ -273,6 +288,31 @@ def strip_stock_menu(plot_item) -> None:
                 menu.removeAction(action)
     except Exception:
         pass
+
+
+
+def _menu_action(menu, text: str) -> "QAction":
+    """``menu.addAction(text)``, but with the action made from Python.
+
+    ``QMenu.addAction(text)`` has Qt create the action, and PyQt is not told
+    when an object Qt created is deleted; a reference kept to one (every
+    image view keeps its right-click entries) can outlive it. An action made
+    here is PyQt's own and its deletion is tracked. Defensive only: the
+    random crashes on opening and closing windows had another cause (see
+    ui/gcguard.py).
+    """
+    action = QAction(text, menu)
+    menu.addAction(action)
+    return action
+
+
+
+def add_button(box, text: str, role):
+    """``box.addButton(text, role)`` with the button made from Python, for
+    the same reason as :func:`_menu_action`."""
+    button = QPushButton(text)
+    box.addButton(button, role)
+    return button
 
 
 class AspectBox(QWidget):
@@ -1040,8 +1080,12 @@ class _InteractiveImageBase(pg.ImageView):
 
         self.readout_cursor = None
         self.readout_label = None
+        #: colours of the vertical (constant x) and horizontal (constant y)
+        #: cursor lines and their bands; see AXIS_COLORS
+        self._readout_colors = (AXIS_COLORS["slit"], AXIS_COLORS["energy"])
         self.readout_vline = self.readout_hline = None
         self.readout_vband = self.readout_hband = None
+        self._band_half = {}        # band -> half-width it was last given
         self.selection_roi = None
         self._value_lookup = None   # callable(ix, iy) -> value, set by subclass
         self._smooth_on = False     # display interpolation + optional blur
@@ -1317,27 +1361,27 @@ class _InteractiveImageBase(pg.ImageView):
     def _add_context_actions(self):
         menu = self.view_box.menu
         menu.addSeparator()
-        self.action_readout = menu.addAction("Readout cursor")
+        self.action_readout = _menu_action(menu, "Readout cursor")
         self.action_readout.setCheckable(True)
         self.action_readout.toggled.connect(self.set_readout_cursor_visible)
 
-        self.action_selection = menu.addAction("Selection box")
+        self.action_selection = _menu_action(menu, "Selection box")
         self.action_selection.setCheckable(True)
         self.action_selection.toggled.connect(self.set_selection_visible)
 
-        self.action_apply = menu.addAction("Integrate selection into the other panel")
+        self.action_apply = _menu_action(menu, "Integrate selection into the other panel")
         self.action_apply.setEnabled(False)
         self.action_apply.triggered.connect(self.selectionApplied.emit)
 
         # Only advertised on panels where it means something (the spatial
         # overview); enable_popout_action() turns it on.
-        self.action_popout = menu.addAction("Open this position in a new window")
+        self.action_popout = _menu_action(menu, "Open this position in a new window")
         self.action_popout.setVisible(False)
         self.action_popout.triggered.connect(self.popoutRequested.emit)
 
         # Likewise: exchanging the two axes only means something on a map
         # whose axes are the same kind of quantity.
-        self.action_swap = menu.addAction("Swap X and Y")
+        self.action_swap = _menu_action(menu, "Swap X and Y")
         self.action_swap.setCheckable(True)
         self.action_swap.setVisible(False)
         self.action_swap.toggled.connect(self.swapToggled.emit)
@@ -1346,7 +1390,7 @@ class _InteractiveImageBase(pg.ImageView):
         # EDC and MDC curves are the two axis-aligned special cases of this;
         # a band that runs at an angle needs the general one, and reading it
         # off by eye from a picture is how a dispersion gets misquoted.
-        self.action_profile = menu.addAction("Line profile...")
+        self.action_profile = _menu_action(menu, "Line profile...")
         self.action_profile.setToolTip(
             "Drag a line across the image and read the intensity along it, "
             "integrated over a width you choose.")
@@ -1357,7 +1401,7 @@ class _InteractiveImageBase(pg.ImageView):
         # range" -- it is already on screen and already framing the feature,
         # so re-typing four numbers into the stack window is work the user
         # has effectively already done.
-        self.action_stack = menu.addAction("Stack plot of the selection...")
+        self.action_stack = _menu_action(menu, "Stack plot of the selection...")
         self.action_stack.setToolTip(
             "EDCs or MDCs across the selection box, as a waterfall.")
         self.action_stack.triggered.connect(self.open_stack_plot)
@@ -1368,18 +1412,21 @@ class _InteractiveImageBase(pg.ImageView):
         # right-clicking the picture you want is the least ambiguous way to
         # say which one.
         menu.addSeparator()
-        export_menu = menu.addMenu("Export")
-        self.action_export_nxs = export_menu.addAction("Data (.nxs)...")
+        # Made here, not by addMenu(): see _menu_action.
+        export_menu = QMenu("Export", menu)
+        menu.addMenu(export_menu)
+        self._export_menu = export_menu
+        self.action_export_nxs = _menu_action(export_menu, "Data (.nxs)...")
         self.action_export_nxs.setToolTip(
             "Write this panel's data, axes and metadata as a dataset this "
             "program opens again.")
         self.action_export_nxs.triggered.connect(self.export_dataset)
-        self.action_export_image = export_menu.addAction("Image...")
+        self.action_export_image = _menu_action(export_menu, "Image...")
         self.action_export_image.setToolTip(
             "Render what is on screen at a chosen size and format, with or "
             "without the axes around it.")
         self.action_export_image.triggered.connect(self.export_image)
-        self.action_export_eps = export_menu.addAction("Axes only (.eps)...")
+        self.action_export_eps = _menu_action(export_menu, "Axes only (.eps)...")
         self.action_export_eps.setToolTip(
             "The frame, ticks and labels as vector PostScript, to edit in "
             "Illustrator with the image placed inside.")
@@ -1760,6 +1807,7 @@ class _InteractiveImageBase(pg.ImageView):
             self.readout_label = None
             self.readout_vline = self.readout_hline = None
             self.readout_vband = self.readout_hband = None
+            self._band_half = {}
         if self.action_readout.isChecked() != visible:
             self.action_readout.setChecked(visible)
         self.readoutToggled.emit(visible)
@@ -1770,46 +1818,168 @@ class _InteractiveImageBase(pg.ImageView):
         cx = float(self._xarray[len(self._xarray) // 2])
         cy = float(self._yarray[len(self._yarray) // 2])
         self.readout_cursor = pg.TargetItem(size=14, pos=(cx, cy),
-                                             pen=pg.mkPen("#0d7377", width=2))
+                                             pen=pg.mkPen("#222222", width=2))
 
         # Crosshair lines, like the spatial map's, so it is obvious *which*
-        # column and row the EDC and MDC are being taken from. The colours
-        # match the curves: the vertical line (fixed x) feeds the EDC, the
-        # horizontal line (fixed y) feeds the MDC.
-        self.readout_vline = pg.InfiniteLine(angle=90, movable=False,
-                                              pen=pg.mkPen(EDC_COLOR, width=2))
-        self.readout_hline = pg.InfiniteLine(angle=0, movable=False,
-                                              pen=pg.mkPen(MDC_COLOR, width=2))
+        # column and row the EDC and MDC are being taken from. Each is drawn
+        # in the colour of the axis it holds constant (AXIS_COLORS), and the
+        # curve it feeds -- the vertical line the EDC, the horizontal the
+        # MDC -- in the same colour.
+        self.readout_vline = pg.InfiniteLine(angle=90, movable=False)
+        self.readout_hline = pg.InfiniteLine(angle=0, movable=False)
         # Shaded bands showing the "+/-" integration windows, so a widened
         # EDC/MDC shows on the image exactly how much it is summing.
-        self.readout_vband = pg.LinearRegionItem(orientation="vertical", movable=False,
-                                                  brush=pg.mkBrush(189, 73, 33, 45))
-        self.readout_hband = pg.LinearRegionItem(orientation="horizontal", movable=False,
-                                                  brush=pg.mkBrush(13, 115, 119, 45))
+        self.readout_vband = pg.LinearRegionItem(orientation="vertical", movable=False)
+        self.readout_hband = pg.LinearRegionItem(orientation="horizontal", movable=False)
         for band in (self.readout_vband, self.readout_hband):
-            for line in band.lines:
-                line.setPen(pg.mkPen(None))
-            band.setZValue(-10)
+            # Over the image, translucent: at the old z of -10 the bands sat
+            # *behind* the image and were never seen.
+            band.setZValue(5)
             band.hide()
+        self.readout_vline.setZValue(10)
+        self.readout_hline.setZValue(10)
+        self._apply_readout_colors()
 
         # ignoreBounds: these are overlays, not data -- an InfiniteLine or a
         # floating label must never take part in working out the view range.
         for item in (self.readout_vband, self.readout_hband,
                      self.readout_vline, self.readout_hline, self.readout_cursor):
             self.plot.addItem(item, ignoreBounds=True)
-        self.readout_label = pg.TextItem(color="#0d7377", anchor=(0, 1))
+        self.readout_label = pg.TextItem(color="#111111", anchor=(0, 1),
+                                         fill=pg.mkBrush(255, 255, 255, 190))
+        self.readout_label.setZValue(30)
+        self.readout_cursor.setZValue(20)
         self.plot.addItem(self.readout_label, ignoreBounds=True)
         self.readout_cursor.sigPositionChanged.connect(self._update_readout)
         self._update_readout()
 
+    def set_readout_colors(self, x_color: str, y_color: str):
+        """Colours for the vertical line (constant x) and the horizontal one
+        (constant y), with their integration bands."""
+        self._readout_colors = (x_color, y_color)
+        self._apply_readout_colors()
+
+    def _apply_readout_colors(self):
+        if self.readout_cursor is None:
+            return
+        x_color, y_color = self._readout_colors
+        self.readout_vline.setPen(pg.mkPen(x_color, width=2))
+        self.readout_hline.setPen(pg.mkPen(y_color, width=2))
+        # Translucent fill, and dashed edges in the same colour: a blue band
+        # on the blue end of a colormap is invisible as a fill alone.
+        for band, color in ((self.readout_vband, x_color), (self.readout_hband, y_color)):
+            band.setBrush(pg.mkBrush(*_rgba(color, BAND_ALPHA)))
+            for line in band.lines:
+                line.setPen(pg.mkPen(color, width=1, style=Qt.DashLine))
+            band.update()
+
+    def readout_position(self):
+        """The cursor's (x, y) in data units, or None when it is off."""
+        if self.readout_cursor is None:
+            return None
+        x, y = self.readout_cursor.pos()
+        return float(x), float(y)
+
+    def readout_indices(self):
+        """The data point under the cursor as (ix, iy), or None."""
+        position = self.readout_position()
+        if position is None or self._xarray is None:
+            return None
+        return (int(np.argmin(np.abs(self._xarray - position[0]))),
+                int(np.argmin(np.abs(self._yarray - position[1]))))
+
+    def axis_bounds(self, axis: int):
+        """(lowest, highest) data value on axis 0 = x or 1 = y."""
+        values = self._xarray if axis == 0 else self._yarray
+        return float(np.nanmin(values)), float(np.nanmax(values))
+
+    def move_readout_to(self, x=None, y=None):
+        """Put the cursor at ``(x, y)`` in data units; None keeps that
+        coordinate. Returns None on success, or -- if either value is outside
+        the data -- a sentence saying so, and the cursor does not move at
+        all (not even along the axis whose value was fine)."""
+        if self.readout_cursor is None or self._xarray is None:
+            return "The readout cursor is not on."
+        current = self.readout_position()
+        target = [current[0] if x is None else float(x),
+                  current[1] if y is None else float(y)]
+        for axis, value, given in ((0, target[0], x), (1, target[1], y)):
+            if given is None:
+                continue
+            lo, hi = self.axis_bounds(axis)
+            tol = 1e-9 * max(1.0, abs(hi - lo))
+            if not np.isfinite(value) or value < lo - tol or value > hi + tol:
+                name = (self.x_label if axis == 0 else self.y_label) or ("x", "y")[axis]
+                return (f"{name} = {value:.6g} is outside the data "
+                        f"({lo:.6g} … {hi:.6g}); the cursor stays where it is.")
+        self.readout_cursor.setPos(target[0], target[1])
+        return None
+
+    def set_readout_index(self, ix=None, iy=None):
+        """Put the cursor on a data point; None keeps that coordinate. Does
+        nothing if it is already there, so a cursor being dragged between
+        two points is not snapped back onto one."""
+        indices = self.readout_indices()
+        if indices is None:
+            return
+        ix = indices[0] if ix is None else int(np.clip(ix, 0, len(self._xarray) - 1))
+        iy = indices[1] if iy is None else int(np.clip(iy, 0, len(self._yarray) - 1))
+        if (ix, iy) == indices:
+            return
+        x, y = self.readout_position()
+        if ix != indices[0]:
+            x = float(self._xarray[ix])
+        if iy != indices[1]:
+            y = float(self._yarray[iy])
+        self.readout_cursor.setPos(x, y)
+
+    def refresh_readout_text(self):
+        """Re-read the value under the cursor after new data has landed,
+        without reporting a move."""
+        if self.readout_cursor is None or self._xarray is None:
+            return
+        indices = self.readout_indices()
+        self.readout_label.setText(self._readout_text(*indices))
+
+    def _readout_text(self, ix, iy):
+        text = f"x={self._xarray[ix]:.4g}\ny={self._yarray[iy]:.4g}"
+        if self._value_lookup is not None:
+            try:
+                value = self._value_lookup(ix, iy)
+                if value is not None:
+                    text += f"\nvalue={value:.6g}"
+            except Exception:
+                pass
+        return text
+
+    def readout_value(self):
+        """The data value under the cursor, or None."""
+        indices = self.readout_indices()
+        if indices is None or self._value_lookup is None:
+            return None
+        try:
+            value = self._value_lookup(*indices)
+            return None if value is None else float(value)
+        except Exception:
+            return None
+
     def set_readout_bands(self, x_half_width: float, y_half_width: float):
         """Show/hide the shaded integration windows around the crosshair.
         Called by the panel whenever an EDC/MDC "+/-" box changes."""
+        self._set_bands(self.readout_vband, self.readout_hband,
+                        x_half_width, y_half_width)
+
+    def band_half_width(self, band) -> float:
+        """The half-width a band is drawn with (0 when hidden)."""
+        return float(self._band_half.get(band, 0.0)) if band is not None else 0.0
+
+    def _set_bands(self, vband, hband, x_half_width, y_half_width):
         if self.readout_cursor is None or self._xarray is None:
             return
         x, y = self.readout_cursor.pos()
-        for band, centre, half in ((self.readout_vband, x, x_half_width),
-                                    (self.readout_hband, y, y_half_width)):
+        for band, centre, half in ((vband, x, x_half_width), (hband, y, y_half_width)):
+            half = float(half or 0.0)
+            self._band_half[band] = half
             if half > 0:
                 band.setRegion((centre - half, centre + half))
                 band.show()
@@ -1822,15 +1992,7 @@ class _InteractiveImageBase(pg.ImageView):
         x, y = self.readout_cursor.pos()
         ix = int(np.argmin(np.abs(self._xarray - x)))
         iy = int(np.argmin(np.abs(self._yarray - y)))
-        text = f"x={self._xarray[ix]:.4g}\ny={self._yarray[iy]:.4g}"
-        if self._value_lookup is not None:
-            try:
-                value = self._value_lookup(ix, iy)
-                if value is not None:
-                    text += f"\nvalue={value:.6g}"
-            except Exception:
-                pass
-        self.readout_label.setText(text)
+        self.readout_label.setText(self._readout_text(ix, iy))
         self.readout_label.setPos(x, y)
         self.readout_vline.setPos(x)
         self.readout_hline.setPos(y)
@@ -1841,9 +2003,8 @@ class _InteractiveImageBase(pg.ImageView):
         """Keep the integration bands centred on the crosshair as it moves,
         preserving each band's current width."""
         for band, centre in ((self.readout_vband, x), (self.readout_hband, y)):
-            if band.isVisible():
-                lo, hi = band.getRegion()
-                half = (hi - lo) / 2.0
+            half = self._band_half.get(band, 0.0)
+            if half > 0:
                 band.setRegion((centre - half, centre + half))
 
     # -- rectangle selection ---------------------------------------------
@@ -2045,6 +2206,8 @@ class FrameImageView(_InteractiveImageBase):
         self._store_axes(x_axis, y_axis)
         self._value_lookup = lambda ix, iy: self._last_frame[ix, iy]
         self._render(auto_range=True)
+        # The cursor stays put; what is under it has changed.
+        self.refresh_readout_text()
 
     def _render(self, auto_range=False):
         # last_frame is (x, y); it is transposed for row-major drawing, so
@@ -3125,6 +3288,12 @@ class CurveReadout(QObject):
         self.edc_width.valueChanged.connect(self.refresh)
         self.mdc_width.valueChanged.connect(self.refresh)
 
+    def set_colors(self, edc_color: str, mdc_color: str):
+        """The EDC in the colour of the vertical cursor line that feeds it,
+        the MDC in the horizontal line's."""
+        self.edc_curve.setPen(pg.mkPen(edc_color, width=2))
+        self.mdc_curve.setPen(pg.mkPen(mdc_color, width=2))
+
     def widgets(self):
         """Everything that shows and hides with the readout cursor."""
         return (self.edc_plot, self.mdc_plot, self.controls)
@@ -3577,6 +3746,9 @@ class ImagePanel(QWidget):
         view.attach_aspect_box(self.aspect_box)
         layout.addWidget(self.aspect_box, stretch=1)
 
+        # -- the readout cursor's position, typed (shown while it is on) --
+        self._build_cursor_row(layout)
+
         # -- display options row --
         options = QHBoxLayout()
         options.setContentsMargins(0, 0, 0, 0)
@@ -3666,12 +3838,100 @@ class ImagePanel(QWidget):
 
         view.selectionChanged.connect(self._sync_from_selection)
         view.selectionApplied.connect(self.selectionApplied.emit)
+        view.readoutToggled.connect(self._on_cursor_toggled)
+        view.readoutMoved.connect(lambda *_: self._sync_cursor_row())
+        self.set_axis_colors(*view._readout_colors)
         if self.curves is not None:
             view.readoutToggled.connect(self._on_readout_toggled)
             view.readoutMoved.connect(self.curves.set_cursor)
             view.readoutMoved.connect(lambda *_: self._sync_readout_bands())
             self.curves.edc_width.valueChanged.connect(self._sync_readout_bands)
             self.curves.mdc_width.valueChanged.connect(self._sync_readout_bands)
+
+    # -- the cursor row -----------------------------------------------------
+    def _build_cursor_row(self, layout):
+        """``Cursor  <x name> [____]  <y name> [____]  value  <message>``.
+
+        The two boxes follow the cursor as it is dragged; typing a value and
+        pressing Enter moves the cursor there (and, on a map, the windows
+        linked to it). A value outside the data leaves the cursor where it
+        is and says so in the message, in red.
+        """
+        self.cursor_widget = QWidget()
+        row = QHBoxLayout(self.cursor_widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        row.addWidget(section_label("Cursor"))
+        self.cursor_labels, self.cursor_edits = [], []
+        for axis in (0, 1):
+            label = QLabel(("x", "y")[axis])
+            edit = QLineEdit()
+            edit.setMaximumWidth(96)
+            edit.setToolTip("Type a position and press Enter to move the cursor there.")
+            edit.returnPressed.connect(lambda axis=axis: self._on_cursor_typed(axis))
+            row.addWidget(label)
+            row.addWidget(edit)
+            self.cursor_labels.append(label)
+            self.cursor_edits.append(edit)
+        self.cursor_value = QLabel("")
+        row.addWidget(self.cursor_value)
+        self.cursor_message = QLabel("")
+        self.cursor_message.setStyleSheet("color: #c0392b;")
+        self.cursor_message.setWordWrap(True)
+        row.addWidget(self.cursor_message, 1)
+        layout.addWidget(self.cursor_widget)
+        self.cursor_widget.setVisible(False)
+
+    def set_axis_colors(self, x_color: str, y_color: str):
+        """Colour the cursor lines, their bands, the EDC/MDC they feed and
+        the names in the cursor row by axis (see ``AXIS_COLORS``)."""
+        self.view.set_readout_colors(x_color, y_color)
+        if self.curves is not None:
+            self.curves.set_colors(x_color, y_color)
+        for label, color in zip(self.cursor_labels, (x_color, y_color)):
+            label.setStyleSheet(f"color: {color}; font-weight: bold;")
+
+    def _on_cursor_toggled(self, visible: bool):
+        self.cursor_widget.setVisible(visible)
+        self.cursor_message.setText("")
+        if visible:
+            self._sync_cursor_row()
+
+    def _sync_cursor_row(self):
+        """Show where the cursor is -- the data point it reads, not the
+        pixel the mouse let go of."""
+        indices = self.view.readout_indices()
+        if indices is None:
+            return
+        view = self.view
+        names = (view.x_label or "x", view.y_label or "y")
+        for axis, (label, edit) in enumerate(zip(self.cursor_labels, self.cursor_edits)):
+            label.setText(names[axis])
+            values = view._xarray if axis == 0 else view._yarray
+            if not edit.hasFocus() or not edit.isModified():
+                edit.setText(f"{float(values[indices[axis]]):.6g}")
+                edit.setModified(False)
+        value = view.readout_value()
+        self.cursor_value.setText("" if value is None else f"value {value:.6g}")
+
+    def _on_cursor_typed(self, axis: int):
+        edit = self.cursor_edits[axis]
+        text = edit.text().strip().replace(",", ".")
+        try:
+            value = float(text)
+        except ValueError:
+            message = f"“{edit.text()}” is not a number."
+        else:
+            message = self.view.move_readout_to(**{("x", "y")[axis]: value})
+        edit.setModified(False)
+        self.cursor_message.setText(message or "")
+        if message:
+            window = self.window()
+            status = getattr(window, "statusBar", None)
+            if callable(status):
+                status().showMessage(message, 8000)
+        self._sync_cursor_row()
+        return message
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
