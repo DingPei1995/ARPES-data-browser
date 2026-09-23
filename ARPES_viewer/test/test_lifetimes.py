@@ -241,3 +241,23 @@ def test_closing_a_map_with_its_slit_cut_open_does_not_crash():
     result = subprocess.run([sys.executable, "-c", script], capture_output=True,
                             text=True, timeout=120, cwd=ROOT)
     assert result.returncode == 0 and "survived" in result.stdout, result.stderr[-2000:]
+
+
+def test_the_program_collects_garbage_from_its_event_loop(app):
+    import gc
+    from ui import gcguard
+    was = gc.isenabled()
+    guard = gcguard.SafeGarbageCollector(interval_ms=10)
+    try:
+        assert not gc.isenabled()
+        assert guard.timer.isActive()
+        junk = []
+        for _ in range(3 * guard.thresholds[0]):
+            a, b = [], []
+            a.append(b); b.append(a)           # cycles only a collection frees
+        guard.check()
+        assert gc.get_count()[0] < guard.thresholds[0]
+    finally:
+        guard.stop()
+        if not was:
+            gc.disable()
