@@ -255,6 +255,7 @@ def test_axis_colours(linked):
 
 def test_a_cut_opened_later_joins_in(app):
     contour = W.ContourWindow(_map(), "m", "gray", False)
+    contour.show()
     contour.view.set_readout_cursor_visible(True)
     contour.view.move_readout_to(x=-3.0, y=2.0)
     slit = contour.open_cut("slit")
@@ -324,3 +325,24 @@ def test_spin_analysis_is_offered_for_a_spin_edc(app):
     window = CurveWindow(_curve("spin_edc", 4), "spin")
     assert window.spin_action.isVisible()
     window.close()
+
+
+def test_an_unseen_contour_closes_with_its_last_cut(app):
+    """A cut opened straight from the main list keeps its contour off
+    screen; the contour goes once the last cut has, unless it was shown."""
+    contour = W.ContourWindow(_map(), "m", "gray", False)     # never shown
+    closed = []
+    contour.closed.connect(lambda *_: closed.append(True))
+    slit = contour.open_cut("slit")
+    defl = contour.open_cut("deflector")
+    slit.close()
+    assert not closed                          # the deflector cut still needs it
+    defl.close()
+    assert closed
+    shown = W.ContourWindow(_map(), "m", "gray", False)
+    cut = shown.open_cut("slit")
+    cut.show_map_action.trigger()             # "Show the map"
+    assert shown.isVisible()
+    cut.close()
+    assert shown.isVisible() and shown.cursor_link.members
+    shown.close()
