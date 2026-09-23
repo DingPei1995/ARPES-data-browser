@@ -8,8 +8,68 @@ to be always in sight.
 """
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QAction, QMenu, QToolButton
+from PyQt5.QtCore import QEvent, QObject, Qt
+from PyQt5.QtWidgets import QAction, QMenu, QToolButton, QToolTip
+
+
+class _InstantTooltips(QObject):
+    """Event filter behind :func:`instant_tooltips`."""
+
+    def __init__(self, menu: QMenu):
+        super().__init__(menu)
+        self.menu = menu
+        self.current = None
+
+    def show_for(self, action):
+        if action is self.current:
+            return
+        self.current = action
+        text = action.toolTip() if action is not None else ""
+        # Qt fills an empty tooltip with the entry's own text; that says
+        # nothing the entry does not, so it is not shown.
+        # (Qt's version of it also drops a trailing "...".)
+        own = action.text().replace("&", "") if action is not None else ""
+        if (action is None or action.isSeparator() or not text
+                or text in (own, own.rstrip(".").rstrip())):
+            QToolTip.hideText()
+            return
+        rect = self.menu.actionGeometry(action)
+        QToolTip.showText(self.menu.mapToGlobal(rect.topRight()), text,
+                          self.menu, rect)
+
+    def eventFilter(self, obj, event):
+        kind = event.type()
+        if kind == QEvent.MouseMove:
+            self.show_for(self.menu.actionAt(event.pos()))
+        elif kind in (QEvent.Leave, QEvent.Hide):
+            self.current = None
+            QToolTip.hideText()
+        elif kind == QEvent.ToolTip:
+            return True                     # Qt's delayed tooltip: ours instead
+        return False
+
+
+def instant_tooltips(menu: QMenu) -> QMenu:
+    """Show a menu entry's tooltip the moment the pointer reaches it.
+
+    Qt's own menu tooltips wait for the pointer to rest (about 0.7 s) and,
+    moving from one entry to the next, leave the previous entry's text up
+    until it has rested again -- which reads as the menu lagging. Here the
+    tooltip follows the pointer instead: it changes as soon as another entry
+    is under it, disappears over an entry that has none, and sits beside the
+    entry rather than under the pointer.
+
+    Driven by the menu's mouse moves (and by ``hovered``, for the keyboard),
+    not by ``hovered`` alone: whether a *disabled* entry is ever "hovered"
+    depends on the platform's style, and a disabled entry is the one whose
+    tooltip -- why it is disabled -- matters most.
+    """
+    menu.setToolTipsVisible(True)
+    tips = _InstantTooltips(menu)
+    menu.installEventFilter(tips)
+    menu.hovered.connect(tips.show_for)
+    menu._instant_tooltips = tips
+    return menu
 
 
 class FunctionsMenuMixin:
@@ -44,8 +104,7 @@ class FunctionsMenuMixin:
 
     def make_functions_button(self) -> QToolButton:
         """The **Functions** button with its menu, for the window's top row."""
-        self.functions_menu = QMenu("Functions", self)
-        self.functions_menu.setToolTipsVisible(True)
+        self.functions_menu = instant_tooltips(QMenu("Functions", self))
         self.functions_menu.aboutToShow.connect(self._rebuild_functions_menu)
         self.functions_button = QToolButton()
         self.functions_button.setText("Functions")

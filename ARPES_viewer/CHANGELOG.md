@@ -10,6 +10,35 @@ file is the record of how it got that way.
 
 ---
 
+## Forty-first round: greyed-out entries that look greyed out; tooltips without the lag
+
+- **Why the greyed-out entries of the list's menu looked enabled.** The main
+  panel's stylesheet set one text colour for every widget -- and so also for
+  a *disabled* widget and a disabled menu entry, which then looked exactly
+  like an enabled one (the entries were disabled; they just did not show
+  it). The stylesheet now has `:disabled` rules (grey text, rgb 190,190,200,
+  against the panel's rgb 102,126,161) and a hover highlight for menu
+  entries. Its old bare declarations moved into `* { ... }`, since Qt does
+  not parse bare declarations mixed with rules; the panel otherwise looks as
+  before. The same fault had also made disabled *buttons* on the panel look
+  enabled; that is fixed by the same rule.
+- **Tooltips followed the pointer with a delay.** Qt shows a menu entry's
+  tooltip only after the pointer has rested (~0.7 s), and moving to the next
+  entry left the previous text up until it rested again. Menus now show the
+  tooltip of the entry under the pointer as soon as it gets there
+  (`instant_tooltips` in ui/functions_menu.py, driven by the menu's mouse
+  moves so that disabled entries -- whose tooltip says *why* -- work on
+  every platform style). Used by the list's right-click menu and every
+  viewer's Functions menu. Every entry of the list's menu now has a
+  tooltip, so there is never a stale one left from the previous entry.
+
+Tests: `test/test_viewer_ui.py` -- a disabled entry renders at least 40
+grey levels lighter than an enabled one under the panel's stylesheet (with
+the old stylesheet: identical, 133 vs 133), and the tooltip text changes
+with each mouse move, disabled entries included.
+
+---
+
 ## Fortieth round: the main panel -- Clear list, and a right-click menu that fits the selection
 
 - **Clear list asks.** With unsaved computed datasets it lists them and

@@ -443,8 +443,9 @@ def show_list_menu(position):
 
     keys = selected_keys()
     rows = [(label_for(k), loaded_items.get(k, {}).get("kind")) for k in keys]
-    menu = QMenu(ui.FilePathListWidget)
-    menu.setToolTipsVisible(True)
+    from ui.functions_menu import instant_tooltips
+
+    menu = instant_tooltips(QMenu(ui.FilePathListWidget))
     actions = {}
 
     def add(name, text, tooltip=""):
@@ -457,7 +458,8 @@ def show_list_menu(position):
         actions[action] = name
         return action
 
-    add("open", "Open")
+    add("open", "Open", "Open the dataset in its own viewer window "
+        "(the same as double-clicking the row).")
     add("slit_cut", "Open slit cut" if len(keys) <= 1
         else f"Open {len(keys)} slit cuts",
         "The map's slit-angle vs energy cut, in a window of its own, "
@@ -466,13 +468,16 @@ def show_list_menu(position):
         else f"Open {len(keys)} deflector cuts",
         "The map's deflector-angle vs energy cut, in a window of its own, "
         "without opening the map's constant-energy contour.")
-    add("info", "Show information")
-    add("rename", "Rename...")
+    add("info", "Show information",
+        "The dataset's kind, axes and metadata, in the information panel.")
+    add("rename", "Rename...", "Change the name the dataset is listed "
+        "(and saved) under. The file on disk keeps its name.")
     menu.addSeparator()
     add("figure", "Plot as a figure..." if len(keys) <= 1
         else f"Plot {len(keys)} as one figure...",
         "One panel per selected dataset, in the figure composer.")
-    add("stack", "Stack plot (EDC / MDC)...")
+    add("stack", "Stack plot (EDC / MDC)...",
+        "A waterfall of EDCs or MDCs across the cut.")
     add("fit", "MDC / EDC fit...",
         "Fit peaks line by line, then read the band off the fitted centres: "
         "Fermi velocity, effective mass, self-energy. Converted cuts only.")
@@ -491,10 +496,14 @@ def show_list_menu(position):
     # way in, where it is always visible.
     menu.addSeparator()
     add("save", "Save dataset..." if len(keys) <= 1
-        else f"Save {len(keys)} datasets...")
+        else f"Save {len(keys)} datasets...",
+        "Write the selected datasets to a .nxs file of your own, which this "
+        "program opens again.")
     menu.addSeparator()
     add("remove", "Remove from list" if len(keys) <= 1
-        else f"Remove {len(keys)} from list")
+        else f"Remove {len(keys)} from list",
+        "Take the rows out of the list (after asking). Files on disk are not "
+        "deleted.")
     menu.addSeparator()
     add("log", "Session log...",
         "What has been auto-saved, saved and deleted this session, and "

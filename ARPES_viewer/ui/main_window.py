@@ -22,10 +22,23 @@ class Ui_MainWindow:
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(560, 900)
         MainWindow.setWindowTitle("ARPES viewer")
+        # The panel's colours. The disabled rules are not optional: a colour
+        # set for every widget is also the colour of a *disabled* widget and
+        # of a disabled menu entry, so without them a greyed-out entry of the
+        # list's right-click menu looked exactly like an enabled one.
         MainWindow.setStyleSheet(
-            "background-color: rgb(245, 241, 249);"
-            "font: \"Lucida Sans Unicode\";"
-            "color: rgb(102, 126, 161);"
+            "* { background-color: rgb(245, 241, 249);"
+            " font: \"Lucida Sans Unicode\";"
+            " color: rgb(102, 126, 161); }"
+            "\n*:disabled { color: rgb(190, 190, 200); }"
+            "\nQMenu::item { padding: 3px 24px 3px 20px; }"
+            "\nQMenu::item:selected { background-color: rgb(214, 224, 240);"
+            " color: rgb(40, 60, 95); }"
+            "\nQMenu::item:disabled { color: rgb(190, 190, 200); }"
+            "\nQMenu::item:disabled:selected { background-color: rgb(236, 234, 242);"
+            " color: rgb(175, 175, 188); }"
+            "\nQMenu::separator { height: 1px; background: rgb(210, 214, 226);"
+            " margin: 4px 8px; }"
         )
 
         self.centralwidget = QtWidgets.QWidget(MainWindow)

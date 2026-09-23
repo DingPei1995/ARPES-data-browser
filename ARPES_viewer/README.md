@@ -132,7 +132,8 @@ The menu only offers what fits the selection. An entry is greyed out when
 the selected dataset is the wrong kind (a stack plot needs a cut, the 3-D
 view a map) or the number of rows is wrong (arithmetic takes exactly two);
 with several rows selected, one row that does not fit is enough. Hovering
-over a greyed entry says which row and why.
+over an entry shows what it does -- or, for a greyed one, which row does
+not fit and why -- at once, as the pointer moves.
 
 | entry | rows | kinds |
 |---|---|---|
@@ -795,7 +796,7 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 524 of them, no display needed -- `conftest.py` puts the
+from this folder. 526 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`, and
 `test/conftest.py` runs garbage collection only between tests, the rule
 `ui/gcguard.py` applies in the program.
