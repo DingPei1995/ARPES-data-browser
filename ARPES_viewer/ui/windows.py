@@ -3135,7 +3135,25 @@ class ContourWindow(ViewerWindow):
         dialog.show()
         return dialog
 
+    def _cut_closed(self, which: str):
+        """A cut window went. A contour that was never put on screen -- made
+        only so that a cut could be opened from the main list -- has nothing
+        left to do once its last cut is gone, so it closes too (releasing
+        the file)."""
+        self.cut_windows.pop(which, None)
+        if (not self.cut_windows and not self.isVisible()
+                and not getattr(self, "_closing", False)
+                and not getattr(self, "_released", False)):
+            self.close()
+
+    def show_map(self):
+        """Put the contour on screen (for a cut opened from the list)."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
     def closeEvent(self, event):
+        self._closing = True
         # The cut windows are views into this map -- they follow its cursor
         # and hand their De-grid button to it -- so they close with it.
         # Leaving them open would also leave them reachable only through
@@ -3157,7 +3175,7 @@ class ContourWindow(ViewerWindow):
             return window
         window = MapCutWindow(self, which)
         self.adopt_child(window)
-        window.closed.connect(lambda w, key=which: self.cut_windows.pop(key, None))
+        window.closed.connect(lambda w, key=which: self._cut_closed(key))
         self.cut_windows[which] = window
         window.set_colormap(self.colormap, self.flip)
         # Its cursor is this contour's, seen from the side: the slit cut's
@@ -3557,6 +3575,12 @@ class MapCutWindow(ViewerWindow):
                 "Remove the detector's grid from the whole map this cut belongs "
                 "to -- every slit cut of it at once.",
                 visible=contour.data.kind in ("map", "kz_map"))
+        # A cut can be opened straight from the main list, with its contour
+        # kept off screen; this brings the contour up.
+        self.show_map_action = self.add_function(
+            "Show the map (constant-E contour)", lambda: self.contour.show_map(),
+            "Bring up the constant-energy contour this cut is taken from; "
+            "its cursor and this cut's are one.", section="Visualization")
         self.build_toolbar()
         self.control = _SliceControl(f"Integrate over {sum_label}", "deg", 0.1, self)
         self.root.addWidget(self.control)

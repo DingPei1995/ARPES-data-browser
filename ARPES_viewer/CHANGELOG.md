@@ -10,6 +10,40 @@ file is the record of how it got that way.
 
 ---
 
+## Fortieth round: the main panel -- Clear list, and a right-click menu that fits the selection
+
+- **Clear list asks.** With unsaved computed datasets it lists them and
+  offers *Save to a file...* (the ordinary Save on those rows, then clear;
+  nothing is cleared if the save is cancelled), *Clear without saving*
+  (their auto-saved copies are deleted with the rows) and *Cancel*; with
+  nothing unsaved, a plain yes/no. It used to empty the list at once --
+  without releasing the dataset on show or deleting auto-saved copies,
+  which now happens through the same code as *Remove from list*
+  (`_remove_keys`). The close prompt and this one share one dialog
+  (`_offer_to_save`).
+- **Process... is gone from the right-click menu**; the button under the
+  list is the one way in.
+- **Open slit cut / Open deflector cut** from the right-click menu, for one
+  or several maps. The cut window needs its contour (its position comes from
+  the contour's cursor, its tools act on the whole map), so the contour is
+  made but kept off screen; the cut's *Functions → Show the map* or a
+  double-click on the row brings it up, and an unseen contour closes itself
+  when its last cut is closed, releasing the file. A map whose contour is
+  already open gets the cut from it.
+- **The menu greys out what does not fit** the selection: the wrong kind
+  (from the row's listed kind, so nothing is read to decide) or the wrong
+  number of rows. With several rows, one misfit row is enough. The tooltip
+  names the row and the reason. The rules are a Qt-free table,
+  `ui/list_actions.py`.
+
+Tests: `test/test_list_actions.py` (the rules), `test/test_viewer_ui.py`
+(an unseen contour closing with its last cut; "Show the map" keeps it); the
+smoke script for this round drives the real menu, Clear list's three answers
+(with the file saved and the auto-saved copy deleted) and the cuts opened
+from the list.
+
+---
+
 ## Thirty-ninth round: independent integration widths; Functions in the curve viewer; a crash on opening and closing windows
 
 ### The cursor is shared; integration widths are not

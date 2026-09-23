@@ -121,9 +121,39 @@ and `.txt` (its text export). Both are read by **SOLEIL CASSIOPEE spin
 A browser, deliberately. One row per *dataset*, not per file. Click a row to
 read its metadata, **double-click** to open it in its own window.
 
-Right-click a row (or a selection) for everything that operates on data:
-open, save, rename, remove, data operations, processing, the 3-D view, the
-fit panels, export, and **Cut arithmetic on the two...** (see below).
+Right-click a row (or a selection) for what operates on datasets: open,
+**Open slit cut** / **Open deflector cut** (a map's cut in a window of its
+own, without its contour on screen), information, rename, a figure, the
+stack plot, the MDC/EDC fit, the 3-D view, **Cut arithmetic on the two...**
+(see below), save, remove and the session log. Processing is the
+**Process...** button under the list, and only there.
+
+The menu only offers what fits the selection. An entry is greyed out when
+the selected dataset is the wrong kind (a stack plot needs a cut, the 3-D
+view a map) or the number of rows is wrong (arithmetic takes exactly two);
+with several rows selected, one row that does not fit is enough. Hovering
+over a greyed entry says which row and why.
+
+| entry | rows | kinds |
+|---|---|---|
+| Open, Show information, Rename | one | any |
+| Open slit cut / deflector cut | one or more | maps (angle, kz, k) |
+| Plot as a figure | one or more | cuts, EDC / MDC / spin EDC |
+| Stack plot, MDC / EDC fit | one | cut |
+| 3D view | one | map |
+| Cut arithmetic on the two | two | cuts |
+| Save, Remove | one or more | any readable / any |
+
+A cut opened from the list keeps its map's contour off screen; the cut's
+**Functions → Show the map** brings it up, double-clicking the map's row
+does the same, and an unseen contour closes itself when its last cut window
+is closed.
+
+**Clear list** asks first. If some datasets were computed in this session
+and not saved to a file of your own, it lists them and offers **Save to a
+file...** (then clears), **Clear without saving** (their auto-saved copies
+go too) or **Cancel**; otherwise it is a plain yes/no. Files on disk are
+never deleted, and viewers already open keep their data.
 
 One window per thing you are looking at means several files -- or a contour
 and both its cuts -- can be on screen at once and arranged freely. The
@@ -677,6 +707,7 @@ you what it may depend on.
 | **`ui/`** | |
 | `ui/main_window.py` | The launcher window's layout. |
 | `ui/windows.py`, `ui/widgets.py` | The per-file viewers, and the image panels they are built from. |
+| `ui/list_actions.py` | Which right-click entries of the main list fit a selection (by kind and row count), Qt-free. |
 | `ui/functions_menu.py` | The Functions menu shared by every viewer (`add_function`). |
 | `ui/gcguard.py` | Cyclic garbage collection from the event loop only, never inside a Qt call (prevents random crashes on opening and closing windows). |
 | `ui/cursorlink.py` | The readout cursor shared by a map's contour and its cut windows (positions only; widths stay in each window). |
@@ -764,7 +795,7 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 509 of them, no display needed -- `conftest.py` puts the
+from this folder. 524 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`, and
 `test/conftest.py` runs garbage collection only between tests, the rule
 `ui/gcguard.py` applies in the program.

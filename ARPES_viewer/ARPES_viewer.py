@@ -33,9 +33,9 @@ import time
 import traceback
 
 from PyQt5 import QtCore
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QTableWidgetItem,
+from PyQt5.QtWidgets import (QAction, QApplication, QMainWindow, QTableWidgetItem,
                               QListWidgetItem, QFileDialog, QMenu, QMessageBox,
-                              QInputDialog, QDialog)
+                              QInputDialog, QDialog, QPushButton)
 
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 QApplication.setHighDpiScaleFactorRoundingPolicy(QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
@@ -365,9 +365,39 @@ def current_label() -> str:
 
 
 def ClearList():
-    loaded_items.clear()
+    """Empty the list -- after asking, and after offering to save what
+    would otherwise be lost.
+
+    Rows read from files only leave the list (the files stay where they
+    are). Datasets computed in this session and not saved anywhere of the
+    user's own are listed in the question, with the choice to save them
+    first, to clear anyway (their auto-saved copies go too), or to cancel.
+    Viewers already open keep their data.
+    """
+    keys = list(loaded_items)
+    if not keys:
+        ui.statusbar.showMessage("The list is already empty")
+        return False
+    pending = unsaved_datasets()
+    if pending:
+        if not _offer_to_save(
+                "Clear list", pending, "Clear without saving",
+                f"Clear all {len(keys)} dataset(s) from the list?\n\n"
+                f"{len(pending)} of them were computed in this session and "
+                f"have not been saved to a file of your own:"):
+            return False
+    else:
+        answer = QMessageBox.question(
+            win, "Clear list",
+            f"Clear all {len(keys)} dataset(s) from the list?\n\n"
+            f"Nothing is unsaved, and files on disk are not deleted.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return False
+    _remove_keys(list(loaded_items))
     ui.FilePathListWidget.clear()
     ui.statusbar.showMessage("List cleared")
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -402,91 +432,105 @@ def _row_label(key) -> str:
 
 def show_list_menu(position):
     """The list's right-click menu. Acts on the whole selection, so a batch
-    of datasets can be saved or removed in one go."""
-    keys = selected_keys()
-    menu = QMenu(ui.FilePathListWidget)
+    of datasets can be saved or removed in one go.
 
-    open_action = menu.addAction("Open")
-    open_action.setEnabled(len(keys) == 1)
-    info_action = menu.addAction("Show information")
-    info_action.setEnabled(len(keys) == 1)
-    rename_action = menu.addAction("Rename...")
-    rename_action.setEnabled(len(keys) == 1)
+    An entry that does not fit the selection -- the wrong kind of dataset,
+    or the wrong number of rows -- is greyed out, with a tooltip saying why
+    (see ui.list_actions). With several rows selected, one that does not fit
+    is enough.
+    """
+    from ui.list_actions import availability
+
+    keys = selected_keys()
+    rows = [(label_for(k), loaded_items.get(k, {}).get("kind")) for k in keys]
+    menu = QMenu(ui.FilePathListWidget)
+    menu.setToolTipsVisible(True)
+    actions = {}
+
+    def add(name, text, tooltip=""):
+        action = QAction(text, menu)
+        menu.addAction(action)
+        enabled, reason = availability(name, rows)
+        action.setEnabled(enabled)
+        if reason or tooltip:
+            action.setToolTip(reason or tooltip)
+        actions[action] = name
+        return action
+
+    add("open", "Open")
+    add("slit_cut", "Open slit cut" if len(keys) <= 1
+        else f"Open {len(keys)} slit cuts",
+        "The map's slit-angle vs energy cut, in a window of its own, "
+        "without opening the map's constant-energy contour.")
+    add("deflector_cut", "Open deflector cut" if len(keys) <= 1
+        else f"Open {len(keys)} deflector cuts",
+        "The map's deflector-angle vs energy cut, in a window of its own, "
+        "without opening the map's constant-energy contour.")
+    add("info", "Show information")
+    add("rename", "Rename...")
     menu.addSeparator()
-    figure_action = menu.addAction(
-        "Plot as a figure..." if len(keys) <= 1
-        else f"Plot {len(keys)} as one figure...")
-    figure_action.setEnabled(bool(keys))
-    figure_action.setToolTip(
+    add("figure", "Plot as a figure..." if len(keys) <= 1
+        else f"Plot {len(keys)} as one figure...",
         "One panel per selected dataset, in the figure composer.")
-    process_action = menu.addAction("Process...")
-    process_action.setEnabled(bool(keys))
-    process_action.setToolTip(
-        "Smooth, differentiate, curvature, symmetrise, subtract a "
-        "background, despike.")
-    stack_action = menu.addAction("Stack plot (EDC / MDC)...")
-    stack_action.setEnabled(len(keys) == 1)
-    fit_action = menu.addAction("MDC / EDC fit...")
-    fit_action.setEnabled(len(keys) == 1)
-    fit_action.setToolTip(
+    add("stack", "Stack plot (EDC / MDC)...")
+    add("fit", "MDC / EDC fit...",
         "Fit peaks line by line, then read the band off the fitted centres: "
         "Fermi velocity, effective mass, self-energy. Converted cuts only.")
-    view3d_action = menu.addAction("3D view...")
-    view3d_action.setEnabled(len(keys) == 1)
-    view3d_action.setToolTip(
+    add("view3d", "3D view...",
         "Orthogonal slices, the notched cube, an isosurface and the volume "
-        "projections. Maps only.")
+        "projections.")
     # Was "Compare the two...", which already computed A - B, A / B and
     # (A - B)/(A + B) and put the result in the list -- arithmetic under a
     # name that promised a look. It is now the same window as a cut viewer's
-    # "Cut arithmetic..." button, named for what it does.
-    arithmetic_action = menu.addAction("Cut arithmetic on the two...")
-    arithmetic_action.setEnabled(len(keys) == 2)
-    arithmetic_action.setToolTip(
+    # "Cut arithmetic..." entry, named for what it does.
+    add("arithmetic", "Cut arithmetic on the two...",
         "Combine two cuts: linear or circular dichroism, dividing by a "
         "reference, A \u2212 B, A / B, (A \u2212 B)/(A + B), A + B. The first "
         "selected is A; the window can swap them.")
+    # Processing is the Process... button under the list, not in here: one
+    # way in, where it is always visible.
     menu.addSeparator()
-    save_action = menu.addAction(
-        "Save dataset..." if len(keys) <= 1 else f"Save {len(keys)} datasets...")
-    save_action.setEnabled(bool(keys))
+    add("save", "Save dataset..." if len(keys) <= 1
+        else f"Save {len(keys)} datasets...")
     menu.addSeparator()
-    remove_action = menu.addAction(
-        "Remove from list" if len(keys) <= 1 else f"Remove {len(keys)} from list")
-    remove_action.setEnabled(bool(keys))
+    add("remove", "Remove from list" if len(keys) <= 1
+        else f"Remove {len(keys)} from list")
     menu.addSeparator()
-    log_action = menu.addAction("Session log...")
-    log_action.setToolTip(
+    add("log", "Session log...",
         "What has been auto-saved, saved and deleted this session, and "
         "where each of it is -- the file to look at after a crash.")
 
+    global last_list_menu
+    last_list_menu = menu          # for the tests: what was offered, and how
     chosen = menu.exec_(ui.FilePathListWidget.mapToGlobal(position))
-    if chosen is None:
+    if chosen is None or not chosen.isEnabled():
         return
-    if chosen is open_action:
-        open_selected()
-    elif chosen is info_action:
-        show_information()
-    elif chosen is rename_action:
-        rename_selected()
-    elif chosen is figure_action:
-        plot_selected_as_figure()
-    elif chosen is process_action:
-        open_processing()
-    elif chosen is stack_action:
-        open_stack_plot()
-    elif chosen is fit_action:
-        open_curve_fit()
-    elif chosen is view3d_action:
-        open_volume_view()
-    elif chosen is arithmetic_action:
-        open_cut_arithmetic()
-    elif chosen is save_action:
-        save_selected()
-    elif chosen is log_action:
-        show_operations_log()
-    elif chosen is remove_action:
-        remove_selected()
+    run_list_action(actions.get(chosen))
+
+
+#: The last right-click menu built, kept for the tests.
+last_list_menu = None
+
+
+def run_list_action(name):
+    """Do what a right-click menu entry names."""
+    handlers = {
+        "open": open_selected,
+        "slit_cut": lambda: open_map_cuts("slit"),
+        "deflector_cut": lambda: open_map_cuts("deflector"),
+        "info": show_information,
+        "rename": rename_selected,
+        "figure": plot_selected_as_figure,
+        "stack": open_stack_plot,
+        "fit": open_curve_fit,
+        "view3d": open_volume_view,
+        "arithmetic": open_cut_arithmetic,
+        "save": save_selected,
+        "log": show_operations_log,
+        "remove": remove_selected,
+    }
+    handler = handlers.get(name)
+    return handler() if handler is not None else None
 
 
 def plot_selected_as_figure():
@@ -618,7 +662,12 @@ def remove_selected():
         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
     if answer != QMessageBox.Yes:
         return
+    _remove_keys(keys)
 
+
+def _remove_keys(keys):
+    """Take these rows out of the list, with their auto-saved copies; no
+    questions asked (the callers ask)."""
     global current_data, current_key
     for key in keys:
         record = loaded_items.pop(key, None)
@@ -927,6 +976,15 @@ def open_selected(item=None):
     key = selected_key()
     if key is None:
         return None
+    # A map whose cut was opened from the list already has its contour,
+    # kept off screen: show that one rather than open a second.
+    hidden = next((w for w in viewer_windows
+                   if getattr(w, "_list_key", None) == key
+                   and isinstance(w, viewer_windows_module.ContourWindow)
+                   and not w.isVisible()), None)
+    if hidden is not None:
+        hidden.show_map()
+        return hidden
     if current_data is None or key != current_key:
         if load_selected() is None:
             return None
@@ -957,6 +1015,59 @@ def open_selected(item=None):
     ui.statusbar.showMessage(
         f"Opened {current_label()} ({len(viewer_windows)} window(s) open)")
     return window
+
+
+def open_map_cuts(which: str):
+    """Open the slit (``"slit"``) or deflector (``"deflector"``) cut of every
+    selected map, straight from the list, without its contour on screen.
+
+    A map's cut window is a view of its contour -- it takes its position
+    from the contour's cursor and its tools act on the whole map -- so the
+    contour is still made, just not shown (Functions -> "Show the map"
+    brings it up), and it closes itself once its last cut window is closed.
+    A map whose contour is already open gets the cut from that contour.
+    Returns the cut windows opened.
+    """
+    from ui.list_actions import availability
+
+    keys = selected_keys()
+    rows = [(label_for(k), loaded_items.get(k, {}).get("kind")) for k in keys]
+    enabled, reason = availability(
+        "slit_cut" if which == "slit" else "deflector_cut", rows)
+    if not enabled:
+        QMessageBox.information(win, "Open a map's cut", reason)
+        return []
+    opened = []
+    for key in keys:
+        contour = next((w for w in viewer_windows
+                        if getattr(w, "_list_key", None) == key
+                        and isinstance(w, viewer_windows_module.ContourWindow)),
+                       None)
+        if contour is None:
+            try:
+                data = load_dataset(key)
+            except Exception as exc:                        # noqa: BLE001
+                QMessageBox.warning(win, "Open a map's cut",
+                                    f"{label_for(key)} could not be read: {exc}")
+                continue
+            contour = viewer_windows_module.open_viewer(
+                data, label_for(key), default_colormap, default_flip)
+            if not isinstance(contour, viewer_windows_module.ContourWindow):
+                if contour is not None:
+                    contour.close()
+                else:
+                    data.close()
+                continue
+            _adopt_viewer(contour, key)
+            contour.closed.connect(_forget_viewer)
+            viewer_windows.append(contour)
+        cut = contour.open_cut(which)
+        if cut is not None:
+            cut.raise_()
+            opened.append(cut)
+    if opened:
+        ui.statusbar.showMessage(f"Opened {len(opened)} {which} cut(s)")
+    return opened
 
 
 def _adopt_viewer(window, key=None):
@@ -1635,21 +1746,35 @@ def confirm_close() -> bool:
     pending = unsaved_datasets()
     if not pending:
         return True
+    return _offer_to_save(
+        "Close ARPES viewer", pending, "Close anyway",
+        f"{len(pending)} dataset(s) computed in this session have not been "
+        f"saved to a file of your own:")
 
-    shown = "\n".join(f"  • {name}" for name in pending[:8])
+
+def _offer_to_save(title, pending, go_text, text) -> bool:
+    """Ask whether to save the unsaved datasets ``pending`` before going on.
+
+    Three answers: **Save to a file...** (the ordinary Save, on those rows;
+    going on only if they all got saved), ``go_text`` (go on without
+    saving) and **Cancel**. True means go on.
+    """
+    shown = "\n".join(f"  \u2022 {name}" for name in pending[:8])
     if len(pending) > 8:
-        shown += f"\n  • ... and {len(pending) - 8} more"
+        shown += f"\n  \u2022 ... and {len(pending) - 8} more"
     box = QMessageBox(win)
-    box.setWindowTitle("Close ARPES viewer")
+    box.setWindowTitle(title)
     box.setIcon(QMessageBox.Question)
-    box.setText(f"{len(pending)} dataset(s) computed in this session have "
-                f"not been saved to a file of your own:")
+    box.setText(text)
     box.setInformativeText(
         f"{shown}\n\nThey have been auto-saved to\n{session.folder}\n"
         f"which is cleared out after {nxs_session.KEEP_DAYS} days.")
-    save = box.addButton("Save to a file...", QMessageBox.AcceptRole)
-    discard = box.addButton("Close anyway", QMessageBox.DestructiveRole)
-    box.addButton("Cancel", QMessageBox.RejectRole)
+    save = QPushButton("Save to a file...")
+    discard = QPushButton(go_text)
+    cancel = QPushButton("Cancel")
+    box.addButton(save, QMessageBox.AcceptRole)
+    box.addButton(discard, QMessageBox.DestructiveRole)
+    box.addButton(cancel, QMessageBox.RejectRole)
     box.setDefaultButton(save)
     box.exec_()
 
