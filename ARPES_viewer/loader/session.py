@@ -141,31 +141,61 @@ class MemoryBudget:
             return 0
         return int(getattr(value, "nbytes", 0) or 0)
 
+    # The budget *owns a reference* to what it caches, like any other
+    # holder: it takes one in put() and gives it back when the entry goes.
+    # It used to hand its one object to every caller without counting them,
+    # so the first viewer to close released the only reference and closed
+    # the file -- and the budget went on handing out the dead object, which
+    # failed on the next read with "identifier is not of specified type".
+    @staticmethod
+    def _retain(data):
+        retain = getattr(data, "retain", None)
+        return retain() if callable(retain) else data
+
+    @staticmethod
+    def _release(data):
+        close = getattr(data, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:                               # noqa: BLE001
+                pass
+
     def get(self, key: str):
+        """The cached dataset, or None. The budget keeps its own reference;
+        a caller that keeps the object should :meth:`retain` it."""
         entry = self._entries.get(key)
         if entry is None:
+            return None
+        alive = getattr(entry[0], "alive", None)
+        if callable(alive) and not alive():
+            self.discard(key)
             return None
         self._entries.move_to_end(key)
         return entry[0]
 
     def put(self, key: str, data):
-        self._entries.pop(key, None)
-        self._entries[key] = (data, self._size_of(data))
+        self.discard(key)
+        self._entries[key] = (self._retain(data), self._size_of(data))
         self._evict()
         return data
 
     def discard(self, key: str):
-        self._entries.pop(key, None)
+        entry = self._entries.pop(key, None)
+        if entry is not None:
+            self._release(entry[0])
 
     def clear(self):
-        self._entries.clear()
+        for key in list(self._entries):
+            self.discard(key)
 
     def total_bytes(self) -> int:
         return sum(size for _data, size in self._entries.values())
 
     def _evict(self):
         while len(self._entries) > 1 and self.total_bytes() > self.limit_bytes:
-            self._entries.popitem(last=False)
+            _key, (data, _size) = self._entries.popitem(last=False)
+            self._release(data)
 
 
 class SessionStore:

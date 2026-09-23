@@ -69,6 +69,7 @@ Data "kinds" produced
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 import warnings
 from dataclasses import dataclass, field
 from typing import Optional
@@ -376,10 +377,16 @@ class _HandleRegistry:
         self._open[key] = [handle, 1]
         return handle
 
-    def release(self, path: str) -> None:
+    def release(self, path: str, handle=None) -> None:
+        """Give back one claim on ``path``. ``handle`` is the File the claim
+        was made on: if the registry has since had to replace it (it was
+        found invalid), a release for the old one must not count against
+        the new one's users -- that would close a file they are reading."""
         key = os.path.abspath(path)
         entry = self._open.get(key)
         if entry is None:
+            return
+        if handle is not None and entry[0] is not handle:
             return
         entry[1] -= 1
         if entry[1] <= 0:
@@ -392,6 +399,27 @@ class _HandleRegistry:
     def open_count(self) -> int:
         """Number of files currently held open (used by the tests)."""
         return len(self._open)
+
+    def is_open(self, path: str) -> bool:
+        return os.path.abspath(path) in self._open
+
+    @contextmanager
+    def borrow(self, path: str):
+        """``with HANDLES.borrow(path) as f:`` -- read a file *through* the
+        registry for the length of a block.
+
+        Every short look at a file (is it ours? what entries does it hold?)
+        used to open a second ``h5py.File`` on it and close it again. With
+        a viewer reading the same file, that close can invalidate the
+        viewer's datasets on some HDF5 builds -- "Can't synchronously read
+        data (identifier is not of specified type)" on the next read. A
+        borrowed handle is the shared one, and giving it back never closes
+        a file somebody else still holds."""
+        handle = self.acquire(path)
+        try:
+            yield handle
+        finally:
+            self.release(path, handle)
 
 
 HANDLES = _HandleRegistry()
@@ -722,9 +750,9 @@ class NxsScan:
         lets go, so other entries of the same file keep working. After this
         a LazyCube in ``value4d`` can no longer be indexed."""
         if self._h5file is not None:
-            self._h5file = None
+            handle, self._h5file = self._h5file, None
             if self._h5path is not None:
-                HANDLES.release(self._h5path)
+                HANDLES.release(self._h5path, handle)
                 self._h5path = None
 
     def __enter__(self):
@@ -1316,6 +1344,12 @@ def save_dataset(path: str, datasets: "list[dict]", progress=None) -> None:
     used = set()
     written = []
     total = len(datasets)
+    if HANDLES.is_open(path):
+        # Overwriting a file a viewer is reading from would pull the data out
+        # from under it (and Windows refuses the write anyway, less clearly).
+        raise OSError(
+            f"{os.path.basename(path)} is open in a viewer (or listed and "
+            f"being read); close what uses it, or save under another name")
     with h5py.File(path, "w") as f:
         for index, item in enumerate(datasets):
             if progress is not None:
@@ -1388,7 +1422,7 @@ def list_datasets(path: str) -> "list[dict]":
     """
     out = []
     try:
-        with h5py.File(path, "r") as f:
+        with HANDLES.borrow(path) as f:
             for name in f.keys():
                 g = "/" + name
                 try:
@@ -1413,7 +1447,7 @@ def probe_kind(path: str) -> str:
     callers that want one label per file. A browser listing wants
     :func:`list_datasets` instead, which enumerates every entry."""
     try:
-        with h5py.File(path, "r") as f:
+        with HANDLES.borrow(path) as f:
             top_level = list(f.keys())
             if not top_level:
                 return "unknown"
@@ -1431,7 +1465,7 @@ def list_entries(path: str) -> "list[tuple[str, Optional[int]]]":
     (case 3/4) that the file is "about", or a stale/incomplete entry left
     over from an aborted acquisition. Use this to see what's really in a
     file before calling :func:`load_soleil_nxs` with an explicit ``entry=``."""
-    with h5py.File(path, "r") as f:
+    with HANDLES.borrow(path) as f:
         return [("/" + k, _classify_entry(f, "/" + k)) for k in f.keys()]
 
 
@@ -1557,7 +1591,7 @@ def load_soleil_nxs(path: str, entry: Optional[str] = None) -> NxsScan:
         return scan
     finally:
         if not keep_open:
-            HANDLES.release(path)
+            HANDLES.release(path, f)
 
 
 def to_kspace_cube(scan: NxsScan, kinetic_energy_eV=None, work_function_eV: float = 4.5):
@@ -1606,7 +1640,7 @@ def inspect_nxs(path: str, max_depth: int = 6) -> None:
     """Print the HDF5 tree (groups/datasets/shapes) and the detected case,
     for validating the axis-alignment assumptions above against a real
     file. Read-only, side-effect-free besides printing."""
-    with h5py.File(path, "r") as f:
+    with HANDLES.borrow(path) as f:
         top_level = list(f.keys())
         print(f"File: {path}")
         print(f"Top-level entries and their detected case (content-based, not name-based):")

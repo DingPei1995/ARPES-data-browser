@@ -35,9 +35,9 @@ axes       the vectors for that kind's dimensions, in the array's own
 """
 from __future__ import annotations
 
-import h5py
 
 from loader.nxs_file import list_datasets, load_soleil_nxs, _classify_entry
+from loader.nxs_file import HANDLES
 from loader.registry import Loader, register
 
 
@@ -57,7 +57,7 @@ class SoleilAntaresLoader(Loader):
         "load worked" cannot disagree.
         """
         try:
-            with h5py.File(path, "r") as f:
+            with HANDLES.borrow(path) as f:
                 for name in f.keys():
                     try:
                         if _classify_entry(f, "/" + name) is not None:

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import h5py
 
+from loader.nxs_file import HANDLES
+
 from loader.nxs_file import (NATIVE_ATTR, list_datasets, load_soleil_nxs)
 from loader.registry import Loader, register
 
@@ -40,7 +42,7 @@ class NativeLoader(Loader):
     def can_open(self, path: str) -> bool:
         """True if any top-level entry carries the native marker."""
         try:
-            with h5py.File(path, "r") as f:
+            with HANDLES.borrow(path) as f:
                 return any(NATIVE_ATTR in f[name].attrs
                            for name in f.keys()
                            if isinstance(f[name], h5py.Group))
@@ -60,7 +62,7 @@ class NativeLoader(Loader):
         """
         entries = list_datasets(path)
         try:
-            with h5py.File(path, "r") as f:
+            with HANDLES.borrow(path) as f:
                 for info in entries:
                     group = f.get(info.get("entry") or "")
                     if group is None:
