@@ -355,7 +355,13 @@ def test_every_kind_has_an_energy_axis():
     otherwise refuse to shift a new kind's energy axis."""
     from loader.nxs_file import AXIS_SLOTS, energy_slot
     for kind in AXIS_SLOTS:
+        if kind == "mdc":
+            continue                           # the one kind without one
         assert energy_slot(kind) is not None, kind
+    # An MDC runs along an angle or a momentum; "shift its energy axis"
+    # must be refused, not applied to the angle.
+    assert energy_slot("mdc") is None
+    assert energy_slot("edc") == "x" and energy_slot("spin_edc") == "x"
     assert energy_slot("cut") == "y"          # a cut is (angle, energy)
     assert energy_slot("kz_map") == "z"
     assert energy_slot("unsupported") is None
