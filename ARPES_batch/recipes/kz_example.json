@@ -7,7 +7,6 @@
     "$ARPES_RAW/Au ref"
   ],
   "output": "~/ARPES_processed/my_beamtime_kz",
-  "photon_energy_scans": [],
   "sample": {
     "name": "",
     "lattice": {

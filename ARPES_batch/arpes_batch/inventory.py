@@ -124,20 +124,6 @@ def describe_entry(path: str, entry: str, listed: dict = None) -> dict:
         row["photon_energy_eV"] = _number(row.get("photon_energy_eV"))
         row["temperature_K"] = _number(row.get("temperature_K"))
         row["axis0_role"] = str(info.get("axis0.role", "angle"))
-        if scan.kind == "map":
-            first = row.get("axis_x", {})
-            hv = row.get("photon_energy_eV")
-            # ANTARES writes an hv scan in a deflector map's layout; the
-            # values give it away (tens of eV, around the recorded photon
-            # energy) where a deflector runs over +-20 degrees.
-            if (first.get("min", 0) > 5 and first.get("max", 0) < 3000
-                    and (hv is None or first["min"] - 1 <= hv <= first["max"] + 1)
-                    and first.get("step", 0) >= 0.1 and first.get("n", 0) > 2):
-                row["first_axis_looks_like"] = "photon_energy"
-                notes.append("the first axis runs over "
-                             f"{first['min']:.4g}..{first['max']:.4g}: this looks like a "
-                             "photon-energy scan. To process it as a kz map, list it "
-                             "under 'photon_energy_scans' in the recipe")
         if scan.kind in ("map", "cut"):
             slit_slot = "k" if scan.kind == "map" else "x"
             slit = row.get(f"axis_{slit_slot}", {})
@@ -188,7 +174,7 @@ def inventory(roots, patterns=("*.nxs",), recursive: bool = True,
 FLAT_COLUMNS = ("file", "folder", "entry", "kind", "role", "status", "size_MB",
                 "start_time", "photon_energy_eV", "pass_energy", "lens_mode",
                 "temperature_K", "polarisation", "shape", "slit_axis_looks_like",
-                "first_axis_looks_like", "axis0_role", "path")
+                "axis0_role", "path")
 
 
 def write_manifest(rows: list, out_dir: str) -> dict:

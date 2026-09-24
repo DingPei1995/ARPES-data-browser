@@ -120,9 +120,9 @@ python -m pytest tests
 ```
 
 The tests use synthetic data with planted answers (`tests/synthetic.py`):
-ANTARES maps, cuts and an hv scan; a CASSIOPEE-style kz scan of a
-body-centred crystal; and a hexagonal crystal together with its "calculated"
-band file. The planted quantities are E_F, the slit curvature, Gamma, the
+ANTARES maps and cuts; a CASSIOPEE-style kz scan of a body-centred metal
+and one of a semiconductor on a kinetic axis; and a hexagonal crystal
+together with its "calculated" band file. The planted quantities are E_F, the slit curvature, Gamma, the
 detector grid, the per-spectrum E_F drift, V0 and the calculation's energy
 offset.
 

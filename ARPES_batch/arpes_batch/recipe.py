@@ -39,9 +39,6 @@ reference file to use instead of the one chosen automatically, and
 ``steps`` holds one chain per kind -- ``map``, ``kz_map``, ``cut`` (see
 :data:`DEFAULT_CHAINS`); a plain list is the chain for maps. A kz map needs
 the ``sample`` block (lattice, surface normal, V0; see :mod:`.sample`).
-ANTARES writes a photon-energy scan in the same layout as a deflector map;
-name such entries in ``photon_energy_scans`` (patterns) to process them as
-kz maps.
 """
 from __future__ import annotations
 
@@ -99,7 +96,6 @@ DEFAULTS = {
     "reference_fit": {"order": 2, "half_width": 3, "step": 4, "window_eV": 0.25},
     "steps": DEFAULT_CHAINS,
     "sample": {},
-    "photon_energy_scans": [],         # map entries whose first axis is hv
     "preview": {"energies": [0.0, -0.2, -0.5, -1.0], "width": 0.03},
     "overrides": {},
     "include": [],

@@ -97,7 +97,6 @@ def cmd_init(args):
                                                     "space_group": None},
                             "surface_normal": None, "inner_potential_eV": None,
                             "work_function_eV": None, "effective_mass": 1.0}
-        recipe["photon_energy_scans"] = []
     R.normalise(recipe)                     # fail now, not at run time
     json.dump(recipe, sys.stdout, indent=2)
     sys.stdout.write("\n")

@@ -34,7 +34,7 @@ ARPES-data-browser/
   ARPES_viewer/        unchanged
   ARPES_batch/         new; imports ARPES_viewer's loader/ and tools/ only
     arpes_batch/
-      inventory.py     every entry: kind, shape, hv, pass energy, lens mode, T; flags hv scans in map layout
+      inventory.py     every entry: kind, shape, hv, pass energy, lens mode, T
       reference.py     gold reference: E_F per slit channel -> polynomial, E_F(kin), work function
       center.py        Gamma: inversion centre of a map, mirror centre along a slit
       sample.py        lattice, surface normal, V0, calculation: what is missing, prompts, k_z period
@@ -79,11 +79,8 @@ ARPES-data-browser/
    slit; the deflector angle comes from the file.
 5. `curvature`, with `a0` from the viewer's `suggest_a0`.
 
-**Photon-energy (kz) scans.** CASSIOPEE folders load as kz maps. ANTARES
-writes an hv scan in the deflector-map layout; the inventory flags it
-(`first_axis_looks_like: photon_energy`), and listing it under
-`photon_energy_scans` loads it the way the viewer's loader window does with
-"First axis is photon energy".
+**Photon-energy (kz) scans.** These come from CASSIOPEE folders, which the
+viewer's loader assembles into kz maps (ANTARES files hold no hv scans).
 
 1. `degrid`.
 2. `kz_calibrate` -- the viewer's `tools.kzmap`. It has three sources:
@@ -239,46 +236,41 @@ them to a scratch folder, process them, then delete them.
 
 None of this is needed for `ARPES_batch` to work. But folding it into the
 viewer would give one implementation shared by the dialogs and the batch
-path, and two items below are bugs in the viewer as it stands.
+path.
 
-**Behaviour in the viewer (worth fixing regardless)**
+**Fixed in this branch: the kz window's lattice** (viewer CHANGELOG, forty-second round)
 
-1. **An ANTARES hv scan cannot use the kz tools.**
-   - `loader/registry.py:233` (`apply_options`) records
-     `axis0.role = "photon_energy"` but leaves the kind as `map`.
-   - `ui/windows.py:2965/2974` offer "kz map processing" and
-     "kz -> momentum" only for kind `kz_map`.
-   - Promote a cube whose first axis is the photon energy to `kz_map` there,
-     as `arpes_batch.dataset.Dataset.load(as_kz=True)` does.
-2. **The kz window builds a hexagonal lattice with γ = 90°.**
-   - `ui/kzconv.py:331` makes `LatticeParams(a, a, c, space_group)` with the
-     angles left at 90°, for every space group, the default 194 included.
-   - `validate_lattice_parameters` then says "hexagonal requires gamma =
-     120 deg".
-   - The surface-normal list is built from that wrong reciprocal lattice.
-     (001) is unaffected; any other surface is not.
-   - Set the angles from the crystal system, or offer all six parameters as
-     the batch `sample` block does.
+1. `ui/kzconv.py` built the cell as `LatticeParams(a, a, c, space_group)`
+   with every angle at 90°, for every space group, the default 194 included.
+   - For a hexagonal group that is a tetragonal cell. (001) came out right;
+     every other surface normal, and its period, did not. For a = 3.16 Å,
+     (100) was listed at 1.988 Å⁻¹ instead of 4π/(√3 a) = 2.296 Å⁻¹.
+   - The window now has all six cell parameters and applies the space
+     group's constraints (`tools.lattice.free_parameters`), as the
+     Brillouin-zone dialog does.
+   - `test/test_kzconv_dialog.py` checks the listed periods against
+     `tools.cleavage` for hexagonal, body-centred tetragonal, orthorhombic
+     and rhombohedral groups.
 
 **Move the Qt-free logic out of the GUI modules**
 
-3. Gold reference and channel-by-channel fit -- `ui/windows.py`:
+2. Gold reference and channel-by-channel fit -- `ui/windows.py`:
    `reference_frame` (4078), `metadata_temperature` (4099),
    `run_channel_fit` (4995), `AuReferenceDialog` (5045).
    - Move them to `tools/reference.py`; `arpes_batch/reference.py` is a
      first draft of it.
    - `ui/kzmap.py:351` imports `metadata_temperature` from `ui.windows` for
      the same reason.
-4. Computed-dataset container and provenance -- `ui/widgets.py`:
+3. Computed-dataset container and provenance -- `ui/widgets.py`:
    `_MemScan` (871), `MemoryData` (924), `KMapData` (1012).
    - Importing `ui.widgets` imports pyqtgraph (line 45).
    - Move them to `loader/derived.py`; `arpes_batch/dataset.py` then goes
      away.
-5. The energy-axis offset (`ui/windows.py:403`), the k-conversion wrapper
+4. The energy-axis offset (`ui/windows.py:403`), the k-conversion wrapper
    (`ui/windows.py:3434`, `:3495`) and the de-grid settings matching
    (`ui/degrid.py:84`, `:89`, in a module that imports pyqtgraph) belong in
    `tools/`.
-6. **kz additions that belong in `tools/`:**
+5. **kz additions that belong in `tools/`:**
    - the period-overlap V0 estimator (`arpes_batch.steps.v0_by_period_overlap`),
      beside `tools.kzconv.scan_inner_potential`;
    - the calculation match (`arpes_batch/calcbands.py`), as
@@ -287,21 +279,21 @@ path, and two items below are bugs in the viewer as it stands.
 
 **Memory, for large maps**
 
-7. `tools/kspace.py:295` (`convert_map`) and `tools/analysis.py:175`
+6. `tools/kspace.py:295` (`convert_map`) and `tools/analysis.py:175`
    (`fs_correction`) promote the whole cube to float64. Offer float32 and
    energy chunking, and let `convert_map`'s progress callback cancel.
-8. `tools/degrid.py:500` (`degrid_map`) reads the whole cube into memory by
+7. `tools/degrid.py:500` (`degrid_map`) reads the whole cube into memory by
    design. Run the largest files one process at a time, or `bin` them
    first.
 
 **Metadata (confirm the field names on a real file with `inspect_nxs`)**
 
-9. `loader/nxs_file.py:876` (`aliases`): add the polarisation and the
+8. `loader/nxs_file.py:876` (`aliases`): add the polarisation and the
    manipulator angles (theta/tilt/phi). The latter are the physical starting
    value for Gamma and for `kz_convert`'s `theta_position`.
-10. `loader/nxs_file.py:1403` (`list_datasets`) could return the shapes and
+9. `loader/nxs_file.py:1403` (`list_datasets`) could return the shapes and
     axis ranges, so the inventory does not build an `NxsScan` per entry.
-11. **Slit-axis unit.**
+10. **Slit-axis unit.**
     - `README.md:757` says the MBS delivers the slit axis in Å⁻¹, but the
       loader labels it in degrees and every conversion treats it as an
       angle.
@@ -309,12 +301,12 @@ path, and two items below are bugs in the viewer as it stands.
 
 **Small**
 
-12. `tools/process.py:886` (`record_step`) counts the `.from` keys when
+11. `tools/process.py:886` (`record_step`) counts the `.from` keys when
     numbering, so steps are numbered 1, 3, 5, ...
     - `history_of` sorts numerically, so nothing reads them wrongly today.
     - Anything that sorts the keys as text scrambles the order after the
       tenth step.
-13. `test/` has no synthetic ANTARES or kz files.
+12. `test/` has no synthetic ANTARES or kz files.
     `ARPES_batch/tests/synthetic.py` could move there.
 
 ## 8. What has been checked, and what has not
@@ -329,7 +321,7 @@ path, and two items below are bugs in the viewer as it stands.
 - ANTARES cut:
   - de-gridded with the map's grid;
   - the slit centre within 0.2°.
-- ANTARES hv scan, calibrated from gold:
+- Semiconductor kz scan on a kinetic axis, calibrated from gold:
   - E_F = hν − W;
   - W within 5 meV.
 - Body-centred kz scan:
@@ -344,9 +336,9 @@ path, and two items below are bugs in the viewer as it stands.
 
 **Not yet checked: real files.** On a first real beamtime, look at:
 
-1. each entry's kind in the inventory (navigation SPEM images? hv scans
-   in map layout?), its axis lengths, and any "ambiguous axis" warnings;
-2. the slit-axis unit (item 11);
+1. each entry's kind in the inventory (navigation SPEM images?), its axis
+   lengths, and any "ambiguous axis" warnings;
+2. the slit-axis unit (item 10);
 3. whether the gold references share the maps' lens mode, pass energy and
    photon energy;
 4. how well the real MCP grid is removed;

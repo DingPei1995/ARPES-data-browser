@@ -168,13 +168,14 @@ def write_kz_native(path, *, hv=np.arange(30.0, 111.0, 1.0), n_slit=121, n_e=150
             "work_function": work_function}
 
 
-def write_hv_scan_antares(path, *, hv=np.arange(60.0, 64.01, 0.5), n_slit=96,
-                          phi=4.35, gamma_slit=0.0, counts=50.0, seed=0,
-                          lens="L4", pe="PE50", entry="hvscan_0001"):
-    """An ANTARES photon-energy scan: the deflector-map layout, with the
-    monochromator as the scanned actuator and one kinetic-energy window wide
-    enough for every photon energy. A semiconductor: bands below E_F only,
-    no edge of its own -- E_F has to come from the gold reference."""
+def write_kz_kinetic(path, *, hv=np.arange(60.0, 64.01, 0.5), n_slit=96,
+                     phi=4.35, gamma_slit=0.0, counts=50.0, seed=0,
+                     lens="L4", pe="PE50"):
+    """A photon-energy scan of a semiconductor with its energy axis left in
+    kinetic energy (CASSIOPEE's ``energy_reference="kinetic"``), written in
+    the viewer's own format: bands below E_F only, no edge of its own -- so
+    E_F has to come from the gold reference, as hv - W."""
+    from loader.nxs_file import save_dataset
     rng = np.random.default_rng(seed)
     e_lo = hv.min() - phi - 1.2
     e_hi = hv.max() - phi + 0.3
@@ -183,29 +184,20 @@ def write_hv_scan_antares(path, *, hv=np.arange(60.0, 64.01, 0.5), n_slit=96,
     slit = np.linspace(-15.0, 15.0, n_slit)
     cube = np.empty((hv.size, n_slit, n_e))
     for i, h in enumerate(hv):
-        ef = h - phi
-        binding = energy[None, :] - ef
+        binding = energy[None, :] - (h - phi)
         k = K0 * np.sqrt(energy[None, :]) * np.sin(np.radians(slit[:, None] - gamma_slit))
         vbm = -0.8 - 4.0 * k ** 2 - 0.05 * np.cos(2 * np.pi * (h - hv[0]) / 3.0)
         cube[i] = 0.06 ** 2 / ((binding - vbm) ** 2 + 0.06 ** 2) + 0.05 * (binding < -0.9)
     cube = rng.poisson(counts * cube + 0.3).astype(np.float32)
-    with h5py.File(path, "w") as f:
-        g = f.create_group(entry)
-        g["start_time"] = np.bytes_("2026-09-18T20:00:00")
-        sd = g.create_group("scan_data")
-        sd["actuator_1_1"] = hv
-        step_e = energy[1] - energy[0]
-        step_s = slit[1] - slit[0]
-        for name, value in (("data_04", e_lo), ("data_05", step_e), ("data_06", energy[-1]),
-                            ("data_07", slit[0]), ("data_08", step_s), ("data_09", slit[-1])):
-            sd[name] = np.array([value])
-        sd.create_dataset("data_11", data=cube, compression="gzip", compression_opts=1)
-        an = g.create_group("ANTARES")
-        an.create_group("i12-m-c04-op-mono1")["energy"] = np.array([hv[0]])
-        mbs = an.create_group("MBSAcquisition_1")
-        mbs["passenergy"] = np.bytes_(pe)
-        mbs["lens_mode"] = np.bytes_(lens)
-        an.create_group("i12-m-cx1-ex-tc.1")["temperature"] = np.array([20.0 - 273.15])
+    save_dataset(str(path), [{
+        "name": "semiconductor kz scan", "kind": "kz_map", "axes": (hv, slit, energy),
+        "labels": {"x": "Photon energy (eV)", "k": "Angle along slit (\u00b0)",
+                   "z": "Kinetic energy (eV)"},
+        "value": cube,
+        "info": {"axis0.role": "photon_energy", "MBS.lens_mode": lens,
+                 "MBS.passenergy": pe, "SampleTemperature_K": 20.0,
+                 "PhotonEnergy": float(hv[0])},
+        "motors": {}}])
     return {"hv": hv, "phi": phi, "energy": energy}
 
 

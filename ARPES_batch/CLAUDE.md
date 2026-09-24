@@ -29,14 +29,10 @@ photon-energy (kz) scans and single cuts. Run everything from this folder:
 
 1. `python -m arpes_batch inventory <raw folder> --out <output>/inventory --json`
    Read the entries: kind (map, cut, kz_map), photon energy, pass energy,
-   lens mode, temperature, `slit_axis_looks_like`, `first_axis_looks_like`,
-   `notes`.
+   lens mode, temperature, `slit_axis_looks_like`, `notes`.
    - Group the entries by the conditions they were taken at (a photon-energy
      series, polarisation pairs, positions on the sample).
    - If any row has `slit_axis_looks_like: momentum`, stop and ask the user.
-   - A map with `first_axis_looks_like: photon_energy` is probably an hv scan
-     in ANTARES's map layout. Confirm with the user, then list it under
-     `photon_energy_scans`.
 2. `python -m arpes_batch references "<Au ref folder>" --out <output> --json`
    Open `<output>/references/*.png`. A good fit has smooth points along the
    curve, an rms of a few meV or less, and most channels used. Report E_F,

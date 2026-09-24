@@ -39,15 +39,8 @@ class Dataset:
 
     # -- in -----------------------------------------------------------------
     @classmethod
-    def load(cls, path: str, entry: str = None, name: str = None,
-             as_kz: bool = False) -> "Dataset":
-        """Read one entry. ``as_kz`` reads a map whose first axis is the
-        photon energy (how ANTARES records an hv scan) as a kz map -- the
-        loader window's "First axis of a map is: photon energy"."""
-        options = registry.LoadOptions(axis0_role="photon_energy") if as_kz else None
-        scan = registry.load(path, entry, options)
-        if as_kz and scan.kind == "map":
-            scan.kind = "kz_map"
+    def load(cls, path: str, entry: str = None, name: str = None) -> "Dataset":
+        scan = registry.load(path, entry)
         slots = axis_slots(scan.kind, "constructor")
         if not slots:
             scan.close()

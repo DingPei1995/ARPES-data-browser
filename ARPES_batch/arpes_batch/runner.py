@@ -151,8 +151,7 @@ def run_job(job: dict) -> dict:
                         result["resumed_from"] = step["as"]
                         break
         if ds is None:
-            source = ds = Dataset.load(row["path"], row.get("entry"), name=key,
-                                       as_kz=bool(job.get("as_kz")))
+            source = ds = Dataset.load(row["path"], row.get("entry"), name=key)
 
         for index in range(start_at, len(steps)):
             step = dict(steps[index])
@@ -239,20 +238,10 @@ def plan(recipe: dict, only=None, log=print) -> tuple:
     inv.write_manifest(rows, out_dir)
     refs = prepare_references(recipe, out_dir, log=log)
     by_path = {os.path.abspath(r.path): r for r in refs}
-    hv_scans = recipe.get("photon_energy_scans") or []
     jobs, notes = [], []
     for row in rows:
         if row.get("status") != "ok" or row.get("role") == "reference":
             continue
-        as_kz = False
-        if row.get("kind") == "map" and hv_scans and R.select(
-                row, {"include": hv_scans}):
-            row = dict(row, kind="kz_map", promoted_from="map")
-            as_kz = True
-        elif row.get("first_axis_looks_like") == "photon_energy":
-            notes.append(f"{row['file']} {row.get('entry') or ''}: looks like a photon-energy "
-                         f"scan but is processed as a deflector map; add it to "
-                         f"'photon_energy_scans' if it is one")
         if row.get("kind") not in recipe["kinds"] or not R.select(row, recipe, only):
             continue
         steps, override = R.steps_for(row, recipe)
@@ -263,7 +252,7 @@ def plan(recipe: dict, only=None, log=print) -> tuple:
             ref_notes = [] if chosen else [f"override reference {override['reference']} was not fitted"]
         else:
             chosen, ref_notes = choose_reference(row, refs)
-        jobs.append({"row": row, "steps": steps, "as_kz": as_kz,
+        jobs.append({"row": row, "steps": steps,
                      "job_dir": os.path.join(out_dir, row.get("folder") or "data", _job_key(row)),
                      "grid_dir": os.path.join(out_dir, "grids"),
                      "sample": recipe.get("sample") or {},

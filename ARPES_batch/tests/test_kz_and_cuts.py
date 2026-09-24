@@ -20,7 +20,7 @@ from arpes_batch.runner import run                                  # noqa: E402
 from arpes_batch.sample import (NeedsInput, Sample, apply_answers,  # noqa: E402
                                 prompt, surface_period)
 from synthetic import (BCT, HEX, hex_bands, write_band_file,        # noqa: E402
-                       write_hv_scan_antares, write_kz_native, write_map)
+                       write_kz_kinetic, write_kz_native, write_map)
 
 arpes_batch.ensure_viewer_on_path()
 from tools.lattice import LatticeParams                             # noqa: E402
@@ -41,7 +41,7 @@ def beamtime(tmp_path_factory):
         "cut": write_map(raw / "cuts" / "cut_a.nxs", seed=5, n_defl=1,
                          defl_range=(2.0, 2.0), **FRAME),
         "kz": write_kz_native(raw / "kz" / "kz_bct.nxs", seed=3),
-        "hv": write_hv_scan_antares(raw / "hv" / "hv_scan.nxs"),
+        "semi": write_kz_kinetic(raw / "hv" / "kz_semi.nxs"),
     }
     write_map(raw / "Au ref" / "Au.nxs", sample="gold", n_defl=5, counts=400, seed=3,
               n_slit=160, n_e=220, grid=0.05, curvature_eV=0.02)
@@ -52,7 +52,6 @@ def _recipe(root, raw, sample=SAMPLE, **extra):
     recipe = {
         "inputs": [str(raw / d) for d in ("maps", "cuts", "kz", "hv")],
         "references": [str(raw / "Au ref")], "output": str(root / "processed"),
-        "photon_energy_scans": ["hv_scan*"],
         "steps": {
             "map": [{"op": "degrid"}, {"op": "calibrate_energy", "required": True},
                     {"op": "save", "as": "angle"}],
@@ -67,7 +66,7 @@ def _recipe(root, raw, sample=SAMPLE, **extra):
                     {"op": "kconvert_cut", "gamma_slit_deg": "auto", "gamma_deflector_deg": 2.0},
                     {"op": "save", "as": "k"}, {"op": "curvature"},
                     {"op": "save", "as": "curvature"}]},
-        "overrides": {"hv_scan*": {"kz_calibrate": {"source": "reference"},
+        "overrides": {"kz_semi*": {"kz_calibrate": {"source": "reference"},
                                    "kz_convert": {"inner_potential": 12.0}}},
     }
     if sample is not None:
@@ -170,14 +169,14 @@ def test_a_kz_map_is_aligned_and_converted(processed):
         kz.close()
 
 
-def test_an_antares_hv_scan_is_calibrated_from_gold(processed):
+def test_a_semiconductor_kz_scan_is_calibrated_from_gold(processed):
     results, _summary, truth = processed
-    r = results["hv_scan__hvscan_0001"]
+    r = results["kz_semi__semiconductor kz scan"]
     assert r["kind"] == "kz_map"
     rows = np.array(_steps(r)["kz_calibrate"]["qc"]["ef_per_hv"])
-    # E_F moves with the photon energy: hv - W, W from the gold
+    # no edge of its own: E_F moves with the photon energy, hv - W, W from gold
     assert np.allclose(rows[:, 1] - rows[:, 0], rows[0, 1] - rows[0, 0], atol=1e-9)
-    assert rows[0, 0] - rows[0, 1] == pytest.approx(truth["hv"]["phi"], abs=0.005)
+    assert rows[0, 0] - rows[0, 1] == pytest.approx(truth["semi"]["phi"], abs=0.005)
     assert _steps(r)["kz_convert"]["qc"]["zones_covered"] < 1.5
 
 
