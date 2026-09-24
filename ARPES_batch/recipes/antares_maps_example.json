@@ -1,25 +1,126 @@
 {
-  "name": "SOLEIL ANTARES deflector maps -- example",
-  "inputs": ["$ARPES_RAW/maps"],
-  "references": ["$ARPES_RAW/Au ref"],
-  "output": "~/ARPES_processed/my_beamtime",
-  "kinds": ["map"],
-  "reference_fit": {"order": 2, "half_width": 3, "step": 4, "window_eV": 0.25},
-  "steps": [
-    {"op": "degrid"},
-    {"op": "calibrate_energy", "source": "reference", "fs_correction": true, "required": true},
-    {"op": "crop", "energy": [-3.0, 0.3]},
-    {"op": "normalise"},
-    {"op": "save", "as": "angle"},
-    {"op": "kconvert", "theta_offset_deg": "auto", "phi_offset_deg": "auto",
-     "azimuth_deg": 0.0, "n_kx": 300, "n_ky": 300, "min_centre_score": 0.5},
-    {"op": "save", "as": "k"}
+  "name": "SOLEIL ANTARES -- deflector maps and cuts (example)",
+  "inputs": [
+    "$ARPES_RAW/maps",
+    "$ARPES_RAW/cuts"
   ],
-  "preview": {"energies": [0.0, -0.5, -1.0, -1.5, -2.0], "width": 0.03},
+  "references": [
+    "$ARPES_RAW/Au ref"
+  ],
+  "output": "~/ARPES_processed/my_beamtime",
+  "reference_fit": {
+    "order": 2,
+    "half_width": 3,
+    "step": 4,
+    "window_eV": 0.25
+  },
+  "steps": {
+    "map": [
+      {
+        "op": "degrid"
+      },
+      {
+        "op": "calibrate_energy",
+        "source": "reference",
+        "fs_correction": true,
+        "required": true
+      },
+      {
+        "op": "crop",
+        "energy": [
+          -3.0,
+          0.3
+        ]
+      },
+      {
+        "op": "normalise"
+      },
+      {
+        "op": "save",
+        "as": "angle"
+      },
+      {
+        "op": "kconvert",
+        "theta_offset_deg": "auto",
+        "phi_offset_deg": "auto",
+        "azimuth_deg": 0.0,
+        "n_kx": 300,
+        "n_ky": 300,
+        "min_centre_score": 0.5
+      },
+      {
+        "op": "save",
+        "as": "k"
+      }
+    ],
+    "cut": [
+      {
+        "op": "degrid"
+      },
+      {
+        "op": "calibrate_energy",
+        "source": "reference",
+        "fs_correction": true,
+        "required": true
+      },
+      {
+        "op": "crop",
+        "energy": [
+          -3.0,
+          0.3
+        ]
+      },
+      {
+        "op": "save",
+        "as": "angle"
+      },
+      {
+        "op": "kconvert_cut",
+        "gamma_slit_deg": "auto"
+      },
+      {
+        "op": "save",
+        "as": "k"
+      },
+      {
+        "op": "curvature"
+      },
+      {
+        "op": "save",
+        "as": "curvature"
+      }
+    ]
+  },
+  "preview": {
+    "energies": [
+      0.0,
+      -0.5,
+      -1.0,
+      -1.5,
+      -2.0
+    ],
+    "width": 0.03
+  },
   "overrides": {
-    "large_map_*": {"kconvert": {"n_kx": 400, "n_ky": 400}},
-    "offcentre_map_*": {"kconvert": {"theta_offset_deg": 1.2, "phi_offset_deg": -0.4,
-                                     "azimuth_deg": 30.0}}
+    "large_map_*": {
+      "kconvert": {
+        "n_kx": 400,
+        "n_ky": 400
+      }
+    },
+    "offcentre_map_*": {
+      "kconvert": {
+        "theta_offset_deg": 1.2,
+        "phi_offset_deg": -0.4,
+        "azimuth_deg": 30.0
+      }
+    },
+    "cut_through_K_*": {
+      "kconvert_cut": {
+        "gamma_slit_deg": 0.0,
+        "gamma_deflector_deg": 8.5
+      }
+    }
   },
   "workers": 1
 }

@@ -36,11 +36,17 @@ from ._paths import check_output_dir
 server = MCPServer(
     "arpes-batch",
     instructions=(
-        "Batch processing of ARPES maps with the ARPES viewer's own algorithms. "
-        "Typical order: inventory -> fit_references -> plan -> run_recipe (a few "
-        "files at a time) -> look at the preview PNGs -> put per-file Gamma / "
-        "azimuth / energy window into the recipe's overrides -> run_recipe again "
-        "(it resumes from checkpoints). Never point an output inside a raw-data folder."),
+        "Batch processing of ARPES maps, photon-energy (kz) scans and cuts with the "
+        "ARPES viewer's own algorithms. Typical order: inventory -> fit_references -> "
+        "plan -> run_recipe (a few files at a time) -> look at the preview PNGs -> put "
+        "per-file Gamma / azimuth / energy window into the recipe's overrides -> "
+        "run_recipe again (it resumes from checkpoints). A kz conversion needs the "
+        "sample's lattice, surface normal and inner potential, and the user is asked "
+        "whether a band-structure calculation exists to compare with: when a tool "
+        "returns needs_input, put those questions to the user and write the answers "
+        "into the recipe's sample block (null for a declined optional one); never "
+        "invent a lattice, a cleavage plane or V0. Never point an output inside a "
+        "raw-data folder."),
 )
 
 
@@ -84,12 +90,41 @@ def plan(recipe_path: str, only: list[str] | None = None) -> dict:
 def run_recipe(recipe_path: str, only: list[str] | None = None, force: bool = False) -> dict:
     """Run a recipe (optionally only the files matching ``only``). Returns,
     per entry, the status, what each step measured (E_F, grid power, Gamma
-    suggestion and its score) and the paths of the .nxs results and PNGs."""
+    suggestion and its score, V0) and the paths of the .nxs results and PNGs.
+    If the recipe converts kz maps without the sample's lattice, surface
+    normal or inner potential, nothing runs and ``needs_input`` lists them:
+    ask the user for those values, never guess them."""
     from .runner import run
-    summary = run(R.load(recipe_path), only=only, force=force, log=lambda *_: None)
+    from .sample import NeedsInput
+    try:
+        summary = run(R.load(recipe_path), only=only, force=force, log=lambda *_: None)
+    except NeedsInput as needs:
+        return needs.to_json()
     for result in summary.get("results", []):
         result.pop("traceback", None)
     return summary
+
+
+@server.tool()
+def surfaces(a: float, c: float, b: float | None = None, alpha: float = 90.0,
+             beta: float = 90.0, gamma: float = 90.0, space_group: int | None = None,
+             normal: list[int] | None = None, measured_period: float | None = None) -> dict:
+    """The low-index surfaces of a lattice and the k_z period of each (what
+    the user chooses between when naming the cleavage plane); with
+    ``normal``, the period of that one; with ``measured_period`` (1/A), the
+    planes that would produce it."""
+    from tools import cleavage
+    from tools.lattice import LatticeParams
+    from .sample import list_surfaces, surface_period
+    lattice = LatticeParams(a=a, b=b or a, c=c, alpha=alpha, beta=beta, gamma=gamma,
+                            space_group=space_group)
+    out = {"surfaces": list_surfaces(lattice)}
+    if normal:
+        out["chosen"] = surface_period(lattice, normal)
+    if measured_period:
+        out["planes_matching_period"] = [x.describe() for x in
+                                         cleavage.candidates(measured_period, lattice)[:6]]
+    return out
 
 
 @server.tool()

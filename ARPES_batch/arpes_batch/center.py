@@ -81,3 +81,27 @@ def suggest_centre(ds, *, energy: float = None, width: float = 0.05) -> dict:
     c0, c1, score = symmetry_centre(image, ds.axis("x"), ds.axis("k"))
     return {"theta_offset_deg": c0, "phi_offset_deg": c1, "score": score,
             "energy": float(energy), "width": float(width)}
+
+
+def mirror_centre(image, axis_values, *, along: int = 0, smooth_px: float = 1.5):
+    """``(centre, score)``: where ``image`` is most nearly mirror-symmetric
+    along one axis -- normal emission on a cut's slit, or on the slit axis
+    of a photon-energy scan. Each line across the other axis is
+    self-convolved along ``along`` and the results summed, so every energy
+    row votes for the same centre."""
+    image = np.nan_to_num(np.asarray(image, dtype=float))
+    image = np.moveaxis(image, along, 0)
+    if smooth_px:
+        image = gaussian_filter(image, smooth_px)
+    image = np.clip(image - np.median(image), 0, None)
+    norm = float(np.sum(image ** 2))
+    if norm <= 0:
+        return float("nan"), 0.0
+    conv = np.zeros(2 * image.shape[0] - 1)
+    for column in image.T:
+        conv += fftconvolve(column, column, mode="full")
+    index = int(np.argmax(conv))
+    (m,) = _peak_subpixel(conv, (index,))
+    axis_values = np.asarray(axis_values, dtype=float)
+    centre = float(np.interp(m / 2.0, np.arange(axis_values.size), axis_values))
+    return centre, float(conv[index] / norm)

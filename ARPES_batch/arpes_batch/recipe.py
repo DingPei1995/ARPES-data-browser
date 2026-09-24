@@ -35,6 +35,13 @@ patterns; a value keyed by a step name is merged into that step's
 parameters, ``"skip": true`` leaves the entry out, ``"reference"`` names a
 reference file to use instead of the one chosen automatically, and
 ``"steps"`` replaces the whole chain for that entry.
+
+``steps`` holds one chain per kind -- ``map``, ``kz_map``, ``cut`` (see
+:data:`DEFAULT_CHAINS`); a plain list is the chain for maps. A kz map needs
+the ``sample`` block (lattice, surface normal, V0; see :mod:`.sample`).
+ANTARES writes a photon-energy scan in the same layout as a deflector map;
+name such entries in ``photon_energy_scans`` (patterns) to process them as
+kz maps.
 """
 from __future__ import annotations
 
@@ -45,25 +52,54 @@ import os
 
 from .steps import STEPS
 
-DEFAULT_STEPS = [
-    {"op": "degrid"},
-    {"op": "calibrate_energy", "source": "reference", "fs_correction": True,
-     "required": True},
-    {"op": "crop", "energy": [-2.5, 0.3]},
-    {"op": "normalise"},
-    {"op": "save", "as": "angle"},
-    {"op": "kconvert", "theta_offset_deg": "auto", "phi_offset_deg": "auto",
-     "n_kx": 250, "n_ky": 250, "min_centre_score": 0.5},
-    {"op": "save", "as": "k"},
-]
+#: One chain per kind of dataset. A recipe may give a plain list, which is
+#: taken as the chain for maps (what recipes looked like before kz maps and
+#: cuts were handled).
+DEFAULT_CHAINS = {
+    "map": [
+        {"op": "degrid"},
+        {"op": "calibrate_energy", "source": "reference", "fs_correction": True,
+         "required": True},
+        {"op": "crop", "energy": [-2.5, 0.3]},
+        {"op": "normalise"},
+        {"op": "save", "as": "angle"},
+        {"op": "kconvert", "theta_offset_deg": "auto", "phi_offset_deg": "auto",
+         "n_kx": 250, "n_ky": 250, "min_centre_score": 0.5},
+        {"op": "save", "as": "k"},
+    ],
+    "kz_map": [
+        {"op": "degrid"},
+        {"op": "kz_calibrate", "source": "self", "fs_correction": True,
+         "required": True},
+        {"op": "crop", "energy": [-2.5, 0.2]},
+        {"op": "save", "as": "hv"},
+        {"op": "kz_match_calculation"},
+        {"op": "kz_convert", "angle_offset": "auto", "n_kz": 300, "n_kpar": 300},
+        {"op": "save", "as": "kz"},
+    ],
+    "cut": [
+        {"op": "degrid"},
+        {"op": "calibrate_energy", "source": "reference", "fs_correction": True,
+         "required": True},
+        {"op": "crop", "energy": [-2.5, 0.3]},
+        {"op": "save", "as": "angle"},
+        {"op": "kconvert_cut", "gamma_slit_deg": "auto"},
+        {"op": "save", "as": "k"},
+        {"op": "curvature"},
+        {"op": "save", "as": "curvature"},
+    ],
+}
+DEFAULT_STEPS = DEFAULT_CHAINS["map"]
 
 DEFAULTS = {
     "name": "batch",
     "patterns": ["*.nxs"],
-    "kinds": ["map"],
+    "kinds": None,                     # None: every kind that has a chain
     "references": [],
     "reference_fit": {"order": 2, "half_width": 3, "step": 4, "window_eV": 0.25},
-    "steps": DEFAULT_STEPS,
+    "steps": DEFAULT_CHAINS,
+    "sample": {},
+    "photon_energy_scans": [],         # map entries whose first axis is hv
     "preview": {"energies": [0.0, -0.2, -0.5, -1.0], "width": 0.03},
     "overrides": {},
     "include": [],
@@ -100,8 +136,33 @@ def normalise(raw: dict, base: str = ".", source: str = "") -> dict:
     recipe["inputs"] = [_expand(p, base) for p in recipe["inputs"]]
     recipe["references"] = [_expand(p, base) for p in recipe.get("references") or []]
     recipe["output"] = _expand(recipe["output"], base)
-    for index, step in enumerate(recipe["steps"]):
-        validate_step(step, f"steps[{index}]")
+    if isinstance(recipe["steps"], list):
+        recipe["steps"] = {"map": recipe["steps"]}
+    for kind, chain in recipe["steps"].items():
+        if kind not in ("map", "kz_map", "cut"):
+            raise RecipeError(f"steps: no chain can be given for {kind!r}; "
+                              f"the kinds processed are map, kz_map and cut")
+        for index, step in enumerate(chain):
+            validate_step(step, f"steps.{kind}[{index}]")
+    from .sample import Sample
+    try:
+        Sample.from_recipe(recipe.get("sample"))
+    except (ValueError, TypeError) as exc:
+        raise RecipeError(str(exc)) from None
+    calc = (recipe.get("sample") or {}).get("calculation")
+    if isinstance(calc, str):
+        calc = recipe["sample"]["calculation"] = {"file": calc}
+    if isinstance(calc, dict):
+        for key in ("file", "labels_file"):
+            if calc.get(key):
+                calc[key] = _expand(calc[key], base)
+                if not os.path.exists(calc[key]):
+                    raise RecipeError(f"sample.calculation.{key}: {calc[key]} does not exist")
+    if recipe.get("kinds") is None:
+        recipe["kinds"] = list(recipe["steps"])
+    missing = [k for k in recipe["kinds"] if k not in recipe["steps"]]
+    if missing:
+        raise RecipeError(f"kinds {missing} have no chain under 'steps'")
     for pattern, override in (recipe.get("overrides") or {}).items():
         for key, value in override.items():
             if key == "skip":
@@ -142,7 +203,7 @@ def steps_for(row: dict, recipe: dict) -> tuple:
     """``(steps, override)`` for one entry, overrides applied in the order
     they are written (a later, more specific pattern wins)."""
     label = f"{row.get('file')} {row.get('entry') or ''}".strip()
-    steps = copy.deepcopy(recipe["steps"])
+    steps = copy.deepcopy(recipe["steps"].get(row.get("kind"), []))
     merged = {}
     for pattern, override in (recipe.get("overrides") or {}).items():
         if not (fnmatch.fnmatch(label, pattern) or fnmatch.fnmatch(row.get("file", ""), pattern)):

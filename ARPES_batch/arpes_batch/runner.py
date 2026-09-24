@@ -33,8 +33,9 @@ from . import inventory as inv
 from . import recipe as R
 from ._paths import check_output_dir
 from .dataset import Dataset
-from .preview import plot_reference, preview
+from .preview import plot_kz_qc, plot_reference, preview
 from .reference import Reference, choose_reference, fit_reference
+from .sample import NeedsInput, Sample, missing_inputs
 from .steps import STEPS, Skip
 
 
@@ -44,12 +45,16 @@ def _job_key(row: dict) -> str:
     return f"{stem}__{entry}" if entry else stem
 
 
-def _chain_hash(row: dict, steps: list, upto: int, reference_path: str) -> str:
+def _chain_hash(row: dict, steps: list, upto: int, reference_path: str,
+                sample: dict = None) -> str:
     stat = os.stat(row["path"])
     payload = {"path": os.path.basename(row["path"]), "size": stat.st_size,
                "mtime": int(stat.st_mtime), "entry": row.get("entry"),
+               "kind": row.get("kind"),
                "reference": os.path.basename(reference_path or ""),
                "steps": steps[:upto + 1]}
+    if any(str(s.get("op", "")).startswith("kz_convert") for s in steps[:upto + 1]):
+        payload["sample"] = sample or {}
     return hashlib.sha1(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
@@ -112,10 +117,12 @@ def run_job(job: dict) -> dict:
     in ``job`` and everything it reports is in the returned dict."""
     row, steps, out_dir = job["row"], job["steps"], job["job_dir"]
     reference = Reference.from_json(job["reference"]) if job.get("reference") else None
-    ctx = {"row": row, "reference": reference, "reference_notes": job.get("reference_notes")}
+    ctx = {"row": row, "reference": reference, "reference_notes": job.get("reference_notes"),
+           "sample": Sample.from_recipe(job.get("sample")), "grid_dir": job.get("grid_dir"),
+           "figure_prefix": os.path.join(job["job_dir"], _job_key(row))}
     key = _job_key(row)
     result = {"key": key, "file": row["file"], "entry": row.get("entry"),
-              "status": "ok", "steps": [], "outputs": [],
+              "kind": row.get("kind"), "status": "ok", "steps": [], "outputs": [],
               "reference": reference.path if reference else None,
               "reference_notes": job.get("reference_notes") or []}
     os.makedirs(out_dir, exist_ok=True)
@@ -134,7 +141,7 @@ def run_job(job: dict) -> dict:
                 if os.path.exists(path) and os.path.exists(meta):
                     with open(meta, encoding="utf-8") as fh:
                         stored = json.load(fh)
-                    if stored.get("chain") == _chain_hash(row, steps, index, result["reference"]):
+                    if stored.get("chain") == _chain_hash(row, steps, index, result["reference"], job.get("sample")):
                         ds = Dataset.load(path)
                         ds.name = stored.get("name", ds.name)
                         ds.info = dict(ds.info)
@@ -144,7 +151,8 @@ def run_job(job: dict) -> dict:
                         result["resumed_from"] = step["as"]
                         break
         if ds is None:
-            source = ds = Dataset.load(row["path"], row.get("entry"), name=key)
+            source = ds = Dataset.load(row["path"], row.get("entry"), name=key,
+                                       as_kz=bool(job.get("as_kz")))
 
         for index in range(start_at, len(steps)):
             step = dict(steps[index])
@@ -157,19 +165,28 @@ def run_job(job: dict) -> dict:
                 path = os.path.join(out_dir, f"{key}__{name}.nxs")
                 ds.save(path)
                 with open(path + ".json", "w", encoding="utf-8") as fh:
-                    json.dump({"chain": _chain_hash(row, steps, index, result["reference"]),
+                    json.dump({"chain": _chain_hash(row, steps, index, result["reference"], job.get("sample")),
                                "name": ds.name, "kind": ds.kind, "shape": list(ds.shape),
                                "steps": steps[:index + 1]}, fh, indent=1, default=str)
                 png = preview(ds, os.path.join(out_dir, f"{key}__{name}.png"),
                               **job.get("preview", {}),
                               centre=job.get("_centre") if ds.kind == "map" else
                               ((0.0, 0.0) if ds.kind == "k_map" else None))
+                if ds.kind == "kz_map_k" or (ds.kind == "kz_map" and job.get("_kz_qc")):
+                    qc_png = plot_kz_qc(job.get("_kz_qc") or {},
+                                        os.path.join(out_dir, f"{key}__kz_qc.png"))
+                    if qc_png and qc_png not in result["outputs"]:
+                        result["outputs"].append(qc_png)
                 result["outputs"] += [path, png]
                 record["path"] = path
             else:
                 try:
                     ds_next, qc = STEPS[op](ds, ctx, **step)
                     record["qc"] = _json_safe(qc)
+                    if op in ("kz_calibrate", "kz_convert"):
+                        job.setdefault("_kz_qc", {})[op] = record["qc"]
+                    if isinstance(qc, dict) and qc.get("figure"):
+                        result["outputs"].append(qc["figure"])
                     if op == "kconvert" and "centre_suggestion" in qc:
                         job["_centre"] = (qc["centre_suggestion"]["theta_offset_deg"],
                                           qc["centre_suggestion"]["phi_offset_deg"])
@@ -222,40 +239,88 @@ def plan(recipe: dict, only=None, log=print) -> tuple:
     inv.write_manifest(rows, out_dir)
     refs = prepare_references(recipe, out_dir, log=log)
     by_path = {os.path.abspath(r.path): r for r in refs}
-    jobs = []
+    hv_scans = recipe.get("photon_energy_scans") or []
+    jobs, notes = [], []
     for row in rows:
         if row.get("status") != "ok" or row.get("role") == "reference":
             continue
+        as_kz = False
+        if row.get("kind") == "map" and hv_scans and R.select(
+                row, {"include": hv_scans}):
+            row = dict(row, kind="kz_map", promoted_from="map")
+            as_kz = True
+        elif row.get("first_axis_looks_like") == "photon_energy":
+            notes.append(f"{row['file']} {row.get('entry') or ''}: looks like a photon-energy "
+                         f"scan but is processed as a deflector map; add it to "
+                         f"'photon_energy_scans' if it is one")
         if row.get("kind") not in recipe["kinds"] or not R.select(row, recipe, only):
             continue
         steps, override = R.steps_for(row, recipe)
-        if override.get("skip"):
+        if override.get("skip") or not steps:
             continue
         if override.get("reference"):
             chosen = by_path.get(os.path.abspath(override["reference"]))
-            notes = [] if chosen else [f"override reference {override['reference']} was not fitted"]
+            ref_notes = [] if chosen else [f"override reference {override['reference']} was not fitted"]
         else:
-            chosen, notes = choose_reference(row, refs)
-        jobs.append({"row": row, "steps": steps,
+            chosen, ref_notes = choose_reference(row, refs)
+        jobs.append({"row": row, "steps": steps, "as_kz": as_kz,
                      "job_dir": os.path.join(out_dir, row.get("folder") or "data", _job_key(row)),
+                     "grid_dir": os.path.join(out_dir, "grids"),
+                     "sample": recipe.get("sample") or {},
                      "reference": _json_safe(chosen.to_json()) if chosen else None,
-                     "reference_notes": notes, "preview": recipe.get("preview", {})})
-    return out_dir, rows, refs, jobs
+                     "reference_notes": ref_notes, "preview": recipe.get("preview", {})})
+    # Maps first: a cut is de-gridded with the grid of a map taken on the
+    # same detector settings, which has to exist by then.
+    jobs.sort(key=lambda j: (j["row"].get("kind") == "cut", _job_key(j["row"])))
+    return out_dir, rows, refs, jobs, notes
+
+
+def sample_inputs(recipe: dict, jobs: list) -> tuple:
+    """``(missing, summary)``: what the kz conversions still need from the
+    user, and what the sample block given amounts to."""
+    kz_jobs = [j for j in jobs if any(s.get("op") in ("kz_convert", "kz_match_calculation")
+                                      for s in j["steps"])]
+    if not kz_jobs:
+        return [], None
+    sample = Sample.from_recipe(recipe.get("sample"))
+    needs_w = any(j["reference"] is None and "CASSIOPEE" not in str(j["row"].get("loader"))
+                  and not any(s.get("op") == "kz_calibrate" and s.get("source", "self") == "self"
+                              for s in j["steps"])
+                  for j in kz_jobs)
+    missing = missing_inputs(sample, needs_work_function=needs_w)
+    summary = {"name": sample.name, "warnings": sample.problems(),
+               "calculation": (sample.calculation.get("file")
+                               if isinstance(sample.calculation, dict) else None)}
+    if not [m for m in missing if not m.get("optional")]:
+        summary["surface"] = sample.surface()
+        summary["inner_potential_eV"] = sample.inner_potential
+    return missing, summary
 
 
 def run(recipe: dict, *, only=None, workers: int = None, force: bool = False,
         dry_run: bool = False, log=print) -> dict:
-    out_dir, rows, refs, jobs = plan(recipe, only, log=log)
+    out_dir, rows, refs, jobs, notes = plan(recipe, only, log=log)
+    missing, sample_summary = sample_inputs(recipe, jobs)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = os.path.join(out_dir, "runs", stamp)
     summary = {"output": out_dir, "run_dir": run_dir, "entries_found": len(rows),
                "references": [os.path.basename(r.path) for r in refs],
-               "jobs": [{"key": _job_key(j["row"]), "reference": j["reference"] and
-                         os.path.basename(j["reference"]["path"]),
+               "jobs": [{"key": _job_key(j["row"]), "kind": j["row"].get("kind"),
+                         "chain": [s.get("op") if s.get("op") != "save" else f"save:{s['as']}"
+                                   for s in j["steps"]],
+                         "reference": j["reference"] and os.path.basename(j["reference"]["path"]),
                          "reference_notes": j["reference_notes"]} for j in jobs]}
+    if notes:
+        summary["notes"] = notes
+    if sample_summary is not None:
+        summary["sample"] = sample_summary
+    if missing:
+        summary["needs_input"] = missing
     if dry_run:
         summary.pop("run_dir")
         return summary
+    if missing:
+        raise NeedsInput(missing)
     os.makedirs(run_dir, exist_ok=True)
     if recipe.get("_source"):
         shutil.copy2(recipe["_source"], os.path.join(run_dir, "recipe.json"))
@@ -269,11 +334,16 @@ def run(recipe: dict, *, only=None, workers: int = None, force: bool = False,
             results.append(run_job(job))
             log(f"    -> {results[-1]['status']} ({results[-1]['seconds']} s)")
     else:
+        # Two phases: cuts wait for the maps whose grids they use.
+        phases = [[j for j in jobs if j["row"].get("kind") != "cut"],
+                  [j for j in jobs if j["row"].get("kind") == "cut"]]
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(run_job, job): job for job in jobs}
-            for done, future in enumerate(as_completed(futures), 1):
-                results.append(future.result())
-                log(f"[{done}/{len(jobs)}] {results[-1]['key']} -> {results[-1]['status']}")
+            for phase in phases:
+                futures = {pool.submit(run_job, job): job for job in phase}
+                for future in as_completed(futures):
+                    results.append(future.result())
+                    log(f"[{len(results)}/{len(jobs)}] {results[-1]['key']} -> "
+                        f"{results[-1]['status']}")
     results.sort(key=lambda r: r["key"])
     summary["results"] = results
     summary["counts"] = {s: sum(r["status"] == s for r in results)
@@ -285,31 +355,80 @@ def run(recipe: dict, *, only=None, workers: int = None, force: bool = False,
     return summary
 
 
+def _cell(qc: dict) -> dict:
+    """The few numbers per entry worth a column in the report."""
+    out = {}
+    calib = qc.get("calibrate_energy") or {}
+    if calib.get("ef_kinetic_eV") is not None:
+        out["E_F"] = f"{calib['ef_kinetic_eV']:.4f} eV"
+    kz = qc.get("kz_calibrate") or {}
+    if kz.get("source") == "self":
+        out["E_F"] = (f"own edges: spread {1000 * kz.get('fermi_level_spread_eV', 0):.0f} "
+                      f"meV, {kz.get('spectra_fitted')} fitted")
+    elif kz.get("source") == "reference":
+        out["E_F"] = f"hv - {kz.get('work_function_eV', float('nan')):.3f} eV (gold)"
+    elif kz:
+        out["E_F"] = "as loaded"
+    grid = qc.get("degrid") or {}
+    if grid:
+        out["grid"] = (f"{grid.get('grid_power_before', float('nan')):.1f} -> "
+                       f"{grid.get('grid_power_after', float('nan')):.2f}")
+    centre = (qc.get("kconvert") or {}).get("centre_suggestion")
+    if centre:
+        out["origin"] = (f"({centre['theta_offset_deg']:.2f}, {centre['phi_offset_deg']:.2f}) "
+                         f"score {centre['score']:.2f}")
+    cut = (qc.get("kconvert_cut") or {}).get("centre_suggestion")
+    if cut:
+        out["origin"] = f"slit {cut['gamma_slit_deg']:.2f} score {cut['score']:.2f}"
+    match = qc.get("kz_match_calculation") or {}
+    conv = qc.get("kz_convert") or {}
+    if conv:
+        scan = conv.get("v0_scan") or {}
+        check = conv.get("period_check") or {}
+        v0 = (f"V0 {scan['best']:.1f} +- {scan['uncertainty_eV']:.1f} eV (scan)"
+              if scan.get("best") is not None else "V0 as given")
+        v0 += f", {conv.get('zones_covered', 0):.1f} zones"
+        if check.get("relative_difference") is not None:
+            v0 += f"; period off by {100 * check['relative_difference']:+.0f}%"
+        out["origin"] = v0
+    if match.get("inner_potential_eV") is not None:
+        planes = ", ".join(f"{p['plane']}:{p['hv_eV']:.0f}" for p in match.get("planes", []))
+        out["origin"] = (out.get("origin", "") + f"; calc: V0 {match['inner_potential_eV']:.1f}, "
+                         f"shift {1000 * match['energy_shift_eV']:+.0f} meV, "
+                         f"score {match['score']:.2f}; planes at hv {planes}").lstrip("; ")
+    return out
+
+
 def write_report(summary: dict, path: str) -> str:
     base = os.path.dirname(path)
     lines = [f"# Batch run {os.path.basename(base)}", "",
-             f"Output: `{summary['output']}`  ", f"References: {', '.join(summary['references']) or 'none'}",
-             "", "| entry | status | reference | E_F kin (eV) | grid power | Γ suggestion (score) | time (s) |",
-             "|---|---|---|---|---|---|---|"]
+             f"Output: `{summary['output']}`  ",
+             f"References: {', '.join(summary['references']) or 'none'}  "]
+    sample = summary.get("sample")
+    if sample and sample.get("surface"):
+        s = sample["surface"]
+        lines.append(f"Sample: {sample.get('name') or '-'}, surface "
+                     f"({' '.join(map(str, s['hkl']))}), k_z period "
+                     f"{s['period_invA']:.4f} 1/A. {s.get('note') or ''}")
+    lines += ["", "| entry | kind | status | reference | energy | grid power | origin / V0 | time (s) |",
+              "|---|---|---|---|---|---|---|---|"]
     for r in summary.get("results", []):
-        qc = {s["op"]: s.get("qc", {}) for s in r["steps"]}
-        ef = qc.get("calibrate_energy", {}).get("ef_kinetic_eV")
-        grid = qc.get("degrid", {})
-        centre = qc.get("kconvert", {}).get("centre_suggestion") or {}
-        lines.append("| {} | {} | {} | {} | {} | {} | {} |".format(
-            r["key"], r["status"] + (f": {r.get('error')}" if r.get("error") else ""),
-            os.path.basename(r.get("reference") or "-"),
-            f"{ef:.4f}" if ef is not None else "-",
-            f"{grid.get('grid_power_before', float('nan')):.1f} → {grid.get('grid_power_after', float('nan')):.2f}" if grid else "-",
-            f"({centre['theta_offset_deg']:.2f}, {centre['phi_offset_deg']:.2f}) ({centre['score']:.2f})" if centre else "-",
-            r["seconds"]))
+        cell = _cell({s["op"]: s.get("qc", {}) for s in r["steps"]})
+        lines.append("| {} | {} | {} | {} | {} | {} | {} | {} |".format(
+            r["key"], r.get("kind", ""),
+            r["status"] + (f": {r.get('error')}" if r.get("error") else ""),
+            os.path.basename(r.get("reference") or "-"), cell.get("E_F", "-"),
+            cell.get("grid", "-"), cell.get("origin", "-"), r["seconds"]))
+    lines.append("")
+    lines += [f"- {note}" for note in summary.get("notes") or []]
     lines.append("")
     for r in summary.get("results", []):
         skipped = [f"{s['op']}: {s.get('note')}" for s in r["steps"] if s["status"] == "skipped"]
+        step_notes = [n for s in r["steps"] for n in (s.get("qc") or {}).get("notes", [])]
         pngs = [p for p in r["outputs"] if p.endswith(".png")]
         lines.append(f"## {r['key']}")
         lines += [f"- skipped {s}" for s in skipped]
-        lines += [f"- note: {n}" for n in r.get("reference_notes") or []]
+        lines += [f"- note: {n}" for n in (r.get("reference_notes") or []) + step_notes]
         lines += [f"![{os.path.basename(p)}]({os.path.relpath(p, base)})" for p in pngs]
         lines.append("")
     with open(path, "w", encoding="utf-8") as fh:
