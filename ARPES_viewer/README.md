@@ -796,7 +796,7 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 526 of them, no display needed -- `conftest.py` puts the
+from this folder. 529 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`, and
 `test/conftest.py` runs garbage collection only between tests, the rule
 `ui/gcguard.py` applies in the program.

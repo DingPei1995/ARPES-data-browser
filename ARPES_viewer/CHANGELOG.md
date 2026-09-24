@@ -10,6 +10,44 @@ file is the record of how it got that way.
 
 ---
 
+## Forty-second round: the kz window builds the cell its space group describes
+
+- **The lattice in "kz -> momentum" was tetragonal whatever the space group.**
+  The window took a and c only and built the cell as ``LatticeParams(a, a, c)``
+  with every angle at 90 degrees. For a hexagonal or trigonal group -- 194,
+  the window's own default, included -- that is the wrong crystal:
+  ``validate_lattice_parameters`` said so ("hexagonal requires gamma = 120
+  deg"), but only to a list nobody was shown. (001) came out right, because
+  c is still normal to the plane. Every other surface normal in the list was
+  computed on the wrong reciprocal lattice, and so was its period. For
+  a = 3.16 A, (100) was listed at 1.988 A^-1 against the true
+  4 pi / (sqrt 3 a) = 2.296 A^-1, 13 % short. That is the value the V0 scan
+  matches against and the zone lines are drawn with.
+- The window now has all six cell parameters and applies the space group's
+  constraints the way the Brillouin-zone dialog does
+  (``tools.lattice.free_parameters``):
+  - the boxes symmetry fixes are switched off and follow the free ones
+    (b = a, gamma = 120 for a hexagonal group);
+  - a line under the space group says which parameters are free;
+  - an orthorhombic, monoclinic or triclinic cell can now be entered at all.
+- The converted dataset records all six parameters (``kz_to_k.lattice_b``,
+  ``_alpha``, ``_beta``, ``_gamma`` beside ``lattice_a`` and ``lattice_c``).
+
+Tests: ``test/test_kzconv_dialog.py`` checks:
+- a hexagonal group gets gamma = 120 and b = a, with the (100) period at
+  4 pi / (sqrt 3 a);
+- for 194, 139, 62 and 166 the listed normals and periods equal
+  ``tools.cleavage.reciprocal_lengths`` of a cell that passes validation;
+- the boxes follow the space group (tetragonal I: (002) at 4 pi / c;
+  orthorhombic: b free; monoclinic: beta free).
+
+The dialog is opened with ``open_kz_conversion`` and closed with its
+window, as the program does. Closing the dialog on its own first made the
+full suite crash later, in whichever window test ran next, in 3 of 6 runs;
+written this way, 6 of 6 full runs are clean.
+
+---
+
 ## Forty-first round: greyed-out entries that look greyed out; tooltips without the lag
 
 - **Why the greyed-out entries of the list's menu looked enabled.** The main

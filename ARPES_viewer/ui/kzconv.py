@@ -206,10 +206,19 @@ class KzConversionDialog(QDialog):
             "decides the k_z period: a body-centred lattice repeats every "
             "4*pi/a along [001], not 2*pi/a.")
         form.addRow("Space group", self.space_group)
+        self.lattice_note = QLabel()
+        self.lattice_note.setWordWrap(True)
+        form.addRow("", self.lattice_note)
         self.lat_a = self._spin(3.2, 0.1, 100.0, 0.01, " A")
+        self.lat_b = self._spin(3.2, 0.1, 100.0, 0.01, " A")
         self.lat_c = self._spin(6.0, 0.1, 100.0, 0.01, " A")
-        form.addRow("a", self.lat_a)
-        form.addRow("c", self.lat_c)
+        self.lat_alpha = self._spin(90.0, 1.0, 179.0, 0.5, " deg")
+        self.lat_beta = self._spin(90.0, 1.0, 179.0, 0.5, " deg")
+        self.lat_gamma = self._spin(90.0, 1.0, 179.0, 0.5, " deg")
+        for name, box in (("a", self.lat_a), ("b", self.lat_b), ("c", self.lat_c),
+                          ("alpha", self.lat_alpha), ("beta", self.lat_beta),
+                          ("gamma", self.lat_gamma)):
+            form.addRow(name, box)
         self.normal_index = QComboBox()
         self.normal_index.setToolTip(
             "Which planes the crystal cleaved along. It sets the k_z period "
@@ -219,12 +228,64 @@ class KzConversionDialog(QDialog):
         self.zone_lines = QCheckBox("Draw the zone boundaries")
         self.zone_lines.setChecked(True)
         form.addRow("", self.zone_lines)
-        for widget in (self.space_group, self.lat_a, self.lat_c):
+        self.space_group.valueChanged.connect(self._space_group_changed)
+        for widget in (self.lat_a, self.lat_b, self.lat_c, self.lat_alpha,
+                       self.lat_beta, self.lat_gamma):
             widget.valueChanged.connect(self._lattice_changed)
         self.normal_index.currentIndexChanged.connect(self.refresh)
         self.zone_lines.toggled.connect(self.refresh)
+        self._apply_constraints()
         self._lattice_changed()
         return group
+
+    def _lengths(self):
+        return {"a": self.lat_a, "b": self.lat_b, "c": self.lat_c}
+
+    def _angles(self):
+        return {"alpha": self.lat_alpha, "beta": self.lat_beta,
+                "gamma": self.lat_gamma}
+
+    def _apply_constraints(self):
+        """Switch off, and drive, the cell parameters the space group fixes
+        -- as the Brillouin-zone dialog does.
+
+        This window used to take a and c only and build the cell with
+        b = a and every angle at 90 degrees, whatever the space group. For
+        a hexagonal group (194, the default, included) that is a tetragonal
+        cell: (001) came out right, because c is still normal to the plane,
+        but every other surface normal in the list, and its period, was
+        computed on the wrong reciprocal lattice.
+        """
+        from tools.lattice import free_parameters
+        try:
+            constraints = free_parameters(int(self.space_group.value()))
+        except (ValueError, KeyError) as exc:
+            self.lattice_note.setText(str(exc))
+            return
+        self._mirrors = dict(constraints.mirrors)
+        for name, box in self._lengths().items():
+            box.setEnabled(name not in constraints.mirrors)
+        for name, box in self._angles().items():
+            fixed = constraints.fixed_angles.get(name)
+            box.setEnabled(fixed is None)
+            if fixed is not None:
+                box.blockSignals(True)
+                box.setValue(float(fixed))
+                box.blockSignals(False)
+        self._sync_mirrored_lengths()
+        self.lattice_note.setText(constraints.note)
+
+    def _sync_mirrored_lengths(self):
+        lengths = self._lengths()
+        for target, source in getattr(self, "_mirrors", {}).items():
+            box = lengths[target]
+            box.blockSignals(True)
+            box.setValue(lengths[source].value())
+            box.blockSignals(False)
+
+    def _space_group_changed(self, *_):
+        self._apply_constraints()
+        self._lattice_changed()
 
     @staticmethod
     def _spin(value, low, high, step, suffix):
@@ -329,9 +390,11 @@ class KzConversionDialog(QDialog):
             theta_position=float(self.theta_position.value()))
 
     def lattice(self) -> LatticeParams:
-        a = float(self.lat_a.value())
-        return LatticeParams(a=a, b=a, c=float(self.lat_c.value()),
-                             space_group=int(self.space_group.value()))
+        return LatticeParams(
+            a=float(self.lat_a.value()), b=float(self.lat_b.value()),
+            c=float(self.lat_c.value()), alpha=float(self.lat_alpha.value()),
+            beta=float(self.lat_beta.value()), gamma=float(self.lat_gamma.value()),
+            space_group=int(self.space_group.value()))
 
     def surface_period(self) -> float:
         """The k_z period the chosen surface normal implies, A^-1."""
@@ -342,6 +405,7 @@ class KzConversionDialog(QDialog):
 
     def _lattice_changed(self, *_):
         """Refill the surface-normal choices for the current lattice."""
+        self._sync_mirrored_lengths()
         previous = self.normal_index.currentText()
         self.normal_index.blockSignals(True)
         self.normal_index.clear()
@@ -596,7 +660,11 @@ class KzConversionDialog(QDialog):
             "n_kpar": int(self.n_kpar.value()),
             "space_group": int(self.space_group.value()),
             "lattice_a": float(self.lat_a.value()),
+            "lattice_b": float(self.lat_b.value()),
             "lattice_c": float(self.lat_c.value()),
+            "lattice_alpha": float(self.lat_alpha.value()),
+            "lattice_beta": float(self.lat_beta.value()),
+            "lattice_gamma": float(self.lat_gamma.value()),
             "surface_period_invA": float(self.surface_period()),
         })
         info = record_step(dict(scan.info),
