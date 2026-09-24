@@ -1,0 +1,71 @@
+{
+  "name": "photon-energy scans (example) -- fill in the sample block before running",
+  "inputs": [
+    "$ARPES_RAW/kz"
+  ],
+  "references": [
+    "$ARPES_RAW/Au ref"
+  ],
+  "output": "~/ARPES_processed/my_beamtime_kz",
+  "sample": {
+    "name": "",
+    "lattice": {
+      "a": null,
+      "b": null,
+      "c": null,
+      "alpha": 90,
+      "beta": 90,
+      "gamma": 90,
+      "space_group": null
+    },
+    "surface_normal": null,
+    "inner_potential_eV": null,
+    "work_function_eV": null,
+    "effective_mass": 1.0
+  },
+  "steps": {
+    "kz_map": [
+      {
+        "op": "degrid"
+      },
+      {
+        "op": "kz_calibrate",
+        "source": "self",
+        "fs_correction": true,
+        "required": true
+      },
+      {
+        "op": "crop",
+        "energy": [
+          -2.5,
+          0.2
+        ]
+      },
+      {
+        "op": "save",
+        "as": "hv"
+      },
+      {
+        "op": "kz_match_calculation"
+      },
+      {
+        "op": "kz_convert",
+        "angle_offset": "auto",
+        "n_kz": 300,
+        "n_kpar": 300
+      },
+      {
+        "op": "save",
+        "as": "kz"
+      }
+    ]
+  },
+  "overrides": {
+    "semiconductor_scan_*": {
+      "kz_calibrate": {
+        "source": "reference"
+      }
+    }
+  },
+  "workers": 1
+}
