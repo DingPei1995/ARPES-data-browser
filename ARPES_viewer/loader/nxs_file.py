@@ -69,6 +69,7 @@ Data "kinds" produced
 from __future__ import annotations
 
 import os
+import re
 from contextlib import contextmanager
 import warnings
 from dataclasses import dataclass, field
@@ -307,8 +308,10 @@ def spatial_unit_for(actuator_names) -> str:
     identify a piezo axis. Detection is name-based because the files carry
     no unit attribute on these datasets.
     """
+    if any(_antares_stage(n) in ("pix", "piy") for n in actuator_names):
+        return "\u00b5m"
     joined = " ".join(str(n).lower() for n in actuator_names if n is not None)
-    if any(tag in joined for tag in ("pix", "piy", "pi_x", "pi_y", "ex-pi")):
+    if any(tag in joined for tag in ("pix", "piy", "pi_x", "pi_y", "ex-pi", "ex/pi/")):
         return "\u00b5m"
     return "mm"
 # --------------------------------------------------------------------------
@@ -886,32 +889,27 @@ def _read_common_info(f: h5py.File, g: str) -> dict:
     return _hide_noisy_info(info)
 
 
-#: Which of the two real-space stages is the horizontal ("X") axis, by the
-#: actuator name the file records. The beamline uses two pairs -- the coarse
-#: sample stages ST/SZ and the piezo stage PIX/PIY -- and in both the first
-#: named one is the horizontal axis. Anything else is taken in the order the
-#: file lists it, so data from another set-up is labelled X/Y too rather than
-#: carrying a stage name only this beamline would recognise.
-SPATIAL_HORIZONTAL = ("st", "pix", "pi_x")
-SPATIAL_VERTICAL = ("sz", "piy", "pi_y")
-
-
 def _antares_stage(name) -> Optional[str]:
     """Which ANTARES real-space stage an actuator name is -- ``"st"``,
-    ``"sz"``, ``"pix"`` or ``"piy"`` -- or None. Accepts the bare name
-    ("ST", "PIX") as well as a full device path ending in it
-    (".../mt_st", ".../ex-pi/x")."""
+    ``"sz"``, ``"pix"`` or ``"piy"`` -- or None.
+
+    The files record the Tango attribute, e.g.
+    ``i12-m-cx1/ex/sample-mt_sz/position`` (coarse) or ``i12-m-cx1/ex/pi/x``
+    (piezo); bare names ("ST", "PIX", "pi_y") are accepted as well. The name
+    is split at ``/ _ - .`` and a trailing ``position`` dropped, so what is
+    left ends in the stage.
+    """
     n = str(name or "").strip().lower()
-    if not n:
+    tokens = [t for t in re.split(r"[/_\-. ]+", n) if t]
+    while tokens and tokens[-1] in ("position", "value", "pos"):
+        tokens.pop()
+    if not tokens:
         return None
-    tags = (("pix", ("pix", "pi_x", "pi.x", "ex-pi/x")),
-            ("piy", ("piy", "pi_y", "pi.y", "ex-pi/y")),
-            ("st", ("st", "mt_st")),
-            ("sz", ("sz", "mt_sz")))
-    for stage, names in tags:
-        for tag in names:
-            if n == tag or any(n.endswith(sep + tag) for sep in ("_", "-", "/", ".", " ")):
-                return stage
+    last = tokens[-1]
+    if last in ("st", "sz", "pix", "piy"):
+        return last
+    if last in ("x", "y") and len(tokens) > 1 and tokens[-2] == "pi":
+        return "pi" + last
     return None
 
 
@@ -929,60 +927,84 @@ def _antares_stage(name) -> Optional[str]:
 ANTARES_REVERSED = {"st": True, "sz": True, "pix": True, "piy": False}
 
 
-def antares_spatial_orientation(first, second=None) -> dict:
-    """The ``Spatial.invert_x`` / ``Spatial.invert_y`` metadata for an
-    ANTARES spatial scan whose X and Y actuators are called ``first`` and
-    ``second`` (see :data:`ANTARES_REVERSED`). Empty when neither name is an
-    ANTARES stage, so anything else is drawn the default way.
+#: Which stage is drawn across the map; the other of the pair goes up it.
+ANTARES_HORIZONTAL = ("st", "pix")
+ANTARES_VERTICAL = ("sz", "piy")
 
-    Only an axis whose stage sits in its usual place is set: a vertical
-    stage scanned as X (or a line scan along SZ) has no convention to
-    follow, and is left alone rather than guessed at.
+
+def antares_spatial_orientation(first, second=None) -> dict:
+    """How to draw an ANTARES spatial scan whose first and second scanned
+    actuators are called ``first`` and ``second``, as metadata for the
+    viewer (display only -- the data is never reordered):
+
+    ``Spatial.swap_xy``   the first actuator is the *vertical* stage (the
+                          coarse scans record SZ before ST), so the map is
+                          drawn with the scan's Y across;
+    ``Spatial.invert_x``  the horizontal *screen* axis runs large to small;
+    ``Spatial.invert_y``  the vertical screen axis runs small to large going
+                          down (see :data:`ANTARES_REVERSED`).
+
+    A line scan (``second`` empty) gets only ``invert_x``, and only when it
+    ran along ST or PIX. Empty when the names are not an ANTARES pair, so
+    anything else is drawn the default way.
     """
-    out = {}
-    for key, name, usual in (("Spatial.invert_x", first, ("st", "pix")),
-                             ("Spatial.invert_y", second, ("sz", "piy"))):
-        stage = _antares_stage(name)
-        if stage in usual:
-            out[key] = bool(ANTARES_REVERSED[stage])
-    return out
+    s1, s2 = _antares_stage(first), _antares_stage(second)
+    if not second:
+        if s1 in ANTARES_HORIZONTAL:
+            return {"Spatial.invert_x": ANTARES_REVERSED[s1]}
+        return {}
+    if s1 in ANTARES_HORIZONTAL and s2 in ANTARES_VERTICAL:
+        horizontal, vertical, swap = s1, s2, False
+    elif s1 in ANTARES_VERTICAL and s2 in ANTARES_HORIZONTAL:
+        horizontal, vertical, swap = s2, s1, True
+    else:
+        return {}
+    return {"Spatial.swap_xy": swap,
+            "Spatial.invert_x": ANTARES_REVERSED[horizontal],
+            "Spatial.invert_y": ANTARES_REVERSED[vertical]}
+
+
+#: What an ANTARES stage is called on an axis title.
+ANTARES_STAGE_TITLES = {"st": "ST", "sz": "SZ", "pix": "PIX", "piy": "PIY"}
+
+
+def _spatial_title(name, fallback: str) -> str:
+    """``"SZ (mm)"`` / ``"PIX (\u00b5m)"`` for an ANTARES stage, else
+    ``"<fallback> (<unit>)"`` with the unit guessed from the name."""
+    stage = _antares_stage(name)
+    unit = spatial_unit_for([name])
+    return f"{ANTARES_STAGE_TITLES.get(stage, fallback)} ({unit})"
 
 
 def _spatial_labels(f: h5py.File, g: str) -> "tuple[str, str, dict]":
-    """Axis titles for the two real-space scan axes, plus what they were
-    called in the file.
+    """Axis titles for the two real-space scan axes (the scan's own first
+    and second actuator, which is how the arrays are ordered), plus what
+    they were called in the file.
 
-    The titles are always **X** and **Y** with the unit
-    (see :func:`spatial_unit_for`), not the stage's own name: "ST"/"SZ" and
-    "PIX"/"PIY" mean the same two directions, and a third set-up's names
-    would mean them again. The names themselves are returned separately and
-    end up in the metadata table, so nothing is lost.
-
-    The first actuator the file lists is taken as the horizontal axis, which
-    is the convention on this beamline (ST and PIX are the horizontal ones,
-    and they are listed first). A file that lists them the other way round
-    is flagged rather than silently transposed -- which of the two array
-    axes is which is decided by length matching, not by this label, so
-    quietly relabelling would move the label away from the data.
+    An ANTARES stage is titled by its name and unit -- "ST (mm)", "SZ (mm)",
+    "PIX (\u00b5m)", "PIY (\u00b5m)" -- and anything else "X"/"Y" with the
+    unit guessed from the name. How the map is then *drawn* (which stage
+    across, which way each runs) is left to the viewer, from the
+    ``Spatial.*`` entries :func:`antares_spatial_orientation` adds: the
+    arrays stay in the order the file has them.
     """
     traj = f"{g}/scan_config/trajectory"
     names = []
     if traj in f and isinstance(f[traj], h5py.Group):
         for actuator in sorted(f[traj].keys()):
             names.append(_read_opt(f, f"{traj}/{actuator}/name"))
-    unit = spatial_unit_for(names)
-    first = _decode(names[0]).strip() if len(names) > 0 and names[0] is not None else ""
-    second = _decode(names[1]).strip() if len(names) > 1 and names[1] is not None else ""
+
+    def clean(value):
+        value = _scalarize(value)
+        return str(_decode(value)).strip() if value is not None else ""
+
+    first = clean(names[0]) if len(names) > 0 else ""
+    second = clean(names[1]) if len(names) > 1 else ""
 
     detail = {"Spatial.X_actuator": first or "(unnamed)",
               "Spatial.Y_actuator": second or "(unnamed)"}
     detail.update(antares_spatial_orientation(first, second))
-    if first.lower() in SPATIAL_VERTICAL or second.lower() in SPATIAL_HORIZONTAL:
-        message = (f"the file lists {first!r} before {second!r}, the opposite of this "
-                   f"beamline's usual order; X is still the first scanned axis")
-        warnings.warn(f"{g}: {message}")
-        detail["Spatial.axis_order"] = message
-    return f"X ({unit})", f"Y ({unit})", detail
+    return _spatial_title(first, "X"), _spatial_title(second, "Y"), detail
 
 
 def _motor_minus_offset(f: h5py.File, g: str, motor: str):

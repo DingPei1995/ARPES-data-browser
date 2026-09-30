@@ -10,6 +10,26 @@ file is the record of how it got that way.
 
 ---
 
+## Forty-third round: ANTARES spatial scans titled and oriented from their real actuator names
+
+- **The stage names in real files were not recognised.** ANTARES records
+  the Tango attribute -- `i12-m-cx1/ex/sample-mt_sz/position`,
+  `.../sample-mt_st/position`, `i12-m-cx1/ex/pi/x`, `.../pi/y` -- not a bare
+  "ST" or "PIX", so the previous round's orientation never applied, and a
+  piezo (fine) scan was labelled in mm. `_antares_stage` now splits the name
+  at `/ _ - .`, drops a trailing `position`, and reads the stage off the end.
+- **Axis titles name the stage**: "ST (mm)", "SZ (mm)", "PIX (µm)",
+  "PIY (µm)" (anything else is still "X"/"Y" with its unit). The pixel
+  readout says `SZ=40.1, ST=-0.35` rather than `x=..., y=...`.
+- **Coarse scans record SZ first**, so the map came up with SZ across. The
+  data keeps the file's order; the viewer now opens a coarse scan swapped
+  (`Spatial.swap_xy`) so ST is across, running large to small, and SZ is
+  down the side, increasing downwards. Fine scans open with PIX across,
+  large to small, and PIY decreasing downwards. Both are only the starting
+  state: right-click swap and the Inv boxes change it as before.
+
+---
+
 ## Forty-second round: a memory box; spatial axes in plain units; ANTARES map orientation
 
 - **Memory box on the main panel.** With several spatial scans open the

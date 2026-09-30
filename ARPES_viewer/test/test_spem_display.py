@@ -52,41 +52,69 @@ def _write_spem(path, names, x_range, y_range):
             act["delta"] = np.array([step])
 
 
+COARSE = ("i12-m-cx1/ex/sample-mt_sz/position", "i12-m-cx1/ex/sample-mt_st/position")
+FINE = ("i12-m-cx1/ex/pi/x", "i12-m-cx1/ex/pi/y")
+
+
 def test_stage_names():
+    # the names real ANTARES files record ...
+    assert _antares_stage(COARSE[0]) == "sz"
+    assert _antares_stage(COARSE[1]) == "st"
+    assert _antares_stage(FINE[0]) == "pix"
+    assert _antares_stage(FINE[1]) == "piy"
+    # ... and bare ones
     assert _antares_stage("ST") == "st"
     assert _antares_stage("i12-m-cx1-ex-sample-mt_sz") == "sz"
     assert _antares_stage("PIX") == "pix"
-    assert _antares_stage("piy") == "piy"
+    assert _antares_stage("pi_y") == "piy"
     assert _antares_stage("theta") is None
+    assert _antares_stage("i12-m-cx1/ex/sample-mt_sn/position") is None
     assert _antares_stage(None) is None
 
 
 def test_orientation_table():
+    # coarse scans record SZ first: drawn swapped, ST across and reversed,
+    # SZ increasing downwards
+    assert antares_spatial_orientation(*COARSE) == {
+        "Spatial.swap_xy": True, "Spatial.invert_x": True, "Spatial.invert_y": True}
     assert antares_spatial_orientation("ST", "SZ") == {
-        "Spatial.invert_x": True, "Spatial.invert_y": True}
-    assert antares_spatial_orientation("PIX", "PIY") == {
-        "Spatial.invert_x": True, "Spatial.invert_y": False}
-    # not ANTARES stages, or not where they usually are: left alone
+        "Spatial.swap_xy": False, "Spatial.invert_x": True, "Spatial.invert_y": True}
+    assert antares_spatial_orientation(*FINE) == {
+        "Spatial.swap_xy": False, "Spatial.invert_x": True, "Spatial.invert_y": False}
     assert antares_spatial_orientation("motor1", "motor2") == {}
-    assert antares_spatial_orientation("SZ", "ST") == {}
+    assert antares_spatial_orientation("ST", "") == {"Spatial.invert_x": True}
 
 
-@pytest.mark.parametrize("names, expected", [
-    (("ST", "SZ"), (True, True)),
-    (("PIX", "PIY"), (True, False)),
+@pytest.mark.parametrize("names, ranges, titles, swapped, inverted, unit", [
+    # coarse, as in a real file: SZ 39.5..40.5 first, ST -0.9..0.1 second
+    (COARSE, ((39.5, 40.5, 0.05), (-0.9, 0.2, 0.05)), ("SZ (mm)", "ST (mm)"),
+     True, (True, True), "mm"),
+    # fine: PIX 50..170, PIY 90..160, micrometres
+    (FINE, ((50.0, 170.0, 2.0), (90.0, 160.0, 2.0)), ("PIX (\u00b5m)", "PIY (\u00b5m)"),
+     False, (True, False), "\u00b5m"),
 ])
-def test_antares_window_orientation(app, tmp_path, names, expected):
+def test_antares_window_orientation(app, tmp_path, names, ranges, titles, swapped,
+                                    inverted, unit):
     path = str(tmp_path / "spem.nxs")
-    _write_spem(path, names, (-0.9, 0.1, 0.05), (39.6, 40.2, 0.05))
+    _write_spem(path, names, *ranges)
     data = NxsData.acquire(path)
+    assert (data.scan.labels["x"], data.scan.labels["y"]) == titles
     window = W.SpatialScanWindow(data, "spem", "gray", False)
     try:
         view = window.spatial_view
-        assert (view.axis_inverted(0), view.axis_inverted(1)) == expected
-        assert window.view_bar.invert_boxes[0].isChecked() == expected[0]
-        # swapping the display carries each axis's direction with it
-        window.set_swap_xy(True)
-        assert (view.axis_inverted(0), view.axis_inverted(1)) == expected[::-1]
+        assert window.swap_xy is swapped
+        # what is across the screen: ST for a coarse scan, PIX for a fine one
+        across = view.view.getAxis("bottom").labelText
+        assert across.startswith("ST" if swapped else "PIX")
+        assert across.endswith(f"({unit})")
+        assert (view.axis_inverted(0), view.axis_inverted(1)) == inverted
+        assert window.view_bar.invert_boxes[0].isChecked() == inverted[0]
+        assert window.view_bar.invert_boxes[1].isChecked() == inverted[1]
+        # the data is untouched: still in the file's order
+        assert np.isclose(data.scan.x[0], ranges[0][0])
+        # swapping back carries each axis's direction with it
+        window.set_swap_xy(not swapped)
+        assert (view.axis_inverted(0), view.axis_inverted(1)) == inverted[::-1]
     finally:
         window.close()
 
@@ -111,7 +139,7 @@ def test_axis_ticks_in_labelled_unit(app, tmp_path):
     _write_spem(path, ("ST", "SZ"), (-0.9, 0.1, 0.05), (39.6, 40.2, 0.05))
     scan = load_soleil_nxs(path)
     try:
-        assert scan.labels["x"] == "X (mm)"
+        assert scan.labels["x"] == "ST (mm)"
     finally:
         scan.close()
     data = NxsData.acquire(path)

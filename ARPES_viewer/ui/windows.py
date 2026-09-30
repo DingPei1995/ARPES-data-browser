@@ -842,21 +842,32 @@ class SpatialScanWindow(ViewerWindow):
 
     def _apply_default_orientation(self):
         """Draw the spatial map the way its beamline does, where the loader
-        said how (``Spatial.invert_x`` / ``Spatial.invert_y`` in the
-        metadata -- set for ANTARES scans only, see
-        ``loader.nxs_file.ANTARES_REVERSED``). Anything else keeps the
-        plotting default. It is only the starting state: the view bar's
-        "Inv" boxes still reverse either axis by hand."""
+        said how (``Spatial.swap_xy`` / ``Spatial.invert_x`` /
+        ``Spatial.invert_y`` in the metadata -- set for ANTARES scans only,
+        see ``loader.nxs_file.antares_spatial_orientation``). Anything else
+        keeps the plotting default. Display only, and only the starting
+        state: right-click "swap" and the view bar's "Inv" boxes still
+        change it, and the data keeps the order the file has."""
         info = getattr(self.data.scan, "info", {}) or {}
-        for axis, key in ((0, "Spatial.invert_x"), (1, "Spatial.invert_y")):
+
+        def flag(key):
             value = info.get(key)
             if value is None:
-                continue
+                return None
             if isinstance(value, (bytes, np.bytes_)):
                 value = value.decode("utf-8", "replace")
             if isinstance(value, str):
-                value = value.strip().lower() in ("1", "true", "yes")
-            self.spatial_view.set_axis_inverted(axis, bool(value))
+                return value.strip().lower() in ("1", "true", "yes")
+            return bool(value)
+
+        # Swap first: it carries any inversion with it, and the inversions
+        # below are for the screen axes as they end up.
+        if flag("Spatial.swap_xy") and self.data.kind == "spem_4d":
+            self.set_swap_xy(True)
+        for axis, key in ((0, "Spatial.invert_x"), (1, "Spatial.invert_y")):
+            value = flag(key)
+            if value is not None:
+                self.spatial_view.set_axis_inverted(axis, value)
 
     def set_swap_xy(self, on: bool):
         """Exchange the spatial panel's two axes, keeping the cursor on the
@@ -891,6 +902,16 @@ class SpatialScanWindow(ViewerWindow):
             "Spatial map drawn with Y horizontal" if on
             else "Spatial map drawn with X horizontal")
 
+    def _axis_names(self):
+        """Short names of the scan's two spatial axes for readouts -- the
+        stage ("ST", "PIX") where the title carries one, else x/y."""
+        labels = self.data.scan.labels or {}
+        names = []
+        for slot in ("x", "y"):
+            title = str(labels.get(slot) or "").split(" (")[0].strip()
+            names.append(title if title and title not in ("X", "Y") else slot)
+        return tuple(names)
+
     def _data_pixel(self, row: int, col: int):
         """(y index, x index) for a pixel the *display* reported."""
         return (col, row) if self.swap_xy else (row, col)
@@ -901,7 +922,8 @@ class SpatialScanWindow(ViewerWindow):
         self.frame_view.set_frame(self.data.frame_at(row, col), scan.k, scan.z)
         self.frame_panel.sync_curve_source()
         self.frame_panel.sync_level_range()
-        self.frame_label = f"x={scan.x[col]:.4g}, y={scan.y[row]:.4g}"
+        nx, ny = self._axis_names()
+        self.frame_label = f"{nx}={scan.x[col]:.4g}, {ny}={scan.y[row]:.4g}"
         self.statusBar().showMessage(f"pixel ({self.frame_label})")
 
     def _show_frame_at_x(self, xi):
@@ -909,7 +931,7 @@ class SpatialScanWindow(ViewerWindow):
         self.frame_view.set_frame(self.data.frame_at_x(xi), scan.y, scan.z)
         self.frame_panel.sync_curve_source()
         self.frame_panel.sync_level_range()
-        self.frame_label = f"x={scan.x[xi]:.4g}"
+        self.frame_label = f"{self._axis_names()[0]}={scan.x[xi]:.4g}"
         self.statusBar().showMessage(self.frame_label)
 
     def _on_cursor_moved(self, row, col):
@@ -937,8 +959,9 @@ class SpatialScanWindow(ViewerWindow):
         self.frame_view.set_frame(frame, scan.k, scan.z)
         self.frame_panel.sync_curve_source()
         self.frame_panel.sync_level_range()
-        self.frame_label = (f"x[{scan.x[ix0]:.4g}..{scan.x[ix1]:.4g}], "
-                            f"y[{scan.y[iy0]:.4g}..{scan.y[iy1]:.4g}] integrated")
+        nx, ny = self._axis_names()
+        self.frame_label = (f"{nx}[{scan.x[ix0]:.4g}..{scan.x[ix1]:.4g}], "
+                            f"{ny}[{scan.y[iy0]:.4g}..{scan.y[iy1]:.4g}] integrated")
         self.set_colormap(self.colormap, self.flip)
         self.statusBar().showMessage(
             f"E vs k integrated over spatial {self.spatial_view.selection_summary()}")
