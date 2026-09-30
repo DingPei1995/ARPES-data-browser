@@ -149,11 +149,18 @@ def apply_colormap(view, name: str, flip: bool = False) -> bool:
     pg.ImageView-based widget, optionally reversed. Returns False silently
     if the name is unknown or this pyqtgraph version rejects it, so callers
     can fire-and-forget across several views."""
+    # Already showing it: nothing to do. Every re-slice of every viewer ends
+    # by re-applying its colormap, and setColorMap rebuilds the hidden
+    # gradient editor tick by tick (256 of them) -- about 20 ms, which was
+    # the larger half of an energy-slider tick on an in-memory map.
+    if getattr(view, "_applied_colormap", None) == (name, bool(flip)):
+        return True
     try:
         lut = colormaps.get_lut(name, flip=flip)
         positions = np.linspace(0.0, 1.0, len(lut))
         colors = np.column_stack([lut, np.full(len(lut), 255, dtype=np.uint8)])
         view.setColorMap(pg.ColorMap(positions, colors))
+        view._applied_colormap = (name, bool(flip))
         # Remembered so an export can re-create exactly this colouring at a
         # different pixel size; pyqtgraph keeps the ColorMap but not the name
         # it came from, and the export needs the table, not the widget.
@@ -2222,7 +2229,13 @@ class FrameImageView(_InteractiveImageBase):
         """``frame`` has shape (len(x_axis), len(y_axis)) and is displayed
         with x_axis horizontal, y_axis vertical (transposed for row-major
         rendering). ``last_frame`` keeps the *raw* array, so smoothing stays
-        a display effect and exports write unsmoothed data."""
+        a display effect and exports write unsmoothed data.
+
+        A lazy frame (a cut opened straight from its file) is read here, once:
+        kept lazy, every redraw, level sync and EDC/MDC under the moving
+        cursor read it from the file again."""
+        if not isinstance(frame, np.ndarray):
+            frame = np.asarray(frame)
         self._last_frame = frame
         self._store_axes(x_axis, y_axis)
         self._value_lookup = lambda ix, iy: self._last_frame[ix, iy]

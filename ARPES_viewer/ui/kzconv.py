@@ -407,12 +407,16 @@ class KzConversionDialog(QDialog):
             pass        # a preview in the default colours is no disaster
 
     def _preview_slice(self):
-        cube = np.asarray(self.contour.full_cube(), dtype=float)
         index = int(np.argmin(np.abs(self.energy
                                      - float(self.preview_energy.value()))))
+        # Only the one plane: this runs on every change of every box, and
+        # reading (and converting to float) the whole cube for it made each
+        # keystroke cost a full read of the map.
+        plane = np.asarray(self.contour.slab((slice(None), slice(None), index)),
+                           dtype=float)
         one = np.asarray([float(self.energy[index])])
         kz_axis, kpar_axis, _e, out = kzconv.to_kz_cube(
-            self.hv, self.angle, one, cube[:, :, index][:, :, None],
+            self.hv, self.angle, one, plane[:, :, None],
             n_kz=int(self.n_kz.value()), n_kpar=int(self.n_kpar.value()),
             **self.settings())
         return kz_axis, kpar_axis, out[:, :, 0]

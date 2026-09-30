@@ -49,6 +49,7 @@ from tools.fermi import (PARAMETERS, PARAMETER_LABELS, K_B, initial_guess,
                        divide_fermi)
 from tools.dataops import (truncate, self_normalize, compress, ARRAY_AXES,
                         CONSTRUCTOR_AXES)
+from loader.cubecache import CubeCache
 from loader.nxs_file import CUBE_KINDS, CURVE_KINDS, MOMENTUM_KINDS, energy_slot
 
 from ui.cursorlink import CursorLink
@@ -2970,7 +2971,12 @@ class ContourWindow(ViewerWindow):
 
     def __init__(self, data, filename, colormap, flip):
         super().__init__(data, filename, colormap, flip)
-        self.angle_defl, self.angle_slit, self.E, self.cube = data.angle_cube
+        self.angle_defl, self.angle_slit, self.E, cube = data.angle_cube
+        # Read from the file once browsing starts, not once per slice: a
+        # constant-energy plane touches every page of the file, so each
+        # tick of the energy slider used to cost a whole-file read
+        # (loader.cubecache).
+        self.cube = CubeCache(cube)
         labels = data.scan.labels
         self.defl_label = labels.get("x", "angle (deflector)")
         self.slit_label = labels.get("k", "angle (along slit)")
@@ -3090,12 +3096,28 @@ class ContourWindow(ViewerWindow):
         idxs = np.nonzero((axis >= centre - half_width) & (axis <= centre + half_width))[0]
         return idxs if idxs.size else np.array([centre_idx])
 
+    def slab(self, key):
+        """``self.cube[key]``, with a wait cursor while the one read of the
+        whole cube happens (see :class:`loader.cubecache.CubeCache`)."""
+        if not self.cube.load_pending():
+            return self.cube[key]
+        self.statusBar().showMessage("Reading the map into memory...")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.cube.load()
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.statusBar().clearMessage()
+        return self.cube[key]
+
     def full_cube(self):
         """The whole cube as a real numpy array.
 
-        ``self.cube`` is usually a :class:`loader.nxs_file.LazyCube` reading
+        ``self.cube`` wraps a :class:`loader.nxs_file.LazyCube` reading
         from the file as it is sliced, which is what makes opening a map
-        instant and lets a browsed-but-unused map cost nothing. An algorithm
+        instant and lets a browsed-but-unused map cost nothing; once the map
+        is being browsed it is held in memory, and this is a copy of that
+        rather than another read of the file. An algorithm
         that needs every point -- a k conversion, an arbitrary cut, a page
         of slices -- has to have it read, and says so here rather than
         relying on a lazy array quacking like an ndarray in every last
@@ -3108,7 +3130,7 @@ class ContourWindow(ViewerWindow):
         ei = self.e_control.index
         idxs = self.index_window(self.E, ei, self.e_control.half_width)
         self.e_control.show_value(self.E[ei], idxs, self.E)
-        self.view.set_frame(self.e_control.combine(self.cube[:, :, idxs], 2),
+        self.view.set_frame(self.e_control.combine(self.slab((slice(None), slice(None), idxs)), 2),
                             self.angle_defl, self.angle_slit)
         self.panel.sync_level_range()
         self.set_colormap(self.colormap, self.flip)
@@ -3661,11 +3683,12 @@ class MapCutWindow(ViewerWindow):
         idx = self.control.index
         idxs = ContourWindow.index_window(self.sum_axis, idx, self.control.half_width)
         self.control.show_value(self.sum_axis[idx], idxs, self.sum_axis)
-        cube = self.contour.cube
+        slab = self.contour.slab
         # cube is (deflector, slit, E): collapse whichever angle axis this
         # cut integrates over.
-        frame = (self.control.combine(cube[:, idxs, :], 1) if self.which == "deflector"
-                 else self.control.combine(cube[idxs, :, :], 0))
+        frame = (self.control.combine(slab((slice(None), idxs, slice(None))), 1)
+                 if self.which == "deflector"
+                 else self.control.combine(slab((idxs, slice(None), slice(None))), 0))
         self.view.set_frame(frame, self.x_axis, self.contour.E)
         self.panel.sync_curve_source()
         self.panel.sync_level_range()
@@ -3695,7 +3718,7 @@ class MapCutWindow(ViewerWindow):
             return None
         contour = self.contour
         scan = contour.data.scan
-        return (np.asarray(contour.cube, dtype=float), contour.angle_slit, contour.E,
+        return (np.asarray(contour.full_cube(), dtype=float), contour.angle_slit, contour.E,
                 1, 2, contour.data.kind,
                 lambda new_energy: (np.asarray(contour.angle_defl, dtype=float),
                                     np.asarray(contour.angle_slit, dtype=float),

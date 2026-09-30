@@ -10,6 +10,43 @@ file is the record of how it got that way.
 
 ---
 
+## Forty-fourth round: the map's sliders slice memory, not the file
+
+- **Dragging the energy slider of a map was slow, and it was the access
+  pattern, not memory.** Energy is the fastest-varying axis in the file, so
+  one constant-energy contour is one value out of every `len(E)`: collecting
+  it reads every page of the dataset (or decompresses every chunk of a
+  compressed one). Each tick of the slider cost about a whole-file read --
+  55 ms a tick on a 81 x 600 x 800 map read from a local disk, 130 ms
+  compressed, 225 ms with a +/- window, and far more from a network share.
+  `loader.cubecache.CubeCache` now wraps the map's lazy cube: the first
+  slice still comes from the file (opening a map stays instant, and a map
+  only glanced at is never read whole), and the moment browsing starts the
+  cube is read into memory once -- the same I/O one contour used to cost --
+  after which every contour and cut is a view of that array. A tick is now
+  about 6 ms. A cube bigger than half the available memory (capped at 4 GB)
+  is never read whole; it is served from an LRU cache of blocks of
+  neighbouring planes along the browsed axis instead.
+- **The cut windows' "integrate over" sliders** read through the same
+  cache: 80-90 ms a tick before, 8-16 ms now.
+- **Every re-slice re-applied the colormap**, and pyqtgraph rebuilds its
+  hidden gradient editor tick by tick for that (256 of them, ~20 ms) -- the
+  larger half of a tick even for a map already in memory. `apply_colormap`
+  now does nothing when the view already shows that colormap. This speeds up
+  every viewer that re-slices: the spatial scan's selections, the cut
+  sliders, the processing previews.
+- **The kz conversion's preview read the whole cube, as float, on every
+  change of every box** -- to convert one energy plane. It reads that one
+  plane now.
+- **A cut opened from a saved file kept its frame lazy in the image view**,
+  so every redraw, level change and EDC/MDC under the moving cursor read it
+  from the file again. The view reads a lazy frame once, when it is set.
+- Index windows that are contiguous runs are passed to h5py as slices (one
+  hyperslab) rather than index arrays (a much slower point selection), and
+  to numpy as views rather than copies.
+
+---
+
 ## Forty-third round: ANTARES spatial scans titled and oriented from their real actuator names
 
 - **The stage names in real files were not recognised.** ANTARES records
