@@ -69,6 +69,27 @@ pg.setConfigOption("antialias", True)
 pg.setConfigOptions(imageAxisOrder="row-major")
 
 
+_axis_item_init = pg.AxisItem.__init__
+
+
+def _axis_item_init_plain(self, *args, **kwargs):
+    """``pg.AxisItem.__init__`` with automatic SI-prefix scaling off.
+
+    Every axis title here already carries its unit ("X (mm)", "Energy
+    (eV)"), so the tick labels must be in that unit. Recent pyqtgraph
+    rescales an axis with no ``units`` set whenever its values are small or
+    large, and appends a bare factor to the title instead: a coarse spatial
+    scan from -0.9 to 0.1 mm came out as ticks -900..100 under
+    "X (mm) (x0.001)". Switched off for every axis at once, at import, so a
+    plot added later cannot forget it.
+    """
+    _axis_item_init(self, *args, **kwargs)
+    self.enableAutoSIPrefix(False)
+
+
+pg.AxisItem.__init__ = _axis_item_init_plain
+
+
 def _register_view_without_name(self, name=None):
     """Stand-in for ``pg.ViewBox.register``: every view is still listed, but
     none is registered under a name.

@@ -145,6 +145,39 @@ class Ui_MainWindow:
                 self.DataInfoCells[(name, column)] = cell
         menu_layout.addWidget(self.DataInfoBox)
 
+        # -- memory: how much this program is holding, and a way to give
+        # some of it back. Several spatial scans open at once is where it
+        # adds up, so the numbers are always on show rather than in a menu.
+        # Refreshed by a timer in ARPES_viewer.py.
+        self.MemoryBox = QtWidgets.QGroupBox("Memory", self.centralwidget)
+        memory_layout = QtWidgets.QVBoxLayout(self.MemoryBox)
+        memory_layout.setContentsMargins(6, 4, 6, 4)
+        memory_layout.setSpacing(3)
+        self.MemoryUsageBar = QtWidgets.QProgressBar()
+        self.MemoryUsageBar.setRange(0, 100)
+        self.MemoryUsageBar.setTextVisible(True)
+        self.MemoryUsageBar.setFormat("n/a")
+        self.MemoryUsageBar.setToolTip(
+            "This program's resident memory, as a share of the machine's RAM.")
+        memory_layout.addWidget(self.MemoryUsageBar)
+        self.MemoryLabel = QtWidgets.QLabel("")
+        self.MemoryLabel.setWordWrap(True)
+        memory_layout.addWidget(self.MemoryLabel)
+        memory_row = QtWidgets.QHBoxLayout()
+        self.FreeMemoryButton = QtWidgets.QPushButton("Free memory")
+        self.FreeMemoryButton.setToolTip(
+            "Drop cached copies of computed datasets (they are re-read from "
+            "their auto-saved files when next opened) and give freed memory "
+            "back to the system. Open windows are not touched.")
+        self.CloseViewersButton = QtWidgets.QPushButton("Close all viewers")
+        self.CloseViewersButton.setToolTip(
+            "Close every open viewer window, then free memory. The file list "
+            "is kept, so anything can be reopened.")
+        memory_row.addWidget(self.FreeMemoryButton, stretch=1)
+        memory_row.addWidget(self.CloseViewersButton, stretch=1)
+        memory_layout.addLayout(memory_row)
+        menu_layout.addWidget(self.MemoryBox)
+
         self.statusbar = QtWidgets.QStatusBar(MainWindow)
         MainWindow.setStatusBar(self.statusbar)
 

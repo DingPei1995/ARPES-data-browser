@@ -41,6 +41,7 @@ os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 QApplication.setHighDpiScaleFactorRoundingPolicy(QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
 from tools import system
+from tools import memory as memory_tools
 from ui import notify
 import numpy as np
 
@@ -56,6 +57,7 @@ from ui import main_window as main_window_ui
 from ui import windows as viewer_windows_module
 from loader import registry as nxs_loaders
 from loader import session as nxs_session
+from loader import nxs_file
 
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".arpes_viewer", "config.json")
 
@@ -1627,6 +1629,126 @@ def _forget_viewer(window):
 
 
 # --------------------------------------------------------------------------
+# Memory: what the launcher's Memory box shows, and its two buttons
+# --------------------------------------------------------------------------
+#: How often the Memory box refreshes, in ms.
+MEMORY_REFRESH_MS = 2000
+
+
+def _open_viewer_windows():
+    """Viewer windows that are still on screen (a closed one can linger in
+    the list for a moment before its ``closed`` signal is handled)."""
+    alive = []
+    for window in viewer_windows:
+        try:
+            if window.isVisible():
+                alive.append(window)
+        except RuntimeError:               # its C++ side is already gone
+            pass
+    return alive
+
+
+def update_memory_status():
+    """Refresh the Memory box: this process, the machine, and what the
+    program is holding open."""
+    rss, is_peak = memory_tools.process_memory()
+    total, available = memory_tools.system_memory()
+    bar = ui.MemoryUsageBar
+    if rss is not None and total:
+        share = 100.0 * rss / total
+        bar.setValue(int(min(100, round(share))))
+        bar.setFormat(f"{memory_tools.format_bytes(rss)}"
+                      f"{' (peak)' if is_peak else ''} -- {share:.1f}% of RAM")
+        # Amber past a third of the machine, red past a half: by then the
+        # system is paging and everything slows down, which is the symptom
+        # this box exists to explain.
+        colour = ("#d9534f" if share > 50 else "#e0a030" if share > 33
+                  else "#7aa6d8")
+        bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {colour}; }}")
+    else:
+        bar.setValue(0)
+        bar.setFormat(memory_tools.format_bytes(rss) if rss is not None else "n/a")
+
+    windows = _open_viewer_windows()
+    spem = sum(1 for w in windows
+               if getattr(getattr(w, "data", None), "kind", "") in NO_AUTOSAVE_KINDS)
+    resident = [r for r in loaded_items.values() if r.get("memory") is not None]
+    resident_bytes = sum(_resident_bytes(r["memory"]) for r in resident)
+    parts = [f"Viewers open: {len(windows)} (SPEM {spem})",
+             f"HDF5 files open: {nxs_file.HANDLES.open_count()}",
+             f"Computed data in memory: {len(resident)} "
+             f"({memory_tools.format_bytes(resident_bytes)})"]
+    if available is not None and total:
+        parts.append(f"System free: {memory_tools.format_bytes(available)} "
+                     f"of {memory_tools.format_bytes(total)}")
+    ui.MemoryLabel.setText("<br>".join(parts))
+    ui.MemoryLabel.setToolTip("\n".join(
+        f"{w.windowTitle()}" for w in windows) or "No viewer windows open")
+
+
+def _resident_bytes(data) -> int:
+    """Bytes a dataset keeps resident (its array, if it is a real one)."""
+    return nxs_session.MemoryBudget._size_of(data)
+
+
+def free_memory():
+    """Give back what the launcher holds only as a convenience.
+
+    A computed dataset with an auto-saved copy is kept in memory as well, so
+    that reopening it is instant. That copy is dropped here -- the row stays
+    and reads its file when next opened -- unless a window is showing it, in
+    which case dropping the list's reference would free nothing. Then every
+    reference cycle is collected and the allocator asked to return pages.
+    """
+    before, _ = memory_tools.process_memory()
+    in_view = {id(getattr(w, "data", None)) for w in _open_viewer_windows()}
+    dropped = 0
+    for record in loaded_items.values():
+        data = record.get("memory")
+        backing = record.get("backing")
+        if data is None or not backing or not os.path.isfile(backing):
+            continue
+        if id(data) in in_view:
+            continue
+        record["memory"] = None
+        dropped += 1
+    session.budget.clear()
+    memory_tools.release_memory()
+    after, _ = memory_tools.process_memory()
+    update_memory_status()
+    change = ""
+    if before is not None and after is not None:
+        change = (f"; {memory_tools.format_bytes(max(0, before - after))} released "
+                  f"(now {memory_tools.format_bytes(after)})")
+    ui.statusbar.showMessage(
+        f"Freed memory: {dropped} cached dataset(s) dropped{change}")
+
+
+def close_all_viewers():
+    """Close every viewer window and popped-out snapshot, then free memory.
+    Each window gives its dataset back as it closes, so a spatial scan's
+    file is released once nothing else is looking at it."""
+    windows = _open_viewer_windows()
+    # Snapshots popped out of a viewer outlive it on purpose; they go too.
+    detached = list(viewer_windows_module._DETACHED)
+    if not windows and not detached:
+        free_memory()
+        return
+    answer = QMessageBox.question(
+        win, "Close all viewers",
+        f"Close all {len(windows) + len(detached)} viewer and snapshot "
+        f"window(s)? The file list is kept.")
+    if answer != QMessageBox.Yes:
+        return
+    for window in windows + detached:
+        try:
+            window.close()
+        except RuntimeError:
+            pass
+    free_memory()
+
+
+# --------------------------------------------------------------------------
 # Metadata export (the viewers export their own data)
 # --------------------------------------------------------------------------
 def ExportMetadataCsv():
@@ -1841,6 +1963,9 @@ def SetConnect():
     ui.DataOpsButton.clicked.connect(open_data_operations)
     ui.ProcessButton.clicked.connect(open_processing)
 
+    ui.FreeMemoryButton.clicked.connect(free_memory)
+    ui.CloseViewersButton.clicked.connect(close_all_viewers)
+
 
 def InitializeUIWidgets():
     values = system.load_config(CONFIG_PATH, defaults={
@@ -1892,6 +2017,13 @@ if __name__ == "__main__":
             ui.statusbar.showMessage(f"Cleared {gone} old session folder(s)")
     except Exception:                                      # noqa: BLE001
         traceback.print_exc()
+
+    # The Memory box refreshes itself; the timer belongs to the window so
+    # it stops with it.
+    memory_timer = QtCore.QTimer(win)
+    memory_timer.timeout.connect(update_memory_status)
+    memory_timer.start(MEMORY_REFRESH_MS)
+    update_memory_status()
 
     win.show()
     try:

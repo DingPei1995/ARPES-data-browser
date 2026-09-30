@@ -10,6 +10,37 @@ file is the record of how it got that way.
 
 ---
 
+## Forty-second round: a memory box; spatial axes in plain units; ANTARES map orientation
+
+- **Memory box on the main panel.** With several spatial scans open the
+  program slowed down, with no way to see why. The launcher now shows this
+  process's resident memory as a share of the machine's RAM (amber past a
+  third, red past a half -- by then the system pages), how many viewers are
+  open (and how many are SPEM), how many HDF5 files are held open, and how
+  much computed data the list keeps resident. Refreshed every 2 s
+  (tools/memory.py; psutil when installed, the OS directly otherwise).
+  **Free memory** drops the list's in-memory copy of every computed dataset
+  that has an auto-saved file and is not on screen (it is re-read when next
+  opened), clears the session cache, collects reference cycles and returns
+  freed pages to the system. **Close all viewers** closes every viewer and
+  popped-out snapshot, then does the same.
+- **Spatial axes showed "-900 ... 100 (x0.001)" for a scan in mm.** Recent
+  pyqtgraph rescales an axis with no `units` set and appends a bare factor
+  to its title. Every title here already names its unit, so automatic SI
+  scaling is now off for every axis in the program (ui/widgets.py, at
+  import); ST from -0.9 to 0.1 mm reads -0.8, -0.6, ... under "X (mm)".
+- **ANTARES spatial maps open the way the beamline draws them.** Coarse
+  scans (ST across, SZ down): ST decreases left to right, SZ increases top
+  to bottom. Fine scans (PIX across, PIY down): PIX decreases left to right,
+  PIY decreases top to bottom. The loader records this as
+  `Spatial.invert_x` / `Spatial.invert_y` in the metadata, for ANTARES
+  stage names only (`ANTARES_REVERSED` in loader/nxs_file.py); every other
+  file keeps the plotting default. It is only the starting state -- the
+  view bar's Inv boxes still flip either axis -- and swapping X/Y carries
+  each axis's direction with it.
+
+---
+
 ## Forty-first round: greyed-out entries that look greyed out; tooltips without the lag
 
 - **Why the greyed-out entries of the list's menu looked enabled.** The main

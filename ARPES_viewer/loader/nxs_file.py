@@ -896,6 +896,58 @@ SPATIAL_HORIZONTAL = ("st", "pix", "pi_x")
 SPATIAL_VERTICAL = ("sz", "piy", "pi_y")
 
 
+def _antares_stage(name) -> Optional[str]:
+    """Which ANTARES real-space stage an actuator name is -- ``"st"``,
+    ``"sz"``, ``"pix"`` or ``"piy"`` -- or None. Accepts the bare name
+    ("ST", "PIX") as well as a full device path ending in it
+    (".../mt_st", ".../ex-pi/x")."""
+    n = str(name or "").strip().lower()
+    if not n:
+        return None
+    tags = (("pix", ("pix", "pi_x", "pi.x", "ex-pi/x")),
+            ("piy", ("piy", "pi_y", "pi.y", "ex-pi/y")),
+            ("st", ("st", "mt_st")),
+            ("sz", ("sz", "mt_sz")))
+    for stage, names in tags:
+        for tag in names:
+            if n == tag or any(n.endswith(sep + tag) for sep in ("_", "-", "/", ".", " ")):
+                return stage
+    return None
+
+
+#: How ANTARES draws its two kinds of spatial scan, which is how the
+#: beamline's own software shows them and so how its users read a map:
+#:
+#: coarse (ST horizontal, SZ vertical): ST decreases left to right, SZ
+#:     increases top to bottom -- both axes reversed from the plotting
+#:     default (increasing to the right and upwards);
+#: fine (PIX horizontal, PIY vertical): PIX decreases left to right, PIY
+#:     decreases top to bottom -- only the horizontal axis reversed.
+#:
+#: Keyed by stage; the value is whether that stage's axis is drawn reversed.
+#: Used for ANTARES files only: data from anywhere else keeps the default.
+ANTARES_REVERSED = {"st": True, "sz": True, "pix": True, "piy": False}
+
+
+def antares_spatial_orientation(first, second=None) -> dict:
+    """The ``Spatial.invert_x`` / ``Spatial.invert_y`` metadata for an
+    ANTARES spatial scan whose X and Y actuators are called ``first`` and
+    ``second`` (see :data:`ANTARES_REVERSED`). Empty when neither name is an
+    ANTARES stage, so anything else is drawn the default way.
+
+    Only an axis whose stage sits in its usual place is set: a vertical
+    stage scanned as X (or a line scan along SZ) has no convention to
+    follow, and is left alone rather than guessed at.
+    """
+    out = {}
+    for key, name, usual in (("Spatial.invert_x", first, ("st", "pix")),
+                             ("Spatial.invert_y", second, ("sz", "piy"))):
+        stage = _antares_stage(name)
+        if stage in usual:
+            out[key] = bool(ANTARES_REVERSED[stage])
+    return out
+
+
 def _spatial_labels(f: h5py.File, g: str) -> "tuple[str, str, dict]":
     """Axis titles for the two real-space scan axes, plus what they were
     called in the file.
@@ -924,6 +976,7 @@ def _spatial_labels(f: h5py.File, g: str) -> "tuple[str, str, dict]":
 
     detail = {"Spatial.X_actuator": first or "(unnamed)",
               "Spatial.Y_actuator": second or "(unnamed)"}
+    detail.update(antares_spatial_orientation(first, second))
     if first.lower() in SPATIAL_VERTICAL or second.lower() in SPATIAL_HORIZONTAL:
         message = (f"the file lists {first!r} before {second!r}, the opposite of this "
                    f"beamline's usual order; X is still the first scanned axis")

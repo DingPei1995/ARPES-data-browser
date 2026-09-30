@@ -808,6 +808,7 @@ class SpatialScanWindow(ViewerWindow):
         self.frame_panel.selectionApplied.connect(self._on_frame_selection)
         self.spatial_view.popoutRequested.connect(self.open_popout)
 
+        self._apply_default_orientation()
         self.set_colormap(colormap, flip)
         self.apply_display_options()
 
@@ -839,6 +840,24 @@ class SpatialScanWindow(ViewerWindow):
             self.spatial_view.set_data(self._spatial_map, scan.x, scan.y,
                                        reset_cursor=reset_cursor)
 
+    def _apply_default_orientation(self):
+        """Draw the spatial map the way its beamline does, where the loader
+        said how (``Spatial.invert_x`` / ``Spatial.invert_y`` in the
+        metadata -- set for ANTARES scans only, see
+        ``loader.nxs_file.ANTARES_REVERSED``). Anything else keeps the
+        plotting default. It is only the starting state: the view bar's
+        "Inv" boxes still reverse either axis by hand."""
+        info = getattr(self.data.scan, "info", {}) or {}
+        for axis, key in ((0, "Spatial.invert_x"), (1, "Spatial.invert_y")):
+            value = info.get(key)
+            if value is None:
+                continue
+            if isinstance(value, (bytes, np.bytes_)):
+                value = value.decode("utf-8", "replace")
+            if isinstance(value, str):
+                value = value.strip().lower() in ("1", "true", "yes")
+            self.spatial_view.set_axis_inverted(axis, bool(value))
+
     def set_swap_xy(self, on: bool):
         """Exchange the spatial panel's two axes, keeping the cursor on the
         same measured pixel."""
@@ -846,6 +865,12 @@ class SpatialScanWindow(ViewerWindow):
         if on == self.swap_xy or self._spatial_map is None:
             return
         cursor = self.spatial_view.cursor.pos()
+        # A reversed axis stays reversed when it moves to the other side:
+        # the direction belongs to the measured axis, not to the screen.
+        inverted = (self.spatial_view.axis_inverted(0),
+                    self.spatial_view.axis_inverted(1))
+        self.spatial_view.set_axis_inverted(0, inverted[1])
+        self.spatial_view.set_axis_inverted(1, inverted[0])
         self.swap_xy = on
         self._set_spatial_map(self._spatial_map, reset_cursor=False)
         # The pixel the cursor was on has not moved; its coordinates have
@@ -859,6 +884,9 @@ class SpatialScanWindow(ViewerWindow):
             action.blockSignals(True)
             action.setChecked(on)
             action.blockSignals(False)
+        view_bar = getattr(self, "view_bar", None)
+        if view_bar is not None and view_bar.panels:
+            view_bar.sync_from_view()
         self.statusBar().showMessage(
             "Spatial map drawn with Y horizontal" if on
             else "Spatial map drawn with X horizontal")
