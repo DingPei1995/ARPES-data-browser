@@ -70,6 +70,31 @@ def grab_modal(name, then="reject", setup=None, size=None, tries=40):
     QtCore.QTimer.singleShot(100, attempt)
 
 
+def grab_popup(name, tries=40):
+    """Capture the popup menu the next call is about to open, then close it."""
+    def attempt(left=tries):
+        menu = QApplication.activePopupWidget()
+        if menu is None:
+            if left:
+                QtCore.QTimer.singleShot(50, lambda: attempt(left - 1))
+            return
+        pump()
+        menu.grab().save(os.path.join(OUT, f"{name}.png"))
+        print("saved", name)
+        menu.close()
+    QtCore.QTimer.singleShot(100, attempt)
+
+
+def shot_menu(menu, name):
+    """Open a context menu without blocking, save it, close it."""
+    menu.popup(QtCore.QPoint(40, 40))
+    pump()
+    menu.grab().save(os.path.join(OUT, f"{name}.png"))
+    print("saved", name)
+    menu.close()
+    pump()
+
+
 def wait_for(condition, seconds=60.0):
     """Pump events until ``condition()`` is true (a worker-thread job has
     finished, say)."""
@@ -145,7 +170,8 @@ class Shots:
              "fermi", "cut_k", "mdc_fit", "map_k", "brillouin", "arbitrary_cut",
              "fs_correction", "process", "stack", "volume", "cut_arithmetic",
              "kz_processing", "kz_conversion", "degrid", "curves", "spin",
-             "figure", "export", "data_operations", "spatial", "slice_figure"]
+             "figure", "export", "data_operations", "spatial", "slice_figure",
+             "context_menus", "line_profile"]
 
     def __init__(self, av, app, paths, data_dir):
         self.av, self.app, self.paths, self.data_dir = av, app, paths, data_dir
@@ -500,8 +526,24 @@ class Shots:
 
     def spatial(self):
         window = self._open("SPEM_flake")
+        window.spatial_view.cursor.setPos((20.0, 24.0))
         pump(10)
         shot(window, "spatial_scan", (1250, 760))
+        # a box on the flake: the spectrum summed over it
+        spatial, frame = window.spatial_view, window.frame_view
+        spatial.set_selection_corners(14.0, 14.0, 26.0, 30.0)
+        spatial.action_apply.trigger()
+        pump(10)
+        shot(window, "spem_box_to_spectrum", (1250, 760))
+        shot_menu(spatial.view_box.menu, "spem_spatial_menu")
+        spatial.set_selection_visible(False)
+        # a box on the band only one domain has: where it comes from
+        frame.set_selection_corners(-8.0, -0.32, 8.0, -0.18)
+        frame.action_apply.trigger()
+        pump(10)
+        shot(window, "spem_box_to_map", (1250, 760))
+        shot_menu(frame.view_box.menu, "spem_spectrum_menu")
+        self.spem = window
 
     def slice_figure(self):
         contour = self.contour
@@ -510,6 +552,31 @@ class Shots:
         pump(10)
         window = contour.figure_windows[-1]
         shot(window, "slice_figure", (1250, 760))
+
+    def context_menus(self):
+        lw = self.av.ui.FilePathListWidget
+        lw.clearSelection()
+        for i in range(lw.count()):
+            if lw.item(i).text().startswith(("Gamma_cut_LH   ", "Gamma_cut_LV   ")):
+                lw.item(i).setSelected(True)
+        grab_popup("list_menu")
+        self.av.show_list_menu(QtCore.QPoint(30, 30))
+        pump()
+        shot_menu(self.cut.view.view_box.menu, "image_menu")
+
+    def line_profile(self):
+        cut = self.cut
+        cut.view.set_readout_cursor_visible(False)
+        window = cut.view.open_line_profile()
+        ef = demo_EF()
+        handles = window.roi.getHandles()
+        window.roi.movePoint(handles[0], (-12.0, ef - 0.45))
+        window.roi.movePoint(handles[1], (12.0, ef - 0.45))
+        window.width_box.setValue(0.01)
+        pump(10)
+        shot(cut, "line_profile_cut", (1000, 760))
+        shot(window, "line_profile", (640, 420))
+        window.close()
 
 
 if __name__ == "__main__":

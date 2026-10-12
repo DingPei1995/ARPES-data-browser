@@ -41,7 +41,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                               QTableWidget, QTableWidgetItem, QHeaderView,
                               QScrollArea, QFrame, QGraphicsPathItem,
                               QTabWidget, QRadioButton, QGroupBox,
-                              QProgressDialog)
+                              QProgressDialog, QAction)
 
 from tools.analysis import arbitrary_cut, fit_feature, fs_correction
 from tools.fermi import (PARAMETERS, PARAMETER_LABELS, K_B, initial_guess,
@@ -804,6 +804,18 @@ class SpatialScanWindow(ViewerWindow):
             self._show_frame_at_x(len(scan.x) // 2)
 
         self.spatial_view.enable_popout_action(True, "Open this position in a new window")
+        # After an E-vs-k box has been integrated onto the map, the map is
+        # no longer the overview, and there was no way back to it short of
+        # drawing a box over the whole spectrum. This is that way back.
+        self.action_full_map = QAction("Spatial map over the whole spectrum",
+                                       self.spatial_view.view_box.menu)
+        self.action_full_map.setToolTip(
+            "Undo \u201cIntegrate selection -> spatial panel\u201d: show the map "
+            "summed over every k and E again.")
+        self.spatial_view.view_box.menu.insertAction(
+            self.spatial_view.action_popout, self.action_full_map)
+        self.action_full_map.setVisible(False)
+        self.action_full_map.triggered.connect(self.show_full_spatial_map)
         self.spatial_view.pixelChanged.connect(self._on_cursor_moved)
         self.spatial_panel.selectionApplied.connect(self._on_spatial_selection)
         self.frame_panel.selectionApplied.connect(self._on_frame_selection)
@@ -877,6 +889,9 @@ class SpatialScanWindow(ViewerWindow):
         if on == self.swap_xy or self._spatial_map is None:
             return
         cursor = self.spatial_view.cursor.pos()
+        # The selection box frames measured pixels too: it swaps with them,
+        # or after the swap it would sit over a different part of the sample.
+        box = self.spatial_view.selection_corners()
         # A reversed axis stays reversed when it moves to the other side:
         # the direction belongs to the measured axis, not to the screen.
         inverted = (self.spatial_view.axis_inverted(0),
@@ -888,6 +903,9 @@ class SpatialScanWindow(ViewerWindow):
         # The pixel the cursor was on has not moved; its coordinates have
         # swapped places, so the cursor follows them.
         self.spatial_view.cursor.setPos((float(cursor.y()), float(cursor.x())))
+        if box is not None:
+            x0, y0, x1, y1 = box
+            self.spatial_view.set_selection_corners(y0, x0, y1, x1)
         self.spatial_panel.sync_level_range()
         self.set_colormap(self.colormap, self.flip)
         self.spatial_view.fit_to_data()
@@ -925,6 +943,7 @@ class SpatialScanWindow(ViewerWindow):
         self.frame_panel.sync_level_range()
         nx, ny = self._axis_names()
         self.frame_label = f"{nx}={scan.x[col]:.4g}, {ny}={scan.y[row]:.4g}"
+        self.frame_panel.title_label.setText(f"E vs k at {self.frame_label}")
         self.statusBar().showMessage(f"pixel ({self.frame_label})")
 
     def _show_frame_at_x(self, xi):
@@ -933,6 +952,7 @@ class SpatialScanWindow(ViewerWindow):
         self.frame_panel.sync_curve_source()
         self.frame_panel.sync_level_range()
         self.frame_label = f"{self._axis_names()[0]}={scan.x[xi]:.4g}"
+        self.frame_panel.title_label.setText(f"E vs k at {self.frame_label}")
         self.statusBar().showMessage(self.frame_label)
 
     def _on_cursor_moved(self, row, col):
@@ -963,6 +983,10 @@ class SpatialScanWindow(ViewerWindow):
         nx, ny = self._axis_names()
         self.frame_label = (f"{nx}[{scan.x[ix0]:.4g}..{scan.x[ix1]:.4g}], "
                             f"{ny}[{scan.y[iy0]:.4g}..{scan.y[iy1]:.4g}] integrated")
+        self.frame_panel.title_label.setText(
+            f"E vs k, summed over {nx} {scan.x[ix0]:.4g} to {scan.x[ix1]:.4g}, "
+            f"{ny} {scan.y[iy0]:.4g} to {scan.y[iy1]:.4g} "
+            f"({(ix1 - ix0 + 1) * (iy1 - iy0 + 1)} pixels)")
         self.set_colormap(self.colormap, self.flip)
         self.statusBar().showMessage(
             f"E vs k integrated over spatial {self.spatial_view.selection_summary()}")
@@ -983,8 +1007,29 @@ class SpatialScanWindow(ViewerWindow):
         self._set_spatial_map(smap, reset_cursor=False)
         self.spatial_panel.sync_level_range()
         self.set_colormap(self.colormap, self.flip)
-        self.statusBar().showMessage(
-            f"Spatial map integrated over {self.frame_view.selection_summary()}")
+        summary = self.frame_view.selection_summary()
+        # The title says what the map now is, in the spectrum's own terms.
+        view = self.frame_view
+        parts = []
+        for axis, (i0, i1), name in ((view._xarray, (ik0, ik1), view.x_label),
+                                     (view._yarray, (ie0, ie1), view.y_label)):
+            name = str(name or "").split(" (")[0] or "axis"
+            parts.append(f"{name} {axis[i0]:.4g} to {axis[i1]:.4g}")
+        self.spatial_panel.title_label.setText(
+            "Spatial map, integrated over " + ", ".join(parts))
+        self.action_full_map.setVisible(True)
+        self.statusBar().showMessage(f"Spatial map integrated over {summary}")
+
+    def show_full_spatial_map(self):
+        """Back to the overview: the map summed over the whole spectrum."""
+        if self.data.kind != "spem_4d":
+            return
+        self._set_spatial_map(self.data.spatial_overview, reset_cursor=False)
+        self.spatial_panel.sync_level_range()
+        self.set_colormap(self.colormap, self.flip)
+        self.spatial_panel.title_label.setText("Spatial overview")
+        self.action_full_map.setVisible(False)
+        self.statusBar().showMessage("Spatial map summed over the whole spectrum")
 
     # -- comparison snapshots --------------------------------------------
     def open_popout(self):
@@ -1180,7 +1225,7 @@ class CutWindow(ViewerWindow):
 
         reason = momentum_cut_reason(self.data)
         if reason:
-            QMessageBox.information(self, "MDC / EDC fit", reason + ".")
+            QMessageBox.information(self, "MDC / EDC fit", reason)
             return None
         existing = getattr(self, "_fit_panel", None)
         if existing is not None and existing.isVisible():
