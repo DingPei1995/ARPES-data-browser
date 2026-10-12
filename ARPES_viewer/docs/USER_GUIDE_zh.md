@@ -1,6 +1,6 @@
 # ARPES viewer 用户指南
 
-*[English version / 英文版](USER_GUIDE_en.md)*
+*[English version / 英文版](USER_GUIDE_en.md) · [Version française / 法文版](USER_GUIDE_fr.md)*
 
 本指南按照日常使用的顺序，配合截图介绍程序的主要功能：载入数据、浏览数据、
 转换到动量空间、分析，以及制作论文图。每一步背后的技术细节（公式、测试结果、

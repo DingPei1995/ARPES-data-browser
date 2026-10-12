@@ -10,6 +10,20 @@ file is the record of how it got that way.
 
 ---
 
+## Forty-eighth round: the guides in French, and as PDF
+
+- **A French user guide** (`docs/USER_GUIDE_fr.md`), section for section
+  the English one; the three guides link to each other. Button and menu
+  names stay as the program shows them, in English.
+- **PDF editions** of all three in `docs/pdf/`, built by
+  `devtools/build_guide_pdfs.py`: pandoc (GitHub flavour, so the section
+  links are the same as on GitHub) to HTML styled for A4, printed by
+  headless Chromium through Playwright, with page numbers, a bookmark
+  outline and fonts embedded (the Chinese text included). Tall, narrow
+  dialogs float beside their text rather than leaving half a page empty;
+  links between the guides, to the README and to the changelog go to
+  GitHub (a relative link would print as the build machine's path).
+
 ## Forty-seventh round: autosaved copies are uncompressed, and go at a normal close
 
 - **Working copies are written uncompressed.** Every derived dataset is

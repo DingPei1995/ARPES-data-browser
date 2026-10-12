@@ -1,6 +1,6 @@
 # ARPES viewer — User Guide
 
-*[中文版 / Chinese version](USER_GUIDE_zh.md)*
+*[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
 This guide walks through the program's main features with screenshots, in
 the order you would normally use them: loading data, looking at it,

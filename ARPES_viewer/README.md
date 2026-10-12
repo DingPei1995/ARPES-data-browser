@@ -14,8 +14,12 @@ The round-by-round history, and the reasoning behind the choices below, is in
 [CHANGELOG.md](CHANGELOG.md).
 
 **User guide with screenshots:** [English](docs/USER_GUIDE_en.md) ·
-[中文](docs/USER_GUIDE_zh.md). To try the program without a beamtime,
-`python devtools/demo_data.py` writes synthetic data to `demo_data/`.
+[中文](docs/USER_GUIDE_zh.md) · [Français](docs/USER_GUIDE_fr.md), and as
+PDF: [English](docs/pdf/ARPES_viewer_user_guide_en.pdf) ·
+[中文](docs/pdf/ARPES_viewer_user_guide_zh.pdf) ·
+[Français](docs/pdf/ARPES_viewer_user_guide_fr.pdf). To try the program
+without a beamtime, `python devtools/demo_data.py` writes synthetic data to
+`demo_data/`.
 
 ```
 python ARPES_viewer.py
@@ -687,7 +691,7 @@ loader/             reading data in, and keeping it            (no Qt)
 tools/              the algorithms                             (no Qt)
 ui/                 the windows                                (Qt)
 devtools/           one-off generators, run by hand
-docs/               the user guides and their screenshots
+docs/               the user guides (en, zh, fr), their screenshots and PDFs
 test/               the tests
 ```
 
@@ -741,7 +745,7 @@ you what it may depend on.
 | `ui/figure.py`, `ui/fit.py`, `ui/process.py`, `ui/volume.py` | The figure composer, the MDC/EDC fit panel, and the 2-D and 3-D processing panels. |
 | **`devtools/`, `test/`** | |
 | `devtools/gen_colormaps.py`, `devtools/gen_spacegroups.py` | Generate the tables in `tools/`; need scipy + the lab's `.mat`, and `spglib`, neither of which the program itself does. |
-| `devtools/demo_data.py`, `devtools/guide_screenshots.py` | Synthetic data to try the program on, and the script that re-takes the user guides' screenshots from it (offscreen). |
+| `devtools/demo_data.py`, `devtools/guide_screenshots.py`, `devtools/build_guide_pdfs.py` | Synthetic data to try the program on, the script that re-takes the user guides' screenshots from it (offscreen), and the one that prints the guides to PDF (pandoc + Playwright). |
 | `test/test_imports.py` | Checks on the shape of the code: that no local shadows an imported module, that no package is referenced by its bare name, that everything imports, and that `loader/` and `tools/` stay Qt-free. |
 
 ---
