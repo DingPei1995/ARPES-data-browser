@@ -810,6 +810,11 @@ def save_selected():
         QApplication.restoreOverrideCursor()
 
     _rebind_saved_rows(saved_keys, path, entries)
+    # Every save goes in the session log, not only those that release a
+    # working copy: after a crash the log is where to look for what was
+    # written where.
+    session.log("SAVE", f"{len(payload)} dataset(s)", path,
+                ", ".join(str(item.get("name", "")) for item in payload))
 
     message = f"Saved {len(payload)} dataset(s) to {os.path.basename(path)}"
     if problems:
@@ -1423,7 +1428,7 @@ def open_curve_fit():
     reason = momentum_cut_reason(data)
     if reason:
         data.close()
-        QMessageBox.information(win, "MDC / EDC fit", reason + ".")
+        QMessageBox.information(win, "MDC / EDC fit", reason)
         return None
 
     window = FitPanel(data, label_for(key), win, default_colormap, default_flip)

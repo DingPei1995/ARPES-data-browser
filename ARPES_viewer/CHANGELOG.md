@@ -12,8 +12,42 @@ file is the record of how it got that way.
 
 ## Version 2026-10-12
 
-The forty-sixth to forty-eighth rounds below make up this version, saved as
+The forty-sixth to forty-ninth rounds below make up this version, saved as
 `main` on 12 October 2026.
+
+## Forty-ninth round: the right-click menus, tested; the guides in four parts
+
+Every right-click entry was run on the demo data -- on each image panel,
+on both SPEM panels and on the main list -- and checked against the
+numbers it should give (`test/test_right_click.py`: a box on the SPEM map
+must give exactly the sum of those pixels' spectra, a box on the spectrum
+exactly the map of that k-E window, swapped axes or not). What came out:
+
+- **Swap X and Y left the selection box behind.** The box stayed where it
+  was on screen while the map was transposed under it, so it framed a
+  different part of the sample, and *Integrate selection* then summed the
+  wrong pixels. The box now swaps with the pixels it frames.
+- **No way back to the overview.** After *Integrate selection -> spatial
+  panel* the map showed one k-E window's intensity for good; getting the
+  overview back meant drawing a box over the whole spectrum. The map's menu
+  now has **Spatial map over the whole spectrum** while that is the case,
+  and the map's title says which window it shows.
+- **The spectrum panel's title said "at cursor / selection"** whichever it
+  was. It now names the pixel, or the box and how many pixels it sums.
+- **Saving from the list was missing from the operations log** unless it
+  released an autosaved copy, though the log is where to look after a crash
+  for what was written where. Every save is logged now.
+- The MDC / EDC fit's refusal for an angle-axis cut ended in "..".
+
+The user guides (English, Chinese, French, and their PDFs) are rewritten in
+four parts -- installation and setup (version, source, data formats, Python
+environments, settings files); looking at data during the experiment (the
+main window and both right-click menus entry by entry, SPEM box integration
+in both directions, maps, cuts, quick looks); processing for publication,
+in the order a paper's data goes through it; and troubleshooting -- with new
+screenshots of the menus, the SPEM integrations and the line profile. In
+the PDFs each part starts on a new page and the contents fit on the title
+page.
 
 ## Forty-eighth round: the guides in French, and as PDF
 

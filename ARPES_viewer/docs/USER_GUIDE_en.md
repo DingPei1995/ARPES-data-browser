@@ -2,66 +2,169 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-This guide walks through the program's main features with screenshots, in
-the order you would normally use them: loading data, looking at it,
-converting it to momentum, analysing it, and making figures. The technical
-background for each step (formulas, test results, design choices) is in the
-[README](../README.md) and [CHANGELOG](../CHANGELOG.md).
+**Program version 2026-10-12** · source code:
+<https://github.com/DingPei1995/ARPES-data-browser>
 
-Every screenshot was taken from the running program, using the synthetic
-data written by `devtools/demo_data.py`, so you can follow along without a
-beamtime (see [Trying it with demo data](#2-trying-it-with-demo-data)).
+This guide has four parts:
+
+- **Part I — Installation and setup**: the version, where the code is, what
+  data the program reads, and how to set up Python and start it.
+- **Part II — Looking at data during the experiment**: the main window, the
+  right-click menus, and the viewers for SPEM, map and cut data. These are
+  the tools for deciding quickly, at the beamline, where to measure next.
+- **Part III — Advanced processing for publication**: de-gridding, the Fermi
+  level, k conversion, the Brillouin zone, kz, curvature, dichroism, peak
+  fits and figures, in the order a paper's data usually goes through them.
+- **Part IV — Troubleshooting**: autosave and crash recovery, memory, and
+  answers to common problems.
+
+Every screenshot was taken from the running program on the synthetic data
+written by `devtools/demo_data.py`, so you can follow along without a
+beamtime ([§3](#3-trying-it-with-demo-data)). The formulas, tests and design
+choices behind each step are in the [README](../README.md) and the
+[CHANGELOG](../CHANGELOG.md).
 
 ---
 
 ## Contents
 
-1. [Installing and starting](#1-installing-and-starting)
-2. [Trying it with demo data](#2-trying-it-with-demo-data)
-3. [The main window](#3-the-main-window)
-4. [Loading data](#4-loading-data)
-5. [What the viewers have in common](#5-what-the-viewers-have-in-common)
-6. [Maps: the contour and its two cuts](#6-maps-the-contour-and-its-two-cuts)
-7. [Cuts: from raw spectrum to band parameters](#7-cuts-from-raw-spectrum-to-band-parameters)
-8. [From angles to momentum for a map, and the Brillouin zone](#8-from-angles-to-momentum-for-a-map-and-the-brillouin-zone)
-9. [Arbitrary cuts and Fermi-surface correction](#9-arbitrary-cuts-and-fermi-surface-correction)
-10. [Processing: smoothing, derivatives, curvature](#10-processing-smoothing-derivatives-curvature)
-11. [Stack plots and the 3-D view](#11-stack-plots-and-the-3-d-view)
-12. [Cut arithmetic: dichroism and reference division](#12-cut-arithmetic-dichroism-and-reference-division)
-13. [Photon-energy scans (kz)](#13-photon-energy-scans-kz)
-14. [Removing the detector grid](#14-removing-the-detector-grid)
-15. [Curves: EDCs, MDCs and spin-resolved data](#15-curves-edcs-mdcs-and-spin-resolved-data)
-16. [Spatially resolved scans (nano-ARPES)](#16-spatially-resolved-scans-nano-arpes)
-17. [Figures and export](#17-figures-and-export)
-18. [Autosave, memory and recovery](#18-autosave-memory-and-recovery)
-19. [Tips and troubleshooting](#19-tips-and-troubleshooting)
+**Part I — Installation and setup**
+
+1. [About the program](#1-about-the-program)
+2. [Installing Python and starting the program](#2-installing-python-and-starting-the-program)
+3. [Trying it with demo data](#3-trying-it-with-demo-data)
+
+**Part II — Looking at data during the experiment**
+
+4. [The main window and its right-click menu](#4-the-main-window-and-its-right-click-menu)
+5. [Loading data](#5-loading-data)
+6. [Image windows: controls and the right-click menu](#6-image-windows-controls-and-the-right-click-menu)
+7. [SPEM (real-space) scans: finding the spot to measure](#7-spem-real-space-scans-finding-the-spot-to-measure)
+8. [Maps: the contour and its two cuts](#8-maps-the-contour-and-its-two-cuts)
+9. [Cuts: quick looks](#9-cuts-quick-looks)
+10. [Photon-energy scans, curves and spin EDCs: quick looks](#10-photon-energy-scans-curves-and-spin-edcs-quick-looks)
+11. [The 3-D view of a map](#11-the-3-d-view-of-a-map)
+
+**Part III — Advanced processing for publication**
+
+12. [The usual processing order](#12-the-usual-processing-order)
+13. [Removing the detector grid](#13-removing-the-detector-grid)
+14. [Fermi level and Fermi-surface correction](#14-fermi-level-and-fermi-surface-correction)
+15. [From angles to momentum](#15-from-angles-to-momentum)
+16. [The Brillouin zone and arbitrary cuts](#16-the-brillouin-zone-and-arbitrary-cuts)
+17. [Photon-energy scans: kz processing and kz → momentum](#17-photon-energy-scans-kz-processing-and-kz--momentum)
+18. [Processing: smoothing, derivatives, curvature](#18-processing-smoothing-derivatives-curvature)
+19. [Cut arithmetic: dichroism and reference division](#19-cut-arithmetic-dichroism-and-reference-division)
+20. [MDC / EDC fit: dispersion, v_F, m\*, self-energy](#20-mdc--edc-fit-dispersion-v_f-m-self-energy)
+21. [Curve fit and spin analysis](#21-curve-fit-and-spin-analysis)
+22. [Figures, export and saving](#22-figures-export-and-saving)
+
+**Part IV — Troubleshooting**
+
+23. [Autosave, crash recovery and memory](#23-autosave-crash-recovery-and-memory)
+24. [Common problems](#24-common-problems)
 
 ---
 
-## 1. Installing and starting
+# Part I — Installation and setup
 
-You need Python 3.9 or newer and five packages:
+## 1. About the program
+
+| | |
+|---|---|
+| **Version** | 2026-10-12 (last modified 12 October 2026). The version is also at the top of the [README](../README.md); [CHANGELOG.md](../CHANGELOG.md) lists every change. |
+| **Source code** | <https://github.com/DingPei1995/ARPES-data-browser> (the program is in the `ARPES_viewer/` folder) |
+| **Written in** | Python 3, PyQt5 and pyqtgraph; numpy, scipy and h5py for the numerics and the files |
+| **Platforms** | Windows, macOS and Linux — anywhere PyQt5 runs |
+
+### Data the program reads
+
+| Beamline / source | Files | Opens as |
+|---|---|---|
+| SOLEIL **ANTARES** | NeXus/HDF5 `*.nxs` | cuts, deflector maps, real-space (SPEM) scans |
+| SOLEIL **CASSIOPEE** | Scienta SES text files: single spectra, and numbered folders | cuts; a folder becomes one map or one photon-energy (kz) scan |
+| CASSIOPEE **spin end station** (MBS A-1) | `*.krx` and `*.txt` | cuts, deflector maps, spin-resolved EDCs |
+| This program | its own saved `*.nxs` | everything it saves, with the steps that made it |
+
+Adding a beamline means adding one reader file to `loader/` (see *Adding a
+beamline* in the README).
+
+### Data kinds
+
+Every dataset in the program has one of these kinds. The kind decides which
+viewer opens it and which functions it is offered.
+
+| Kind | Listed as | Axes | What it is |
+|---|---|---|---|
+| `cut` | `[Cut]` | angle (or k) × E | one spectrum |
+| `map` | `[Map]` | angle × angle × E | a deflector or polar-angle scan |
+| `k_map` | `[k-map]` | kx × ky × E | a map converted to momentum |
+| `kz_map` | `[kz map]` | hν × angle × E | a photon-energy scan |
+| `kz_map_k` | `[kz map (k)]` | k_z × k∥ × E | that scan converted to momentum |
+| `spem_4d`, `spem_1d` | `[SPEM]` | x (× y) × angle × E | real-space (nano-ARPES) scans |
+| `edc`, `mdc`, `spin_edc` | `[EDC]`, `[MDC]`, `[Spin EDC]` | E (or k) × channels | curves, with optional σ channels |
+
+## 2. Installing Python and starting the program
+
+**Python.** Use Python **3.9 or newer** (it has been tested up to 3.13).
+Any distribution works: python.org, Anaconda/Miniconda, or the system
+Python on Linux.
+
+**Packages.** Five are needed:
 
 ```bash
 pip install PyQt5 pyqtgraph numpy h5py scipy
 ```
 
-Then, from the `ARPES_viewer` folder:
+It is cleanest to install them into an environment of their own, so the
+program does not depend on, or upset, other Python work on the machine:
+
+```bash
+# with venv
+python -m venv arpes-env
+source arpes-env/bin/activate          # Windows: arpes-env\Scripts\activate
+pip install PyQt5 pyqtgraph numpy h5py scipy
+
+# or with conda
+conda create -n arpes python=3.12 pyqt pyqtgraph numpy h5py scipy -c conda-forge
+conda activate arpes
+```
+
+Versions it was last tested with: PyQt5 5.15, pyqtgraph 0.14 (0.13 works
+too), numpy 2.3, h5py 3.16, scipy 1.18.
+
+**Getting the code.** Download it from the GitHub page (*Code → Download
+ZIP*), or:
+
+```bash
+git clone https://github.com/DingPei1995/ARPES-data-browser.git
+cd ARPES-data-browser/ARPES_viewer
+```
+
+**Starting.** From the `ARPES_viewer` folder:
 
 ```bash
 python ARPES_viewer.py
 ```
 
-The program reads:
+**Settings and working files** are kept in the folder `.arpes_viewer` in
+your home directory:
 
-| Beamline / source | Files |
+| File | What it holds |
 |---|---|
-| SOLEIL **ANTARES** | NeXus/HDF5 `*.nxs` (cuts, deflector maps, spatial scans) |
-| SOLEIL **CASSIOPEE** | Scienta SES text files — single spectra, and numbered folders assembled into a map or a photon-energy scan |
-| CASSIOPEE **spin end station** (MBS A-1) | `*.krx` and `*.txt` — cuts, deflector maps and spin-resolved EDCs |
-| This program | its own saved `*.nxs` format |
+| `~/.arpes_viewer/config.json` | the last data folder, and the colormap a new window starts with |
+| `~/.arpes_viewer/sessions/` | the autosaved working copies of computed data ([§23](#23-autosave-crash-recovery-and-memory)) |
+| `~/.arpes_viewer/sessions/operations.log` | one line for every autosave, save and deletion |
 
-## 2. Trying it with demo data
+Deleting `config.json` resets the settings; nothing else is stored.
+
+**Checking the installation.** The test suite runs without a display:
+
+```bash
+python -m pytest            # from the ARPES_viewer folder; needs pip install pytest
+```
+
+## 3. Trying it with demo data
 
 ```bash
 python devtools/demo_data.py            # writes ./demo_data/*.nxs
@@ -69,40 +172,68 @@ python devtools/demo_data.py            # writes ./demo_data/*.nxs
 
 This writes six files of synthetic data: a Fermi-surface map, a pair of cuts
 taken with LH and LV polarisation, a photon-energy scan, a spin-resolved EDC,
-a small real-space scan and a map with a detector mesh printed on it. They
-come from a toy band structure (a hexagonal electron pocket and a hole band
-at Γ, hole pockets at K) with a Fermi cut-off, the analyser resolution and
-Poisson noise, and open exactly like measured data.
+a small real-space scan of a flake with two domains, and a map with a
+detector mesh printed on it. They come from a toy band structure (a
+hexagonal electron pocket and a hole band at Γ, hole pockets at K) with a
+Fermi cut-off, the analyser resolution and Poisson noise, and open exactly
+like measured data. Point the main window's folder box at `demo_data/` and
+add them.
 
 To re-take every screenshot in this guide after changing a window:
 
 ```bash
 python devtools/guide_screenshots.py    # writes docs/images/*.png
+python devtools/build_guide_pdfs.py     # rebuilds the PDFs (needs pandoc and playwright)
 ```
 
 ---
 
-## 3. The main window
+# Part II — Looking at data during the experiment
+
+## 4. The main window and its right-click menu
 
 ![The main window](images/main_window_info.png)
 
-The main window is a **browser**: one row per *dataset*, not per file (one
-`.nxs` file often holds several measurements, and each gets its own row). The
+The main window is a **browser**: one row per *dataset*, not per file. One
+`.nxs` file often holds several measurements, and each gets its own row. The
 kind is written after the name: `[Cut]`, `[Map]`, `[kz map]`, `[k-map]`,
 `[SPEM]`, `[EDC]`, `[Spin EDC]` …
 
-| Action | How |
+| To … | do this |
 |---|---|
-| Open a dataset in its own window | **double-click** the row, or **Open selected** |
-| Everything else that works on datasets | **right-click** the row (or a selection of rows) |
-| Read the axes: first/last value, points, step | right-click → **Show information** (fills *Data Information*) |
-| Truncate / normalise / compress several datasets at once | **Data operations...** |
-| Smooth, differentiate, curvature, backgrounds, symmetrise | **Process...** |
-| See and free memory | the **Memory** box at the bottom |
+| open a dataset in its own window | **double-click** the row, or **Open selected** |
+| work on one or several datasets | select them and **right-click** (menu below) |
+| read the axes: first and last value, points, step | right-click → **Show information** (fills *Data Information*) |
+| truncate, normalise or bin several datasets at once | **Data operations...** ([§18](#18-processing-smoothing-derivatives-curvature)) |
+| smooth, differentiate, curvature, background, symmetrise | **Process...** ([§18](#18-processing-smoothing-derivatives-curvature)) |
+| see and free memory | the **Memory** box at the bottom ([§23](#23-autosave-crash-recovery-and-memory)) |
 
-The right-click menu only offers what fits the selection. A greyed entry says
-why when you hover over it — for example, *Cut arithmetic* needs exactly two
-cuts, the *3D view* needs a map.
+### The list's right-click menu
+
+Select one or more rows and right-click. The menu acts on the **whole
+selection** (shift-click and ctrl-click select several rows):
+
+![The list's right-click menu, with two cuts selected](images/list_menu.png)
+
+| Entry | Works on | What it does |
+|---|---|---|
+| **Open** | one dataset | opens it in its viewer — the same as a double-click |
+| **Open slit cut** / **Open deflector cut** | maps (one or several) | opens just that cut of each map, without the contour |
+| **Show information** | one dataset | kind, axes and full metadata in the information window |
+| **Rename...** | one dataset | changes the name it is listed and saved under (the file on disk keeps its name) |
+| **Plot as a figure...** | cuts or curves | one panel per dataset in the figure composer ([§22](#22-figures-export-and-saving)) |
+| **Stack plot (EDC / MDC)...** | one cut | a waterfall of EDCs or MDCs ([§9](#9-cuts-quick-looks)) |
+| **MDC / EDC fit...** | one cut in k | the peak-fit panel ([§20](#20-mdc--edc-fit-dispersion-v_f-m-self-energy)) |
+| **3D view...** | one map | slices, notched cube and projections ([§11](#11-the-3-d-view-of-a-map)) |
+| **Cut arithmetic on the two...** | exactly two cuts | dichroism, ratios, differences ([§19](#19-cut-arithmetic-dichroism-and-reference-division)); the first selected is A |
+| **Save dataset(s)...** | any | writes the selection to one `.nxs` file of your own |
+| **Remove from list** | any | takes the rows out of the list, after asking; files on disk are never deleted |
+| **Session log...** | — | what has been autosaved, saved and deleted, and where ([§23](#23-autosave-crash-recovery-and-memory)) |
+
+The menu is decided from the selection alone, without reading any data, so it
+opens at once however large the files are. An entry that does not fit the
+selection is **greyed out**; hover over it and its tooltip says why (for
+example, *Cut arithmetic* needs exactly two cuts, the *3D view* needs a map).
 
 **Show information** also opens the full metadata of the dataset in a window
 of its own, with a filter box and **Export metadata (.csv)**:
@@ -112,12 +243,11 @@ of its own, with a filter box and **Export metadata (.csv)**:
 **Clear list** asks first, and offers to save anything computed in this
 session that has not been saved yet. Files on disk are never deleted.
 
----
-
-## 4. Loading data
+## 5. Loading data
 
 **Load data...** opens the loader. **Quick add...** skips it and adds the
-chosen files with everything detected automatically.
+chosen files with everything detected automatically — the fast way during a
+beamtime.
 
 ![The loader](images/loader_dialog.png)
 
@@ -140,47 +270,64 @@ chosen files with everything detected automatically.
 once, as one assembled cube. Whether it becomes an angle map or a kz map is
 read from the `_i` parameter files next to the spectra.
 
-### Data kinds
+## 6. Image windows: controls and the right-click menu
 
-| Kind | Axes | What it is |
-|---|---|---|
-| `cut` | angle (or k) × E | one spectrum |
-| `map` | angle × angle × E | a deflector or polar-angle scan |
-| `k_map` | kx × ky × E | a map converted to momentum |
-| `kz_map` | hν × angle × E | a photon-energy scan |
-| `kz_map_k` | k_z × k∥ × E | that scan converted to momentum |
-| `spem_4d`, `spem_1d` | x (× y) × angle × E | real-space scans |
-| `edc`, `mdc`, `spin_edc` | E (or k) × channels | curves, with optional σ channels |
-
----
-
-## 5. What the viewers have in common
-
-Each dataset opens in its own window, so you can put a map, its cuts and
-another file side by side.
+Each dataset opens in its own window, so a map, its cuts and another file
+can sit side by side.
 
 ![A cut viewer with the readout cursor](images/cut_viewer.png)
 
-- **The top row**: the **Functions** menu (everything the window can do), the
+- **Top row**: the **Functions** menu (everything the window can do), the
   colormap (per window) with **Flip**, and the view controls — axis ranges,
   **Auto**, **Inv** (invert), **Reset**, **Grid**.
 - **Above each image**: the **Levels** bar (drag the two handles, or type
-  **Min%/Max%** percentiles; **Clip** applies them) and **Gamma**.
-- **Under each image**: **Smooth** (display only, does not change the data)
+  **Min%/Max%** percentiles and press **Clip**; *right-click* **Clip** for
+  ready-made pairs: 0.5–99.5 %, 1–99 %, 2–98 %, 5–95 %, 0–100 %) and **Gamma**.
+- **Under each image**: **Smooth** (display only; the data are not changed)
   and **Lock x/y** (aspect ratio).
-- **Readout cursor** — right-click the image → *Readout cursor*. It reports
-  the value under it and, on a cut, draws the **EDC** (right) and **MDC**
-  (below) through that point. **EDC ±** / **MDC ±** integrate over a window,
-  shown as a shaded band on the image. Type a position into the **Cursor**
-  row and press Enter to put it exactly there.
-- **EDC → list** / **MDC → list** put the curve on screen in the main list as
-  a dataset of its own (see [§15](#15-curves-edcs-mdcs-and-spin-resolved-data)).
-- **Right-click the image → Export** saves what the panel shows — data
-  (`.nxs`), an image, or vector axes (`.eps`); see [§17](#17-figures-and-export).
-- **Functions → Slice → Save slice to the main list / Open slice in a new
-  panel** keeps a copy of the slice on screen.
+- **Mouse**: drag to pan, wheel to zoom, **right-drag** to zoom each axis
+  separately.
 
-The **Functions** menu is organised in sections:
+### The image right-click menu
+
+Right-click on any image:
+
+![The image right-click menu](images/image_menu.png)
+
+| Entry | What it does |
+|---|---|
+| **View All** | fits the view back to the whole image |
+| **Readout cursor** | a crosshair you drag. The **Cursor** row under the image shows its position and the value there; type a position and press Enter to put it exactly there. On a cut it also draws the **EDC** (right) and **MDC** (below) through that point; **EDC ±** / **MDC ±** integrate over a window, shown as a shaded band. |
+| **Selection box** | a rectangle with two corner handles. Its corners appear in the **Selection** row under the image, where they can be typed (then **Refresh**). In a SPEM window the box is what you integrate over ([§7](#7-spem-real-space-scans-finding-the-spot-to-measure)); everywhere it sets the range of the stack plot. |
+| **Line profile...** | the intensity along a line at any angle, with an integration width ([below](#line-profile)) |
+| **Stack plot of the selection...** | a waterfall of EDCs or MDCs across the selection box — or across the whole panel when there is no box. The entry shows the range it will use. |
+| **Export → Data (.nxs) / Image / Axes only (.eps)** | saves exactly what this panel shows ([§22](#22-figures-export-and-saving)) |
+
+SPEM windows add three entries of their own, described in
+[§7](#7-spem-real-space-scans-finding-the-spot-to-measure). pyqtgraph's own
+menu items (mouse mode, axis submenus, plot options, its export dialog) are
+removed on purpose: what was useful in them is on the visible view bar.
+
+**EDC → list** / **MDC → list** (next to the curves) put the curve on screen
+into the main list as a dataset of its own
+([§10](#10-photon-energy-scans-curves-and-spin-edcs-quick-looks)).
+**Functions → Slice → Save slice to the main list / Open slice in a new
+panel** keeps a copy of the slice on screen.
+
+### Line profile
+
+**Right-click → Line profile...** puts an orange line across the image and
+opens a window with the intensity along it. Drag the line, or its ends;
+**Width** integrates that far either side (in the units of the vertical
+axis), **Samples** sets the number of points, and **To list** keeps the
+profile as a dataset. Closing the window removes the line. Use it for a band
+that runs at an angle, where neither the EDC nor the MDC follows it.
+
+| The line on the cut | The profile along it |
+|---|---|
+| ![Line on a cut](images/line_profile_cut.png) | ![Line profile](images/line_profile.png) |
+
+### The Functions menu
 
 | Viewer | Analysis | Data operations | Visualization |
 |---|---|---|---|
@@ -191,9 +338,74 @@ The **Functions** menu is organised in sections:
 An entry that does not apply is not shown; one that applies but cannot run
 yet is greyed, with the reason in its tooltip.
 
----
+## 7. SPEM (real-space) scans: finding the spot to measure
 
-## 6. Maps: the contour and its two cuts
+A real-space scan (nano-ARPES, `[SPEM]`) opens two panels side by side: the
+**spatial map** on the left — the total intensity at each sample position —
+and the **E vs k spectrum** on the right. The red target on the map chooses
+the pixel whose spectrum is shown, and the right panel's title says which
+pixel it is (*E vs k at x=20, y=24*).
+
+![A SPEM scan: map and the spectrum at the red target](images/spatial_scan.png)
+
+**Drag the red target** to read the spectrum anywhere on the sample. This is
+the quickest way to see whether a flake shows bands at all, and how sharp
+they are.
+
+### Right-click on the spatial map
+
+![Right-click on the spatial map](images/spem_spatial_menu.png)
+
+| Entry | What it does |
+|---|---|
+| **Selection box** | draws a box on the map |
+| **Integrate selection -> E vs k panel** | the spectrum **summed over every pixel in the box**: more counts, and the average over one region of the sample |
+| **Spatial map over the whole spectrum** | appears after a spectrum box has been integrated onto the map (below): goes back to the map summed over all k and E |
+| **Open this position in a new window** | a snapshot of the spectrum shown now, in a window of its own — keep several open to compare spots |
+| **Swap X and Y** | draws the map transposed, for a lab whose convention has the other stage horizontal. The cursor and the selection box stay on the same sample pixels; only the drawing changes. |
+| Readout cursor, Line profile, Stack plot, Export | as on every image ([§6](#6-image-windows-controls-and-the-right-click-menu)) |
+
+**Integrating a region of the sample.** Right-click the map → **Selection
+box**, drag the box over the region (or type its corners in the
+**Selection** row and press **Refresh**), then right-click → **Integrate
+selection -> E vs k panel**. The spectrum is now the sum over the box, and
+its title says so (*E vs k, summed over x 14 to 26, y 14 to 30 (63 pixels)*):
+
+![The spectrum summed over a box on the flake](images/spem_box_to_spectrum.png)
+
+### Right-click on the spectrum: where on the sample does a feature come from?
+
+![Right-click on the spectrum](images/spem_spectrum_menu.png)
+
+The opposite direction. Right-click the spectrum → **Selection box**, frame a
+feature in (k, E) — a band, a shoulder, the Fermi edge of one phase — and
+right-click → **Integrate selection -> spatial panel**. The map is redrawn as
+the intensity of **that window only** at every position, and its title says
+which window. Here the box frames a band that only one domain of the flake
+has, and the map lights up exactly that domain:
+
+![The map of the band in the box: one domain lights up](images/spem_box_to_map.png)
+
+This is how domains, flake edges, terraces or a second phase are found. To
+get the full map back, right-click the map → **Spatial map over the whole
+spectrum**.
+
+**A practical routine at the beamline:**
+
+1. Open the overview scan; drag the red target over the flake and look at
+   the spectra.
+2. Box a feature in the spectrum → integrate onto the map to see where that
+   feature is strongest.
+3. Box the best region of the map → integrate onto the spectrum to check the
+   bands with good statistics.
+4. **Open this position in a new window** for the candidates, compare them
+   side by side, and read the coordinates off the cursor row for the next
+   measurement.
+
+A line scan (`spem_1d`) opens the same way, with position × angle on the left;
+the box integration needs a 2-D map, so it is offered only for 2-D scans.
+
+## 8. Maps: the contour and its two cuts
 
 A map opens on its **constant-energy contour**. The slider at the top picks
 the energy (**Pos** in eV, or **Ind** as an index; **±** integrates over a
@@ -207,25 +419,129 @@ orthogonal cuts, each in its own window.
 | ![Slit cut](images/map_slit_cut.png) | ![Deflector cut](images/map_deflector_cut.png) |
 
 **One cursor for all three windows.** Switching the readout cursor on in any
-of them switches it on in the others, and moving it anywhere re-slices the
-others through the new point. The axes keep one colour each everywhere:
-**deflector red, slit green, energy blue**. A cursor line has the colour of
-the axis it holds constant, and the EDC or MDC it feeds is drawn in the same
-colour. Integration widths (the ± boxes) belong to each window and are never
-shared.
+of them (right-click → *Readout cursor*) switches it on in the others, and
+moving it anywhere re-slices the others through the new point. The axes keep
+one colour each everywhere: **deflector red, slit green, energy blue**. A
+cursor line has the colour of the axis it holds constant, and the EDC or MDC
+it feeds is drawn in the same colour. Integration widths (the ± boxes) belong
+to each window and are never shared.
 
 From the list you can also open a map's cut straight away (right-click →
 **Open slit cut** / **Open deflector cut**); the contour then stays hidden
 until you ask for it (*Functions → Show the map*).
 
+During a beamtime this answers *is the sample aligned, where is Γ, which
+direction is the cut going to follow* — before any conversion.
+
+## 9. Cuts: quick looks
+
+A cut opens in a single image panel ([§6](#6-image-windows-controls-and-the-right-click-menu)).
+The right-click tools give fast answers:
+
+- **Readout cursor** with **EDC ±** / **MDC ±**: the curves through any point,
+  integrated over a window.
+- **Line profile...**: the intensity along any line.
+- **Stack plot**: right-click the cut (or its row in the list) → **Stack plot
+  of the selection...**. The curves run across the selection box, if there is
+  one: a box taller than it is wide gives EDCs across its angle range, a
+  wide one MDCs across its energy range. The window sets the number of
+  curves, binning, normalisation, offset, shear and colours; **Send to figure
+  composer** makes it a figure panel.
+
+![Stack plot](images/stack_plot.png)
+
+- **Fermi level**: *Functions → Fermi level...* gives E_F and the resolution
+  in a few seconds ([§14](#14-fermi-level-and-fermi-surface-correction)) —
+  useful to check the energy calibration right after a photon-energy change.
+
+## 10. Photon-energy scans, curves and spin EDCs: quick looks
+
+**Photon-energy scans.** A photon-energy scan is listed as a `kz map`; its
+contour is photon energy against angle at one energy, and its cuts open like
+a map's. Before processing (§17) the Fermi level of each spectrum is not
+aligned, so treat it as a quick look.
+
+![A kz map](images/kz_map_contour.png)
+
+**Curves.** **EDC → list** / **MDC → list** under any image, or a spin file,
+give a curve dataset, which opens in the **curve viewer**:
+
+![Curve viewer](images/curve_viewer.png)
+
+Channels can be hidden, offset into a waterfall (**Offset**), shown with
+**Error bars** (from a σ channel), and **Range** marks an x window used by
+the operations. *Functions → Data operations* gives **Crop**, **Bin**,
+**Normalise**, **Subtract a background** (constant, linear, Shirley),
+**Shift the axis** and **Add counting errors (√N)**; each makes a new dataset
+and propagates σ.
+
+**Spin EDCs.** A spin-resolved EDC opens with one curve per spin channel, so
+the count rates of all channels can be checked as they come in. The
+polarisation itself is in *Functions → Spin analysis...*
+([§21](#21-curve-fit-and-spin-analysis)).
+
+![Spin EDC](images/spin_edc_viewer.png)
+
+## 11. The 3-D view of a map
+
+**3D view** (right-click a map in the list) first asks for the region and the
+sampling, since every frame resamples the cube — *Fast*, *Balanced* or
+*Fine* decide whether it keeps up with the mouse.
+
+![3-D view: region and sampling](images/volume_range_dialog.png)
+
+Then drag the picture to turn it. **Slices** shows three orthogonal planes at
+the positions you set, **Notched cube** cuts a corner out of the cube, and
+**Projection** sums along an axis. Colormap, levels, gamma, azimuth,
+elevation and depth aspect are on the right; **Save the view...** exports
+the picture.
+
+![3-D view](images/volume_view.png)
+
 ---
 
-## 7. Cuts: from raw spectrum to band parameters
+# Part III — Advanced processing for publication
 
-The usual order for a single cut is: **Fermi level → offset the energy axis →
-k conversion → MDC/EDC fit**.
+## 12. The usual processing order
 
-### 7.1 Fermi level
+Each step makes a **new dataset** in the list, which records the steps that
+made it, so the raw data are never changed and every result can be traced.
+The order matters, because some steps only work on raw detector data:
+
+1. **De-grid** the raw map or cut, if a mesh or MCP pattern shows ([§13](#13-removing-the-detector-grid)).
+2. **Fermi level**, and **FS correction** if the edge curves across the
+   analyser angle ([§14](#14-fermi-level-and-fermi-surface-correction)).
+3. **k conversion** of the cut or map ([§15](#15-from-angles-to-momentum)); for a
+   photon-energy scan, **kz processing** then **kz → momentum** ([§17](#17-photon-energy-scans-kz-processing-and-kz--momentum)).
+4. **Brillouin zone** overlay and **arbitrary cuts** along high-symmetry paths ([§16](#16-the-brillouin-zone-and-arbitrary-cuts)).
+5. **Curvature / second derivative** to sharpen bands, **dichroism** ([§18](#18-processing-smoothing-derivatives-curvature), [§19](#19-cut-arithmetic-dichroism-and-reference-division)).
+6. **Peak fits**: dispersion, v_F, m\*, self-energy ([§20](#20-mdc--edc-fit-dispersion-v_f-m-self-energy)); curve and spin fits ([§21](#21-curve-fit-and-spin-analysis)).
+7. **Figures and export** ([§22](#22-figures-export-and-saving)).
+
+## 13. Removing the detector grid
+
+MCP (hexagonal) and mesh (square) patterns print on every image. **Do it
+first**: only data still on the detector's pixels can be de-gridded, so the
+function refuses anything already converted, corrected or smoothed, and says
+why.
+
+*Functions → De-grid map...* on a map (or its slit cut), or *De-grid...* on a
+cut. For a map, no reference is needed — the grid stays on the same pixels in
+every slice while the photoemission moves. **Find and remove the grid**:
+
+![De-grid](images/degrid_dialog.png)
+
+- **Before / After** a chosen slice on one colour scale (tick **Show
+  −∂²I/∂E²** to make any grid obvious).
+- **The grid found**, its **k-space regions** (in red), and the **contrast
+  and shift** fitted for every slice.
+- The power left in the grid regions (1 = no grid left).
+- **Also list the grid pattern** keeps a `[grid]` dataset, which a cut taken
+  later with the same lens mode and pass energy will find and use.
+
+## 14. Fermi level and Fermi-surface correction
+
+### 14.1 Fermi level
 
 *Functions → Fermi level...* fits a Fermi edge (Fermi–Dirac × linear DOS,
 convolved with a Gaussian resolution) to the EDC summed over a box.
@@ -246,7 +562,20 @@ convolved with a Gaussian resolution) to the EDC summed over a box.
 The *Advanced* corner divides the Fermi cut-off out (for gaps and reference
 samples) or fits E_F channel by channel.
 
-### 7.2 Cut k conversion
+### 14.2 Fermi-surface (FS) correction
+
+*Functions → FS correction...* on a cut (or a map's slit cut) straightens a
+feature that should be flat — usually the Fermi edge, which curves across the
+analyser angle. Click along the feature; a polynomial (order 2 by default) is
+fitted and every angle column is shifted in energy. **From a reference
+(Au)...** takes the curve from a gold spectrum in the list instead. On a
+map's slit cut the same shift is applied to the whole cube.
+
+![FS correction](images/fs_correction_dialog.png)
+
+## 15. From angles to momentum
+
+### 15.1 Cut k conversion
 
 *Functions → Cut k conversion...* converts the angle axis to k∥ (Å⁻¹). A cut
 is a line in the (kx, ky) plane that generally misses Γ, so the dialog asks
@@ -261,35 +590,7 @@ true kinetic energies, and the result stays on E − E_F.
 
 ![The cut in momentum](images/cut_in_k.png)
 
-### 7.3 MDC / EDC fit
-
-*Functions → MDC / EDC fit...* fits peaks line by line and reads the band
-off the fitted centres. It only accepts a cut whose axis is already in Å⁻¹ —
-a velocity in eV·deg would be meaningless.
-
-![MDC fit panel](images/mdc_fit_panel.png)
-
-1. **Bands** tab: **Add band** for each branch; select a band, press **Place
-   a seed** and click the peak on the curve (right). Four or five seeds down a
-   band are enough; **Line at** moves the line being looked at.
-2. **Try this line** shows the fit of the current line (dashed: the guess).
-3. **Fit settings** tab: MDC or EDC, peak shape (Lorentzian, Gaussian,
-   Voigt), background, step, then **Fit the series**. Fitted positions are
-   drawn on the image, sized by amplitude.
-4. **Dispersion...** fits the band: **v_F** (straight line), **m\*** (parabola)
-   — and checks how far out the fit is stable. **Self-energy...** gives Re Σ
-   and Im Σ.
-
-![Dispersion window](images/dispersion_window.png)
-
-**Save table...** writes every fitted line; **Band to list** puts a band in
-the main list.
-
----
-
-## 8. From angles to momentum for a map, and the Brillouin zone
-
-### 8.1 Map k conversion
+### 15.2 Map k conversion
 
 *Functions → Map k conversion...* on the contour window. Drag the readout
 cursor to the point that should become **k = (0, 0)** — the dialog follows
@@ -307,7 +608,9 @@ it — then **Convert**. The result is a new `k-map` row in the list.
 
 ![The converted k-map](images/k_map_contour.png)
 
-### 8.2 Brillouin zone
+## 16. The Brillouin zone and arbitrary cuts
+
+### 16.1 Brillouin zone
 
 On a k-map: *Functions → Visualization → Brillouin zone...*.
 
@@ -317,7 +620,8 @@ On a k-map: *Functions → Visualization → Brillouin zone...*.
    and follow the free ones. Or switch to **2D layer** for a surface lattice.
 2. **Cut plane**: the surface normal (hkl) and an offset along it — the cut of
    the 3-D zone by that plane is drawn, for any surface, not only (001).
-   **Show cut plane in 3D...** previews it.
+   **Show cut plane in 3D...** previews it (drag to turn it, right-drag to
+   zoom).
 3. **Conventional** or **Irreducible** zone; **Azimuth** (or **Pick
    direction from contour...**); **Repeat across the field of view**.
 4. **Moiré** adds a second, twisted or mismatched layer and its moiré zone.
@@ -325,11 +629,7 @@ On a k-map: *Functions → Visualization → Brillouin zone...*.
 
 ![k-map with the zone overlaid](images/k_map_with_bz.png)
 
----
-
-## 9. Arbitrary cuts and Fermi-surface correction
-
-### 9.1 Arbitrary cut
+### 16.2 Arbitrary cut
 
 *Functions → Arbitrary cut...* on any contour: click up to six points (or type
 them) and the cut runs through them in order — here Γ → M → K → Γ on the
@@ -345,20 +645,50 @@ physics.
 
 ![The cut along Γ–M–K–Γ](images/arbitrary_cut_result.png)
 
-### 9.2 Fermi-surface (FS) correction
+## 17. Photon-energy scans: kz processing and kz → momentum
 
-*Functions → FS correction...* on a cut (or a map's slit cut) straightens a
-feature that should be flat — usually the Fermi edge, which curves across the
-analyser angle. Click along the feature; a polynomial (order 2 by default) is
-fitted and every angle column is shifted in energy. **From a reference
-(Au)...** takes the curve from a gold spectrum in the list instead. On a
-map's slit cut the same shift is applied to the whole cube.
+### 17.1 kz map processing
 
-![FS correction](images/fs_correction_dialog.png)
+Nothing in the files says where each spectrum's Fermi level really is.
+*Functions → kz map processing...* measures it from the spectra themselves.
 
----
+1. The slit cut opens with a box on it. Drag the box over a Fermi edge — the
+   angle range sets the channels summed, the energy range the fit window.
 
-## 10. Processing: smoothing, derivatives, curvature
+   ![The box on the slit cut](images/kz_processing_cut.png)
+
+2. **Fit and assemble**: the same box (by detector index) is used for every
+   spectrum; each is shifted to put its own edge at zero; the cube is cropped
+   to the range they all cover; and, by default, each spectrum is
+   **normalised by its total intensity**, which divides out the photon flux.
+
+![kz map processing](images/kz_processing_dialog.png)
+
+E_F against photon energy is plotted. A smooth curve means the fits are
+sound; points whose fit is not believed are marked and filled in from their
+neighbours.
+
+### 17.2 kz → momentum
+
+*Functions → kz -> momentum...* converts the scan to (k_z, k∥).
+
+![kz -> momentum](images/kz_conversion_dialog.png)
+
+- **Inner potential V0** is the unknown: the preview reconverts one energy
+  slice as you change it, in milliseconds.
+- With the **lattice** (space group, a, b, c), the **surface normal** and the
+  in-plane direction, the zone boundaries are drawn over the preview.
+- **Scan V0** converts at a range of V0 values and reports where the k_z
+  period matches the lattice — and how well that pins V0.
+- **Measure a k_z period...**: click two points that are the same feature one
+  zone apart; the matching reciprocal-lattice planes are listed.
+- The yellow banner warns when the Fermi edge still bends across the analyser
+  angle — correct it first (FS correction on the slit cut).
+- **Convert the whole cube** lists a `kz map (k)`.
+
+![The converted kz map](images/kz_map_in_k.png)
+
+## 18. Processing: smoothing, derivatives, curvature
 
 Select one or more cuts (or maps) in the list and press **Process...**.
 Every result is a new dataset carrying the steps that made it.
@@ -389,33 +719,7 @@ and the same number of points on every axis.
 
 ![Data operations](images/data_operations.png)
 
----
-
-## 11. Stack plots and the 3-D view
-
-**Stack plot** (right-click a cut): a waterfall of EDCs or MDCs, with the
-number of curves, binning, normalisation, offset, shear and colouring
-controls; **Send to figure composer** makes it a figure panel.
-
-![Stack plot](images/stack_plot.png)
-
-**3D view** (right-click a map) first asks for the region and the sampling,
-since every frame resamples the cube — *Fast*, *Balanced* or *Fine* decide
-whether it keeps up with the mouse.
-
-![3-D view: region and sampling](images/volume_range_dialog.png)
-
-Then drag the picture to turn it. **Slices** shows three orthogonal planes at
-the positions you set, **Notched cube** cuts a corner out of the cube, and
-**Projection** sums along an axis. Colormap, levels, gamma, azimuth,
-elevation and depth aspect are on the right; **Save the view...** exports
-the picture.
-
-![3-D view](images/volume_view.png)
-
----
-
-## 12. Cut arithmetic: dichroism and reference division
+## 19. Cut arithmetic: dichroism and reference division
 
 Two cuts combined into a third: linear dichroism (LH − LV), circular
 dichroism, dividing by a gold reference, or plain differences, ratios and
@@ -439,103 +743,41 @@ arithmetic...* and then click the other cut in the list.
   propagated and summarised under the plot.
 - **Result to list**, **Uncertainty to list**, **All three as a figure**.
 
----
+## 20. MDC / EDC fit: dispersion, v_F, m\*, self-energy
 
-## 13. Photon-energy scans (kz)
+*Functions → MDC / EDC fit...* (or right-click the row → **MDC / EDC
+fit...**) fits peaks line by line and reads the band off the fitted
+centres. It only accepts a cut whose axis is already in Å⁻¹ — a velocity in
+eV·deg would be meaningless — so convert the cut first ([§15](#15-from-angles-to-momentum)).
 
-A photon-energy scan is listed as a `kz map`; its contour is photon energy
-against angle at one energy.
+![MDC fit panel](images/mdc_fit_panel.png)
 
-![A kz map](images/kz_map_contour.png)
+1. **Bands** tab: **Add band** for each branch; select a band, press **Place
+   a seed** and click the peak on the curve (right). Four or five seeds down a
+   band are enough; **Line at** moves the line being looked at.
+2. **Try this line** shows the fit of the current line (dashed: the guess).
+3. **Fit settings** tab: MDC or EDC, peak shape (Lorentzian, Gaussian,
+   Voigt), background, step, then **Fit the series**. Fitted positions are
+   drawn on the image, sized by amplitude.
+4. **Dispersion...** fits the band: **v_F** (straight line), **m\*** (parabola)
+   — and checks how far out the fit is stable. **Self-energy...** gives Re Σ
+   and Im Σ.
 
-### 13.1 kz map processing
+![Dispersion window](images/dispersion_window.png)
 
-Nothing in the files says where each spectrum's Fermi level really is.
-*Functions → kz map processing...* measures it from the spectra themselves.
+**Save table...** writes every fitted line; **Band to list** puts a band in
+the main list.
 
-1. The slit cut opens with a box on it. Drag the box over a Fermi edge — the
-   angle range sets the channels summed, the energy range the fit window.
+## 21. Curve fit and spin analysis
 
-   ![The box on the slit cut](images/kz_processing_cut.png)
+### 21.1 Curve fit
 
-2. **Fit and assemble**: the same box (by detector index) is used for every
-   spectrum; each is shifted to put its own edge at zero; the cube is cropped
-   to the range they all cover; and, by default, each spectrum is
-   **normalised by its total intensity**, which divides out the photon flux.
-
-![kz map processing](images/kz_processing_dialog.png)
-
-E_F against photon energy is plotted. A smooth curve means the fits are
-sound; points whose fit is not believed are marked and filled in from their
-neighbours.
-
-### 13.2 kz → momentum
-
-*Functions → kz -> momentum...* converts the scan to (k_z, k∥).
-
-![kz -> momentum](images/kz_conversion_dialog.png)
-
-- **Inner potential V0** is the unknown: the preview reconverts one energy
-  slice as you change it, in milliseconds.
-- With the **lattice** (space group, a, b, c), the **surface normal** and the
-  in-plane direction, the zone boundaries are drawn over the preview.
-- **Scan V0** converts at a range of V0 values and reports where the k_z
-  period matches the lattice — and how well that pins V0.
-- **Measure a k_z period...**: click two points that are the same feature one
-  zone apart; the matching reciprocal-lattice planes are listed.
-- The yellow banner warns when the Fermi edge still bends across the analyser
-  angle — correct it first (FS correction on the slit cut).
-- **Convert the whole cube** lists a `kz map (k)`.
-
-![The converted kz map](images/kz_map_in_k.png)
-
----
-
-## 14. Removing the detector grid
-
-MCP (hexagonal) and mesh (square) patterns print on every image. **Do it
-first**: only data still on the detector's pixels can be de-gridded, so the
-button refuses anything already converted, corrected or smoothed, and says
-why.
-
-*Functions → De-grid map...* on a map (or its slit cut), or *De-grid...* on a
-cut. For a map, no reference is needed — the grid stays on the same pixels in
-every slice while the photoemission moves. **Find and remove the grid**:
-
-![De-grid](images/degrid_dialog.png)
-
-- **Before / After** a chosen slice on one colour scale (tick **Show
-  −∂²I/∂E²** to make any grid obvious).
-- **The grid found**, its **k-space regions** (in red), and the **contrast
-  and shift** fitted for every slice.
-- The power left in the grid regions (1 = no grid left).
-- **Also list the grid pattern** keeps a `[grid]` dataset, which a cut taken
-  later with the same lens mode and pass energy will find and use.
-
----
-
-## 15. Curves: EDCs, MDCs and spin-resolved data
-
-**EDC → list** / **MDC → list** under any image, or a spin-resolved file,
-give a curve dataset, which opens in the **curve viewer**:
-
-![Curve viewer](images/curve_viewer.png)
-
-Channels can be hidden, offset into a waterfall (**Offset**), shown with
-**Error bars** (from a σ channel), and **Range** marks an x window used by
-the operations. *Functions → Data operations* gives **Crop**, **Bin**,
-**Normalise**, **Subtract a background** (constant, linear, Shirley),
-**Shift the axis** and **Add counting errors (√N)**; each makes a new dataset
-and propagates σ correctly.
-
-### 15.1 Curve fit
-
-*Functions → Curve fit...*: **Peaks on a background** (Lorentzian, Gaussian
-or Voigt peaks placed by clicking or **Find peaks**; none / constant /
-linear / Shirley background; instrumental resolution; optional **× Fermi
-edge**), or the **Fermi edge** itself. Weighting is the channel's own σ,
-√N, or uniform. Every parameter comes with its error; the residual is shown
-in units of σ.
+On a curve: *Functions → Curve fit...*. **Peaks on a background**
+(Lorentzian, Gaussian or Voigt peaks placed by clicking or **Find peaks**;
+none / constant / linear / Shirley background; instrumental resolution;
+optional **× Fermi edge**), or the **Fermi edge** itself. Weighting is the
+channel's own σ, √N, or uniform. Every parameter comes with its error; the
+residual is shown in units of σ.
 
 ![Curve fit](images/curve_fit_dialog.png)
 
@@ -543,13 +785,9 @@ in units of σ.
 copies a tab-separated table. A Fermi-edge fit can **List a copy with
 E_F = 0**.
 
-### 15.2 Spin analysis
+### 21.2 Spin analysis
 
-A spin EDC opens with one curve per spin channel:
-
-![Spin EDC](images/spin_edc_viewer.png)
-
-*Functions → Spin analysis...*:
+On a spin EDC: *Functions → Spin analysis...*:
 
 ![Spin analysis](images/spin_analysis.png)
 
@@ -564,28 +802,9 @@ A spin EDC opens with one curve per spin channel:
 - Plots: raw channels, P with its error bars, and I↑ / I↓ with errors.
 - **P to list**, **I↑ / I↓ to list**, **As a figure**.
 
----
+## 22. Figures, export and saving
 
-## 16. Spatially resolved scans (nano-ARPES)
-
-A real-space scan opens the **spatial map** (left, the total intensity at
-each position) together with the **E vs k spectrum at the cursor** (right).
-Drag the red target to read the spectrum at another point. Right-click a
-panel for the two integrations:
-
-- on the map, **Integrate selection → E vs k panel** sums the spectra over a
-  region of the sample;
-- on the spectrum, **Integrate selection → spatial panel** maps the intensity
-  of a chosen (k, E) window across the sample — how a domain or a flake edge
-  is found.
-
-![Spatial scan](images/spatial_scan.png)
-
----
-
-## 17. Figures and export
-
-### 17.1 Figure composer
+### 22.1 Figure composer
 
 Select cuts (or curves) in the list → right-click → **Plot as a figure**. The
 composer lays panels out for a paper: one size per column, labels only on
@@ -595,9 +814,11 @@ the outer edges, (a)/(b)/(c) letters, shared colour scales if you want them.
 
 **Plot tools** sets everything (size in mm, fonts, ticks, colour bars, lines,
 arrows, text, insets, scale bars); **Add panel...** adds another dataset;
-**PDF**, **PNG**, **SVG** export, **Copy** puts it on the clipboard.
+**PDF**, **PNG**, **SVG** export, **Copy** puts it on the clipboard. A stack
+plot (**Send to figure composer**) and a dichroism result (**All three as a
+figure**) come here too.
 
-### 17.2 Slice figure
+### 22.2 Slice figure
 
 From a map: *Functions → Slice figure...* lays out a series of slices through
 the cube — constant-energy contours, or cuts — evenly spaced or at chosen
@@ -607,23 +828,30 @@ values, with integration, one shared colour scale and titles.
 |---|---|
 | ![Slice figure settings](images/slice_figure_dialog.png) | ![Slice figure](images/slice_figure.png) |
 
-### 17.3 Exporting a panel
+### 22.3 Exporting a panel
 
 Right-click any image → **Export** → **Data (.nxs)...**, **Image...** or
 **Axes only (.eps)...**. It always exports exactly what the panel shows
 (range and all): the data as a dataset this program reads back; an image
 with the colormap applied (PNG, TIFF or JPEG, at a chosen size and dpi, with
 or without the axes); or the frame, ticks and labels as vector PostScript to
-place the image in, in Illustrator.
+place the image in, in Illustrator. In a SPEM window, right-click the panel
+you want — the map and the spectrum export separately.
 
 ![Export](images/export_dialog.png)
 
-**Save** (right-click rows in the list) writes datasets to a `.nxs` file of
-your own; several selected rows go into one file.
+### 22.4 Saving datasets
+
+Right-click rows in the list → **Save dataset(s)...** writes them to a `.nxs`
+file of your own; several selected rows go into one file, each under its
+listed name (use **Rename...** first). The saved file opens again with every
+step that made each dataset, and the save is written to the session log.
 
 ---
 
-## 18. Autosave, memory and recovery
+# Part IV — Troubleshooting
+
+## 23. Autosave, crash recovery and memory
 
 - **Autosave.** Every computed dataset (a k-map, a processed cut, a fit
   result…) is written, uncompressed, to this session's folder in
@@ -634,10 +862,14 @@ your own; several selected rows go into one file.
   open viewers are closed and the session folder is deleted straight away.
   A dataset's copy also goes as soon as you save it to a file of your own.
 - **Recovery after a crash.** Only if the program did not close normally (a
-  crash, a kill) is the session folder kept: the next start offers its
-  datasets back, and it is deleted after three days.
-- **Operations log.** `~/.arpes_viewer/sessions/operations.log`, one line per
-  store / save / discard — how to find what was where.
+  crash, a kill, a power cut) is the session folder kept: the next start
+  offers its datasets back, and it is deleted after three days.
+- **Operations log.** `~/.arpes_viewer/sessions/operations.log` (or
+  right-click in the list → **Session log...**), one line per autosave,
+  save and deletion, with paths — how to find what was where.
+- **Closing** with unsaved computed data asks first, and names the datasets:
+  **Save to a file...**, **Close anyway** (the autosaved copies are deleted)
+  or **Cancel** (nothing happens).
 - **Memory box.** This program's memory, the system's, how many viewers and
   HDF5 files are open, and how much computed data is held. **Free memory**
   drops cached copies of computed data (they are re-read from their autosaved
@@ -645,25 +877,72 @@ your own; several selected rows go into one file.
   memory.
 - **Long operations** (reading a big map, converting, de-gridding, assembling
   a folder) run off the GUI thread with a progress bar and a working Cancel.
-- **Closing** with unsaved computed data asks first, and names the datasets:
-  **Save to a file...**, **Close anyway** (the autosaved copies are deleted)
-  or **Cancel** (nothing happens).
 
-## 19. Tips and troubleshooting
+## 24. Common problems
 
-- **"Not available here" in the Functions menu** — hover over the entry: the
-  tooltip says why (e.g. the MDC/EDC fit needs a cut already in Å⁻¹).
-- **A k conversion is not offered** — the first axis of the map is not an
-  angle (a photon energy, temperature…). Check *First axis of a map is* in
-  the loader.
-- **Cut k conversion of an E − E_F cut** — the energy offset is filled in for
-  you from the Fermi fit; if you shifted the axis some other way, type the
-  kinetic energy of E_F (photon energy − work function) into *Energy offset*.
+### Installation and start-up
+
+- **`ModuleNotFoundError: No module named 'PyQt5'`** (or pyqtgraph, h5py…) —
+  the packages are installed in a different Python from the one running the
+  program. Activate the environment ([§2](#2-installing-python-and-starting-the-program))
+  and check with `python -c "import PyQt5, pyqtgraph, h5py, scipy"`.
+- **`qt.qpa.plugin: Could not load the Qt platform plugin "xcb"`** (Linux) —
+  a system Qt library is missing; install it with your package manager
+  (`sudo apt install libxcb-xinerama0 libxkbcommon-x11-0` on Ubuntu), or use
+  the conda installation.
+- **Fonts or windows too large or too small** (high-DPI screens) — the
+  program follows the system scaling; set `QT_SCALE_FACTOR=0.9` (or another
+  value) in the environment before starting it.
+- **The settings look wrong** — delete `~/.arpes_viewer/config.json`.
+
+### Reading data
+
 - **A file is misread** — choose the reader explicitly in the loader, and see
   *Assumptions worth knowing about* in the README (axis order in SOLEIL
   files).
+- **A k conversion is not offered** — the first axis of the map is not an
+  angle (a photon energy, temperature…). Check *First axis of a map is* in
+  the loader.
+- **A CASSIOPEE folder is listed as separate spectra** — the `_i` parameter
+  files next to the spectra are missing or renamed; they say what was
+  stepped.
+
+### Right-click menus
+
+- **A list entry is greyed out** — hover over it: the tooltip says what the
+  selection lacks (one row, two cuts, a map, a cut in k…).
+- **"Integrate selection" is greyed** — draw a box first (right-click →
+  **Selection box**).
+- **"Integrate selection" is missing** — it exists only in SPEM windows with
+  a 2-D map; on a line scan, a cut or a map the box is used for the stack
+  plot and the coordinates.
+- **The SPEM map stays dark or shows only part of the sample** — it is
+  showing the intensity of a spectrum box (its title says so). Right-click
+  the map → **Spatial map over the whole spectrum**.
+- **The SPEM map looks transposed or mirrored** — **Swap X and Y** (right-
+  click the map) and the **Inv** boxes in the view bar change only the
+  drawing; ANTARES scans open the way the beamline draws them.
+- **The line profile's line has gone** — it is removed when its window
+  closes; open it again from the right-click menu.
+- **The MDC / EDC fit refuses a cut** — its axis is still an angle; convert
+  it first ([§15](#15-from-angles-to-momentum)).
+
+### Processing
+
+- **"Not available here" in the Functions menu** — hover over the entry: the
+  tooltip says why.
+- **De-grid refuses a dataset** — it has already been converted, corrected or
+  smoothed; de-grid the raw data first ([§13](#13-removing-the-detector-grid)).
+- **Cut k conversion of an E − E_F cut** — the energy offset is filled in for
+  you from the Fermi fit; if you shifted the axis some other way, type the
+  kinetic energy of E_F (photon energy − work function) into *Energy offset*.
+
+### Speed and memory
+
 - **Dragging the cursor on a big map is sluggish** — a map read lazily from
   its file re-slices in about 0.1 s per window, so the other windows wait for
   the mouse to pause. Once the map has been read into memory it follows live.
 - **The machine is paging** — watch the Memory bar (amber past a third of the
   RAM, red past a half); use **Free memory** or **Close all viewers**.
+- **After a crash** — restart the program: it offers the autosaved datasets
+  back. The log (**Session log...**) says where each one is.

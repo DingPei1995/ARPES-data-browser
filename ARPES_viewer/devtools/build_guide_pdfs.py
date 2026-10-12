@@ -65,9 +65,17 @@ td img { max-height: 95mm; margin: 0 auto; }
 img.portrait { float: right; max-width: 46%; max-height: 135mm;
                margin: 1mm 0 3mm 5mm; }
 td img.portrait { float: none; max-width: 100%; margin: 0 auto; }
+img.menu { max-width: 62mm; max-height: 80mm; }
 h2, h3, hr, table, pre { clear: both; }
-/* the table of contents straight after the title */
-h2#contents + ol, h2#目录 + ol, h2#sommaire + ol { columns: 2; column-gap: 8mm; }
+/* each part of the guide starts on a new page, under a banner */
+h1 ~ h1 { break-before: page; font-size: 19pt; background: #16365f; color: #fff;
+          border: 0; padding: 3mm 5mm; border-radius: 2px; }
+/* the table of contents (wrapped by _wrap_contents): part names, then
+   their sections, in two columns so it stays on the title page */
+div.toc { columns: 2; column-gap: 8mm; font-size: 9pt; line-height: 1.35; }
+div.toc h2 { column-span: all; }
+div.toc p { margin: 2mm 0 0.5mm; break-after: avoid; }
+div.toc ol { margin: 0; padding-left: 6mm; }
 """
 
 FOOTER = ("<div style='width:100%;font-size:7.5px;color:#7a8597;"
@@ -86,16 +94,29 @@ def _png_size(path: str):
 
 
 def _mark_portraits(body: str) -> str:
-    """Give every screenshot taller than it is wide the ``portrait`` class."""
+    """Give every screenshot taller than it is wide the ``portrait`` class,
+    and the context-menu screenshots the ``menu`` class."""
     def mark(match):
         tag, src = match.group(0), match.group(1)
         try:
             width, height = _png_size(os.path.join(DOCS, src))
         except (OSError, ValueError):
             return tag
+        # A context menu is small and read at a glance: drawn at about its
+        # on-screen size, centred, rather than floated beside a table that
+        # would then have to wait below it.
+        if src.endswith("_menu.png"):
+            return tag.replace("<img ", '<img class="menu" ', 1)
         return tag.replace("<img ", '<img class="portrait" ', 1) \
             if height > 1.15 * width else tag
     return re.sub(r'<img [^>]*src="(images/[^"]+)"[^>]*>', mark, body)
+
+
+def _wrap_contents(body: str) -> str:
+    """Put the contents section -- its heading up to the next rule -- in a
+    ``div.toc``, so print styles reach it and nothing else."""
+    return re.sub(r'(<h2 id="(?:contents|目录|sommaire)">.*?)(<hr />)',
+                  r'<div class="toc">\1</div>\2', body, count=1, flags=re.S)
 
 
 def to_html(lang: str) -> str:
@@ -109,6 +130,7 @@ def to_html(lang: str) -> str:
                   rf'href="{REPO}/docs/pdf/ARPES_viewer_user_guide_\1.pdf"', body)
     body = re.sub(r'href="\.\./([\w.]+\.md)"', rf'href="{REPO}/\1"', body)
     body = _mark_portraits(body)
+    body = _wrap_contents(body)
     body = body.replace('src="images/', 'src="../images/')
     meta = GUIDES[lang]
     return (f"<!doctype html><html lang='{meta['lang']}'><head><meta charset='utf-8'>"
