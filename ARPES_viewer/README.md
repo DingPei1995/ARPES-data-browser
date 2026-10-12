@@ -1,5 +1,8 @@
 # ARPES viewer
 
+**Version 2026-10-12** (last modified 12 October 2026) — see
+[CHANGELOG.md](CHANGELOG.md) for what changed.
+
 A Python/PyQt5 program for ARPES data: browse the measurements in a folder,
 open them in their own windows, convert to momentum, cut, fit, process, and
 lay the results out as a publication figure.

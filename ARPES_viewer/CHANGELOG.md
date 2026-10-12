@@ -10,6 +10,11 @@ file is the record of how it got that way.
 
 ---
 
+## Version 2026-10-12
+
+The forty-sixth to forty-eighth rounds below make up this version, saved as
+`main` on 12 October 2026.
+
 ## Forty-eighth round: the guides in French, and as PDF
 
 - **A French user guide** (`docs/USER_GUIDE_fr.md`), section for section
