@@ -1855,8 +1855,8 @@ def unsaved_datasets():
     the user has not put anywhere of their own.
 
     The auto-saved copy in the session folder is not "somewhere of their
-    own": it is a working copy that gets pruned after a week, so closing
-    without being asked would still lose the work in the sense that matters.
+    own": it is a working copy, deleted when the program closes normally,
+    so closing without being asked would lose the work.
     """
     return [record["name"] for record in loaded_items.values()
             if (record.get("backing") or record.get("memory") is not None)
@@ -1894,8 +1894,10 @@ def _offer_to_save(title, pending, go_text, text) -> bool:
     box.setIcon(QMessageBox.Question)
     box.setText(text)
     box.setInformativeText(
-        f"{shown}\n\nThey have been auto-saved to\n{session.folder}\n"
-        f"which is cleared out after {nxs_session.KEEP_DAYS} days.")
+        f"{shown}\n\nTheir auto-saved copies in\n{session.folder}\n"
+        f"are working copies only: going on without saving deletes them. "
+        f"(They are kept, for {nxs_session.KEEP_DAYS} days, only when the "
+        f"program crashes.)")
     save = QPushButton("Save to a file...")
     discard = QPushButton(go_text)
     cancel = QPushButton("Cancel")
@@ -1922,6 +1924,63 @@ def _offer_to_save(title, pending, go_text, text) -> bool:
     return False
 
 
+#: Set once the user has confirmed closing (everything they want is saved,
+#: or they chose to close without saving). Only then are the session's
+#: working copies deleted on the way out; any other exit -- a crash, a kill
+#: -- leaves them for the next start to offer back.
+clean_close = False
+
+
+def recovered_copies():
+    """Working copies from earlier, crashed sessions that are in the list
+    (put back at startup). The close prompt covered them like this
+    session's own, so a confirmed close deletes them too."""
+    roots = [os.path.abspath(session.root)] + [os.path.abspath(r)
+                                                for r in nxs_session.LEGACY_ROOTS]
+    own = os.path.join(os.path.abspath(session.folder), "")
+    found = []
+    for record in loaded_items.values():
+        backing = record.get("backing")
+        if not backing:
+            continue
+        path = os.path.abspath(backing)
+        if path.startswith(own):
+            continue
+        if any(path.startswith(os.path.join(root, "")) for root in roots):
+            found.append(path)
+    return found
+
+
+def finish_session():
+    """After a confirmed close: delete this session's auto-saved copies (and
+    the recovered ones in the list) instead of leaving them for the
+    three-day sweep, which is only for what a crash leaves behind."""
+    if not clean_close:
+        return 0
+    try:
+        removed = session.finish(recovered_copies())
+    except Exception:                                      # noqa: BLE001
+        traceback.print_exc()
+        return 0
+    return removed
+
+
+def _close_viewers_quietly():
+    """Close every viewer and snapshot without asking: the user has already
+    confirmed closing the program, and a window left open would keep both
+    the program running and the session's files in use."""
+    windows = _open_viewer_windows() + list(viewer_windows_module._DETACHED)
+    # Figures, stack plots and dialogs opened without a parent are top-level
+    # windows of their own, and would keep the program running too.
+    windows += [w for w in QApplication.topLevelWidgets()
+                if w is not win and w.isVisible() and w not in windows]
+    for window in windows:
+        try:
+            window.close()
+        except RuntimeError:
+            pass
+
+
 class _MainWindow(QMainWindow):
     """The launcher window, with a close that asks first."""
 
@@ -1935,6 +1994,9 @@ class _MainWindow(QMainWindow):
                 event.ignore()
                 return
         if confirm_close():
+            global clean_close
+            clean_close = True
+            _close_viewers_quietly()
             event.accept()
         else:
             event.ignore()
@@ -2027,6 +2089,8 @@ if __name__ == "__main__":
     except Exception:                                      # noqa: BLE001
         traceback.print_exc()
     error = app.exec_()
-    session.log("END", "", session.folder, "session closed")
+    finish_session()
+    session.log("END", "", session.folder,
+                "session closed" if clean_close else "session closed unconfirmed")
     DumpUIWidgets(config)
     sys.exit(error)

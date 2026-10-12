@@ -19,8 +19,9 @@ browser's list. Two consequences followed, and both were routinely painful:
 
 So every derived dataset is written to a **session folder** the moment it
 exists, in the program's own format (:func:`loader.nxs_file.save_dataset`,
-which is compressed, keeps the array's dtype, and is recognised on sight
-when read back). The list then holds a *path*, exactly as it already did
+which keeps the array's dtype and is recognised on sight when read back;
+these working copies are written *uncompressed*, since they are written on
+the GUI thread after every operation and gzip cost seconds per large cube). The list then holds a *path*, exactly as it already did
 for datasets read from a beamline file, and the array itself is a cache
 that can be dropped and re-read. A dataset read from a file and a dataset
 computed here stop being two different kinds of thing.
@@ -28,9 +29,13 @@ computed here stop being two different kinds of thing.
 What this module is not
 -----------------------
 It is not an undo history and not a project file. The session folder is a
-working copy: it is pruned after :data:`KEEP_DAYS`, and "Save..." remains
-how the user puts results somewhere they choose. What it guarantees is only
-that nothing is ever lost *because the program stopped*.
+working copy, and "Save..." remains how the user puts results somewhere
+they choose. A **normal close** that the user has confirmed (everything
+wanted is saved, or they chose to close without saving) deletes it at once
+(:meth:`SessionStore.finish`). Only a folder left behind by a run that did
+*not* close normally -- a crash, a kill -- is kept, for :data:`KEEP_DAYS`,
+and offered back at the next start. What it guarantees is that nothing is
+ever lost *because the program stopped*.
 
 No Qt in here, so it can be (and is) tested directly.
 """
@@ -63,12 +68,12 @@ LEGACY_ROOTS = (os.path.join(os.path.expanduser("~"), ".nxsloader", "sessions"),
 
 #: Session folders older than this are removed at startup.
 #:
-#: Three days rather than a week: a working copy is only worth keeping until
-#: the result has been saved somewhere of the user's own, and a copy that is
-#: still around after three days is one nobody came back for. A dataset that
-#: *is* saved has its copy removed at that moment (see
-#: :meth:`SessionStore.released`), so this only governs the ones a crash
-#: left behind.
+#: This only ever applies to what a crash (or any exit that was not a
+#: confirmed close) left behind: a normal close deletes the session's folder
+#: straight away (:meth:`SessionStore.finish`), and a dataset that is saved
+#: has its copy removed at that moment (:meth:`SessionStore.released`).
+#: Three days rather than a week: a crashed session's copy that is still
+#: around after three days is one nobody came back for.
 KEEP_DAYS = 3
 
 #: The operations log, one file for every session, in the sessions root so
@@ -337,7 +342,7 @@ class SessionStore:
         self._counter += 1
         path = os.path.join(self.folder,
                             f"{self._counter:03d}-{_sanitise(item.get('name'))}.nxs")
-        save_dataset(path, [item], progress=progress)
+        save_dataset(path, [item], progress=progress, compress=False)
         try:
             size = os.path.getsize(path)
         except OSError:
@@ -371,6 +376,54 @@ class SessionStore:
             os.remove(path)
         except OSError:
             pass
+
+    def finish(self, recovered=()) -> int:
+        """A normal, confirmed close: delete this session's working copies.
+
+        Called only once the user has said what they want kept is saved (or
+        that they are closing without saving), so the copies are not needed
+        for anything any more. ``recovered`` are copies from earlier,
+        crashed sessions that were put back in the list at startup and so
+        were covered by the same confirmation; they go too, and their folder
+        with them once it holds nothing else. Folders of crashed sessions
+        that were *not* recovered are left to :meth:`prune_old`.
+
+        Open handles on the files are closed first: they are about to be
+        deleted, and Windows refuses to delete an open file. Returns how
+        many dataset files were removed.
+        """
+        from loader.nxs_file import HANDLES
+
+        self.budget.clear()
+        removed = 0
+        if os.path.isdir(self.folder):
+            HANDLES.close_under(self.folder)
+            removed += len([f for f in os.listdir(self.folder) if f.endswith(".nxs")])
+            shutil.rmtree(self.folder, ignore_errors=True)
+        self.log("CLEAN", "", self.folder,
+                 f"normal close, {removed} working cop(y/ies) deleted")
+        folders = set()
+        for path in recovered:
+            if not path or not os.path.isfile(path):
+                continue
+            folder = os.path.dirname(os.path.abspath(path))
+            HANDLES.close_under(folder)
+            try:
+                os.remove(path)
+                removed += 1
+                folders.add(folder)
+                self.log("CLEAN", os.path.basename(path), path,
+                         "recovered copy, deleted at a normal close")
+            except OSError:
+                pass
+        for folder in folders:
+            try:
+                if not any(name.endswith(".nxs") for name in os.listdir(folder)):
+                    shutil.rmtree(folder, ignore_errors=True)
+            except OSError:
+                pass
+        self._ready = False
+        return removed
 
     # -- reading back --------------------------------------------------------
     def load_scan(self, path: str):

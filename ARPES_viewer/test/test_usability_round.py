@@ -180,3 +180,30 @@ def test_a_kz_map_cut_names_its_slider_in_ev(app):
     assert cut.control.unit == "eV"
     assert "deg" not in cut.control.readout.text()
     contour.close()
+
+
+def test_a_confirmed_close_deletes_the_autosaved_copies(tmp_path, monkeypatch):
+    """The launcher side: only once ``clean_close`` is set does the way out
+    delete the session's folder, together with recovered copies in the list."""
+    import ARPES_viewer as av
+    from loader.session import SessionStore
+    crashed = SessionStore(root=str(tmp_path))
+    item = {"name": "r", "kind": "cut", "axes": (SLIT, EKIN), "labels": {},
+            "value": np.ones((SLIT.size, EKIN.size)), "info": {}, "motors": {}}
+    recovered = crashed.store(item)
+    store = SessionStore(root=str(tmp_path))
+    own = store.store(dict(item, name="mine"))
+    monkeypatch.setattr(av, "session", store)
+    monkeypatch.setattr(av, "loaded_items", {
+        ("<converted>", "a"): {"name": "mine", "backing": own},
+        (recovered, None): {"name": "r", "backing": recovered},
+        ("/data/file.nxs", None): {"name": "file", "backing": None}})
+    assert av.recovered_copies() == [os.path.abspath(recovered)]
+
+    monkeypatch.setattr(av, "clean_close", False)
+    assert av.finish_session() == 0                   # not confirmed: kept
+    assert os.path.exists(own) and os.path.exists(recovered)
+
+    monkeypatch.setattr(av, "clean_close", True)
+    assert av.finish_session() == 2
+    assert not os.path.exists(store.folder) and not os.path.exists(recovered)

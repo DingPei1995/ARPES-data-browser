@@ -399,6 +399,21 @@ class _HandleRegistry:
             except Exception:
                 pass
 
+    def close_under(self, folder: str) -> int:
+        """Close every handle on a file inside ``folder``, whoever holds it.
+        Only for shutting down, when the folder is about to be deleted (a
+        file still open cannot be removed on Windows). Returns how many."""
+        root = os.path.join(os.path.abspath(folder), "")
+        closed = 0
+        for key in [k for k in self._open if k.startswith(root)]:
+            handle, _count = self._open.pop(key)
+            try:
+                handle.close()
+            except Exception:
+                pass
+            closed += 1
+        return closed
+
     def open_count(self) -> int:
         """Number of files currently held open (used by the tests)."""
         return len(self._open)
@@ -1386,7 +1401,8 @@ def _parse_native(f: h5py.File, g: str) -> NxsScan:
     return scan
 
 
-def save_dataset(path: str, datasets: "list[dict]", progress=None) -> None:
+def save_dataset(path: str, datasets: "list[dict]", progress=None,
+                 compress: bool = True) -> None:
     """Write datasets to a ``.nxs`` file this program can open again.
 
     ``datasets`` is a list of ``{"name", "kind", "axes", "labels", "value",
@@ -1410,6 +1426,11 @@ def save_dataset(path: str, datasets: "list[dict]", progress=None) -> None:
     whatever the caller had promoted to float64, which doubled the file for
     data that arrived as float32 or as integer counts, and lost nothing by
     doing so.
+
+    ``compress=False`` writes the array as it is, with no gzip filter: what
+    the session folder's working copies use, since they are written on the
+    GUI thread after every operation and deleted again at a normal close, so
+    the seconds gzip costs on a large cube buy nothing.
 
     Returns the entry names it actually used, in the order given. They are
     not always the names asked for -- HDF5 group names cannot contain "/",
@@ -1452,7 +1473,8 @@ def save_dataset(path: str, datasets: "list[dict]", progress=None) -> None:
             value = np.asarray(item["value"])
             # A 0-d or tiny array cannot be chunked, and compressing it would
             # cost more in filter overhead than it saves.
-            options = dict(NATIVE_COMPRESSION) if value.size > 1024 else {}
+            options = (dict(NATIVE_COMPRESSION)
+                       if compress and value.size > 1024 else {})
             grp.create_dataset("value", data=value, **options)
 
             for axis, label in (item.get("labels") or {}).items():

@@ -626,12 +626,16 @@ your own; several selected rows go into one file.
 ## 18. Autosave, memory and recovery
 
 - **Autosave.** Every computed dataset (a k-map, a processed cut, a fit
-  result…) is written to this session's folder in `~/.arpes_viewer/sessions/`
-  the moment it exists. Real-space scans are not (they are the measurement
-  itself, and large).
-- **Recovery.** After a crash, the next start offers the leftover session's
-  datasets back. Session folders are deleted after three days, or as soon as
-  their content is saved properly.
+  result…) is written, uncompressed, to this session's folder in
+  `~/.arpes_viewer/sessions/` the moment it exists. Real-space scans are not
+  (they are the measurement itself, and large).
+- **A normal close deletes the autosaved copies.** When you close the main
+  window and confirm (everything you want is saved, or *Close anyway*), the
+  open viewers are closed and the session folder is deleted straight away.
+  A dataset's copy also goes as soon as you save it to a file of your own.
+- **Recovery after a crash.** Only if the program did not close normally (a
+  crash, a kill) is the session folder kept: the next start offers its
+  datasets back, and it is deleted after three days.
 - **Operations log.** `~/.arpes_viewer/sessions/operations.log`, one line per
   store / save / discard — how to find what was where.
 - **Memory box.** This program's memory, the system's, how many viewers and
@@ -641,7 +645,9 @@ your own; several selected rows go into one file.
   memory.
 - **Long operations** (reading a big map, converting, de-gridding, assembling
   a folder) run off the GUI thread with a progress bar and a working Cancel.
-- **Closing** with unsaved computed data asks first, and names the datasets.
+- **Closing** with unsaved computed data asks first, and names the datasets:
+  **Save to a file...**, **Close anyway** (the autosaved copies are deleted)
+  or **Cancel** (nothing happens).
 
 ## 19. Tips and troubleshooting
 

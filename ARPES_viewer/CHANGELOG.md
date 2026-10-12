@@ -10,6 +10,26 @@ file is the record of how it got that way.
 
 ---
 
+## Forty-seventh round: autosaved copies are uncompressed, and go at a normal close
+
+- **Working copies are written uncompressed.** Every derived dataset is
+  auto-saved on the GUI thread the moment it exists, and gzip (level 4,
+  shuffled) cost about 1.6 s per 100 MB of cube on top of 0.1 s for the
+  write itself. `save_dataset(..., compress=False)` is what the session
+  store now uses; a file the user saves is compressed as before.
+- **A confirmed normal close deletes them.** Once the close prompt has been
+  answered -- everything wanted is saved, or *Close anyway* -- the viewers
+  are closed (they would keep the program running and the files in use)
+  and `SessionStore.finish` deletes the session folder at once, along with
+  any copies recovered from a crashed session that were in the list (the
+  prompt covered those too); their folder goes once it is empty. Handles
+  on the files are closed first, since Windows will not delete an open
+  file. *Cancel* changes nothing.
+- **Only a crash keeps them.** A folder left by a run that did not close
+  normally is still offered back at the next start and pruned after
+  three days; a crashed session that was not recovered is left to that
+  sweep as before. The close prompt says which applies.
+
 ## Forty-sixth round: user guides, and what running every window showed
 
 - **User guides, in English and Chinese** (`docs/USER_GUIDE_en.md`,

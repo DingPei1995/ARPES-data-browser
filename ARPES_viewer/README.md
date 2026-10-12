@@ -621,14 +621,24 @@ not using and re-read it on demand.
 
 - Everything except 4-D and 1-D spatial scans is auto-saved (those are the
   measurement itself, gigabytes of it).
-- Session folders are deleted three days after they are written, or as soon
-  as the dataset in them has been saved properly.
+- The copies are written **uncompressed** (they are working copies, written
+  on the GUI thread after every operation; gzip cost seconds per large cube).
+  A dataset's copy is deleted as soon as it is saved properly.
+- **A normal close deletes the session folder.** Once you have confirmed
+  closing (everything you want is saved, or you chose to close without
+  saving), the open viewers are closed and the folder -- with any copies
+  recovered from a crashed session that were in the list -- is removed at
+  once.
+- **Only a crash keeps them.** A folder left by a run that did not close
+  normally is kept for three days, offered back at the next start, and then
+  deleted.
 - **Operations log** -- `~/.arpes_viewer/sessions/operations.log`, plain text,
   one line per store/save/discard. After a crash this is how you find what was
   where.
 - **Recovery** -- on startup, a leftover session offers its datasets back.
 - **Closing** the main panel with unsaved derived data asks first, and says
-  which datasets it means.
+  which datasets it means: **Save to a file...**, **Close anyway** (the
+  working copies are deleted) or **Cancel**.
 
 ---
 
@@ -806,7 +816,7 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 607 of them, no display needed -- `conftest.py` puts the
+from this folder. 612 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`, and
 `test/conftest.py` runs garbage collection only between tests, the rule
 `ui/gcguard.py` applies in the program.

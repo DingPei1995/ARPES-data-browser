@@ -51,10 +51,24 @@ def test_round_trip_is_exact_and_keeps_the_dtype(store, dtype):
     assert np.array_equal(np.asarray(scan.value), cube)
 
 
-def test_stored_file_is_smaller_than_the_raw_array(store):
+def test_a_saved_file_is_compressed_and_smaller_than_the_raw_array(tmp_path):
+    """What the user saves is compressed; the session's working copies are
+    not (next test)."""
+    cube = _arpes_cube((40, 60, 32))
+    path = str(tmp_path / "saved.nxs")
+    save_dataset(path, [_map_item(cube=cube)])
+    assert os.path.getsize(path) < 0.7 * cube.nbytes
+
+
+def test_working_copies_are_not_compressed(store):
+    """Written on the GUI thread after every operation and deleted at a
+    normal close: gzip only made each of them take longer."""
+    import h5py
     cube = _arpes_cube((40, 60, 32))
     path = store.store(_map_item(cube=cube))
-    assert os.path.getsize(path) < 0.7 * cube.nbytes
+    with h5py.File(path, "r") as f:
+        assert f[list(f.keys())[0]]["value"].compression is None
+    assert os.path.getsize(path) >= cube.nbytes
 
 
 def test_axes_labels_and_settings_survive(store):
@@ -108,9 +122,10 @@ def test_a_version_1_file_still_reads(tmp_path):
     assert np.array_equal(np.asarray(scan.value), cube)
 
 
-def test_format_version_is_recorded(store):
+def test_format_version_is_recorded(tmp_path):
     import h5py
-    path = store.store(_map_item())
+    path = str(tmp_path / "saved.nxs")
+    save_dataset(path, [_map_item()])
     with h5py.File(path, "r") as f:
         grp = f[list(f.keys())[0]]
         assert int(grp.attrs["nxsloader_format"]) == NATIVE_FORMAT_VERSION
@@ -440,3 +455,43 @@ def test_a_file_saved_by_the_old_program_still_opens(tmp_path):
     path = store.store(_map_item("written now"))
     from loader import registry
     assert registry.detect(path).name == "This program's own format"
+
+
+# -- a normal close deletes the working copies; only a crash keeps them --------
+def test_finish_deletes_this_sessions_folder(tmp_path):
+    from loader.nxs_file import HANDLES
+    store = SessionStore(root=str(tmp_path))
+    path = store.store(_map_item())
+    HANDLES.acquire(path)                       # a viewer still reading it
+    assert store.finish() == 1
+    assert not os.path.exists(store.folder)
+    assert not HANDLES.is_open(path)
+    assert "CLEAN" in open(store.log_path, encoding="utf-8").read()
+
+
+def test_finish_takes_recovered_copies_but_not_unrecovered_crashes(tmp_path):
+    crashed = SessionStore(root=str(tmp_path))
+    recovered = crashed.store(_map_item("recovered"))
+    other_crash = SessionStore(root=str(tmp_path))
+    kept = other_crash.store(_map_item("not recovered"))
+
+    store = SessionStore(root=str(tmp_path))
+    store.store(_map_item("mine"))
+    assert store.finish(recovered=[recovered]) == 2
+    assert not os.path.exists(recovered)
+    assert not os.path.exists(crashed.folder)   # emptied, so removed
+    assert os.path.exists(kept)                 # left to the three-day sweep
+    assert store.leftovers() and store.leftovers()[0]["folder"] == other_crash.folder
+
+
+def test_a_crashed_session_is_still_kept_for_three_days(tmp_path):
+    """No finish() -- the program stopped -- so the folder stays, is offered
+    back, and only the sweep at a later start removes it."""
+    crashed = SessionStore(root=str(tmp_path))
+    crashed.store(_map_item())
+    later = SessionStore(root=str(tmp_path))
+    assert [entry["folder"] for entry in later.leftovers()] == [crashed.folder]
+    assert later.prune_old() == 0
+    old = os.path.getmtime(crashed.folder) - 4 * 86400
+    os.utime(crashed.folder, (old, old))
+    assert later.prune_old() == 1
