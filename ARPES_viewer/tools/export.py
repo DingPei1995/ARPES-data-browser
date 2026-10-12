@@ -79,11 +79,27 @@ def nice_step(span: float, target: int = 5) -> float:
 def tick_values(lo: float, hi: float, target: int = 5):
     """``(values, step)`` -- the round tick positions inside ``[lo, hi]``."""
     lo, hi = float(min(lo, hi)), float(max(lo, hi))
+
+    def place(step):
+        first = math.ceil(lo / step - 1e-9) * step
+        n = int(math.floor((hi - first) / step + 1e-9)) + 1
+        values = first + step * np.arange(max(n, 0))
+        return values[(values >= lo - 1e-9) & (values <= hi + 1e-9)]
+
     step = nice_step(hi - lo, target)
-    first = math.ceil(lo / step - 1e-9) * step
-    n = int(math.floor((hi - first) / step + 1e-9)) + 1
-    values = first + step * np.arange(max(n, 0))
-    return values[(values >= lo - 1e-9) & (values <= hi + 1e-9)], step
+    values = place(step)
+    # One labelled tick says nothing about the scale -- a +-15 degree axis
+    # on a narrow panel came out as a lone "0". Go down the 1/2/2.5/5 ladder
+    # until there are at least two.
+    if values.size < 2 and hi > lo:
+        magnitude = 10.0 ** math.floor(math.log10(step))
+        ladder = sorted({m * magnitude * scale for m in (1.0, 2.0, 2.5, 5.0)
+                         for scale in (1.0, 0.1)}, reverse=True)
+        for smaller in (s for s in ladder if s < step * (1 - 1e-9)):
+            values, step = place(smaller), smaller
+            if values.size >= 2:
+                break
+    return values, step
 
 
 def tick_format(step: float) -> str:

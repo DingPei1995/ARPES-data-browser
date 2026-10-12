@@ -124,6 +124,13 @@ class FitPanel(QMainWindow):
         self.series = None
         self._seeding = False
 
+        # Made before the widgets: building the tabs fires the signals that
+        # queue a redraw, and the timer has to exist by then.
+        self._redraw = QTimer(self)
+        self._redraw.setSingleShot(True)
+        self._redraw.setInterval(90)
+        self._redraw.timeout.connect(self.refresh_line)
+
         self.setWindowTitle(f"MDC / EDC fit — {label}")
         self.resize(1240, 860)
 
@@ -147,11 +154,6 @@ class FitPanel(QMainWindow):
         self.note.setWordWrap(True)
         root.addWidget(self.note)
         self.setCentralWidget(central)
-
-        self._redraw = QTimer(self)
-        self._redraw.setSingleShot(True)
-        self._redraw.setInterval(90)
-        self._redraw.timeout.connect(self.refresh_line)
 
         self.show_image()
         self.add_band()

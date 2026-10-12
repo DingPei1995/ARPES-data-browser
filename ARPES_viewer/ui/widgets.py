@@ -2022,10 +2022,29 @@ class _InteractiveImageBase(pg.ImageView):
         iy = int(np.argmin(np.abs(self._yarray - y)))
         self.readout_label.setText(self._readout_text(ix, iy))
         self.readout_label.setPos(x, y)
+        self._keep_readout_label_inside(x, y)
         self.readout_vline.setPos(x)
         self.readout_hline.setPos(y)
         self._reposition_bands(x, y)
         self.readoutMoved.emit(ix, iy)
+
+    def _keep_readout_label_inside(self, x, y):
+        """Put the readout label on whichever side of the cursor keeps it in
+        view. It sits above and to the right by default, which near the top
+        or the right edge of the plot pushed it out of sight -- exactly
+        where a Fermi edge or a band top is read."""
+        try:
+            box = self.plot.getViewBox() if hasattr(self.plot, "getViewBox") else self.plot
+            (x0, x1), (y0, y1) = box.viewRange()
+            fx = (x - x0) / (x1 - x0) if x1 != x0 else 0.0
+            fy = (y - y0) / (y1 - y0) if y1 != y0 else 0.0
+            if box.xInverted():
+                fx = 1.0 - fx
+            if box.yInverted():
+                fy = 1.0 - fy
+        except Exception:                                  # noqa: BLE001
+            return
+        self.readout_label.setAnchor((1 if fx > 0.7 else 0, 0 if fy > 0.75 else 1))
 
     def _reposition_bands(self, x, y):
         """Keep the integration bands centred on the crosshair as it moves,
@@ -3774,6 +3793,7 @@ class ImagePanel(QWidget):
             # stays the thing you are actually looking at.
             plot_grid.setColumnStretch(1, 1)
             plot_grid.setRowStretch(1, 1)
+            self._plot_grid = plot_grid
             self.curves.link_to(view)
             _pin_axis_geometry(view, self.curves)
         self.aspect_box = AspectBox(plot_cell, view, self)
@@ -3869,6 +3889,8 @@ class ImagePanel(QWidget):
         if self.curves is not None:
             for widget in self._curve_widgets():
                 widget.setVisible(False)
+            self._plot_grid.setColumnStretch(1, 0)
+            self._plot_grid.setRowStretch(1, 0)
 
         view.selectionChanged.connect(self._sync_from_selection)
         view.selectionApplied.connect(self.selectionApplied.emit)
@@ -4008,6 +4030,14 @@ class ImagePanel(QWidget):
             self.sync_curve_source()
         for widget in self._curve_widgets():
             widget.setVisible(visible)
+        # A grid keeps the stretch of a row or column whose widgets are all
+        # hidden, so without this the image never took back the quarter of
+        # the panel the EDC and MDC had: an empty strip on the right and
+        # another underneath, whenever the cursor was off.
+        grid = getattr(self, "_plot_grid", None)
+        if grid is not None:
+            grid.setColumnStretch(1, 1 if visible else 0)
+            grid.setRowStretch(1, 1 if visible else 0)
         if visible:
             self._sync_readout_bands()
 

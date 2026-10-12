@@ -212,7 +212,8 @@ def to_kz_cube(photon_energy, angle, energy, cube, *, inner_potential: float,
     photon_energy = np.asarray(photon_energy, dtype=float)
     angle = np.asarray(angle, dtype=float)
     energy = np.asarray(energy, dtype=float)
-    cube = np.asarray(cube, dtype=float)
+    # Promoted to float64 a plane at a time below, not as a whole-cube copy.
+    cube = np.asarray(cube)
     if cube.shape != (photon_energy.size, angle.size, energy.size):
         raise ValueError(
             f"cube is {cube.shape} but the axes say "
@@ -245,12 +246,15 @@ def to_kz_cube(photon_energy, angle, energy, cube, *, inner_potential: float,
         grid_kz, grid_par, inner_potential=inner_potential,
         effective_mass=effective_mass, theta_position=theta_p)
 
-    out = np.empty((kz_axis.size, kpar_axis.size, energy.size), dtype=float)
+    from tools.kspace import result_dtype
+    out = np.empty((kz_axis.size, kpar_axis.size, energy.size),
+                   dtype=result_dtype(cube.dtype))
     for index in range(energy.size):
         if progress is not None:
             progress(index, energy.size)
         hv_wanted = kinetic + work_function - float(energy[index])
-        out[:, :, index] = _sample_plane(cube[:, :, index], photon_energy,
+        plane = np.asarray(cube[:, :, index], dtype=float)
+        out[:, :, index] = _sample_plane(plane, photon_energy,
                                          alpha_axis, hv_wanted, alpha_wanted)
     return kz_axis, kpar_axis, energy, out
 

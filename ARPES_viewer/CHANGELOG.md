@@ -10,6 +10,53 @@ file is the record of how it got that way.
 
 ---
 
+## Forty-sixth round: user guides, and what running every window showed
+
+- **User guides, in English and Chinese** (`docs/USER_GUIDE_en.md`,
+  `docs/USER_GUIDE_zh.md`), one section per feature with screenshots of
+  the real windows. The pictures are reproducible:
+  `devtools/demo_data.py` writes synthetic data (a hexagonal Fermi surface
+  map, an LH / LV cut pair, a photon-energy scan, a spin EDC, a real-space
+  scan, a map with a detector mesh) and `devtools/guide_screenshots.py`
+  drives the program offscreen over it and saves every window.
+- **Cut k conversion failed on a cut shifted to E - E_F**, which is the
+  order the Fermi-level window suggests. With the offset at 0 every row at
+  or below E_F has no momentum, and the error blamed the angles ("k axis
+  is not monotonic"). The shift is recorded (`fitEF.ef_subtracted`), so
+  both conversion dialogs now fill in that E_F as the energy offset and
+  say so, the result stays on E - E_F, and an axis that is not a kinetic
+  energy is refused with a reason that names the offset.
+- **Map k conversion is faster and lighter.** Each energy plane is sampled
+  with `map_coordinates` at fractional indices instead of building a
+  `RegularGridInterpolator` per slice (the same bilinear arithmetic; equal
+  to 1e-12, NaN for NaN): 0.95 -> 0.12 s for a 41 x 120 x 60 map, 5.8 ->
+  4.9 s for 113 x 500 x 300 -> 300 x 300. The cube is no longer copied
+  whole to float64 first, `_resample_energy` is vectorised instead of one
+  `np.interp` per spectrum, and a float32 measurement comes back float32
+  -- half the memory and half the autosaved file for a converted map. The
+  k_z conversion keeps float32 the same way.
+- **The MDC/EDC fitter's inner loop** skips the bounded solver when plain
+  least squares already gives non-negative heights (then it *is* the
+  bounded answer): about 15 % off a series.
+- **Layout.** An image with EDC/MDC curves kept an empty strip right of and
+  under it while the cursor was off (a grid keeps the stretch of a row
+  whose widgets are hidden). The readout label flips inside the plot near
+  its top or right edge instead of being cut off. The processing panels'
+  tab pane no longer takes the height of its tallest tab, and their
+  previews are fitted once on screen (they opened as a small island in a
+  range several times too wide). A plane with the same unit on both axes
+  previews with "Equal axes" -- square pixels squeezed a map stepped 0.5
+  degrees one way and 0.2 the other. The cut-arithmetic table shows its
+  rows compactly; the space-group note in the zone dialog has room for
+  its third line.
+- **Small fixes.** A kz map's cut window labelled its photon-energy slider
+  in degrees. The MDC/EDC fit panel queued a redraw on a timer it had not
+  made yet. A figure axis could get a single tick label ("0" on a +-15
+  degree axis); there are now always at least two, and an x label wider
+  than its panel is moved in rather than cut off at the edge of the page.
+  A row whose entry has the row's own name is no longer called
+  "name · name".
+
 ## Forty-fifth round: the zone on a k_z map, for any surface
 
 - **The zone drawn on a k_z map was only ever right for (001).** The

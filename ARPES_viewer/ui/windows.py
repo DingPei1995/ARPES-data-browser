@@ -1214,6 +1214,11 @@ class CutWindow(ViewerWindow):
             return None
         finally:
             QApplication.restoreOverrideCursor()
+        if subtracted_fermi_level(self.data):
+            # The offset was added only to give k its kinetic energies; the
+            # result stays on the E - E_F axis the cut was on.
+            energy = (np.asarray(energy, dtype=float)
+                      - float(settings.get("energy_offset_eV", 0.0)))
 
         parameters = dict(settings)
         # The distance from Gamma is the one number the axes cannot carry,
@@ -1450,6 +1455,15 @@ class KConversionDialog(QDialog):
             "Added to the kinetic energy before converting, for when the axis "
             "is not already a true kinetic energy.")
         form.addRow("Energy offset (eV)", self.energy_offset_box)
+        shifted = subtracted_fermi_level(contour.data)
+        if shifted:
+            # A map shifted to E - E_F: add E_F back, or every energy at or
+            # below the Fermi level would have no momentum at all.
+            self.energy_offset_box.setValue(shifted)
+            self.energy_offset_box.setToolTip(
+                self.energy_offset_box.toolTip() +
+                f"\n\nThis map's energy axis is E − E_F; E_F = {shifted:.4f} eV "
+                f"is filled in so the conversion uses kinetic energies.")
 
         # The output grid, asked for either way round: how many points, or
         # how far apart. Counts are the default because they say exactly how
@@ -2119,7 +2133,11 @@ class BrillouinZoneDialog(QDialog):
         form3d.addRow("Space group no.", self.spacegroup_box)
         self.spacegroup_label = QLabel("")
         self.spacegroup_label.setWordWrap(True)
-        self.spacegroup_label.setMinimumHeight(34)
+        # Three lines: name and Bravais lattice, point group, constraints. A
+        # wrapped label in a form layout is not given the height it wraps to,
+        # so with room for two the constraints line was cut in half.
+        self.spacegroup_label.setMinimumHeight(
+            3 * self.spacegroup_label.fontMetrics().lineSpacing() + 6)
         form3d.addRow("", self.spacegroup_label)
 
         self.a_box = self._length_box(3.0)
@@ -3690,6 +3708,12 @@ class ContourWindow(ViewerWindow):
         """Wrap the converted cube up as a dataset and announce it. Runs on
         the GUI thread, whether the conversion ran here or on a worker."""
         kx, ky, energy, cube = result
+        shifted = subtracted_fermi_level(self.data)
+        if shifted:
+            # The offset was added only to give k its kinetic energies; the
+            # result stays on the E - E_F axis the map was on.
+            energy = (np.asarray(energy, dtype=float)
+                      - float(settings.get("energy_offset_eV", 0.0)))
 
         source_info = {k: v for k, v in self.data.scan.info.items()
                        if not k.startswith("kconv.")}
@@ -3699,6 +3723,8 @@ class ContourWindow(ViewerWindow):
                          source_path=getattr(self.data, "path", ""),
                          source_info=source_info,
                          source_motors=dict(self.data.scan.fourd_info))
+        if shifted:
+            kdata.scan.labels["z"] = self.energy_label
         self.kMapCreated.emit(kdata)
         finite = float(np.isfinite(cube).mean() * 100.0)
         self.statusBar().showMessage(
@@ -3776,7 +3802,8 @@ class MapCutWindow(ViewerWindow):
             "Bring up the constant-energy contour this cut is taken from; "
             "its cursor and this cut's are one.", section="Visualization")
         self.build_toolbar()
-        self.control = _SliceControl(f"Integrate over {sum_label}", "deg", 0.1, self)
+        self.control = _SliceControl(f"Integrate over {sum_label}",
+                                     _unit_of(sum_label) or "deg", 0.1, self)
         self.root.addWidget(self.control)
 
         self.view = FrameImageView()
@@ -4336,6 +4363,22 @@ def cut_deflector_angle(data, default: float = 0.0) -> float:
     return float(default)
 
 
+def subtracted_fermi_level(data) -> float:
+    """The kinetic energy that "Offset energy axis" moved to zero, or 0.
+
+    A dataset shifted to E - E_F no longer has kinetic energies on its
+    axis, which is what a k conversion needs; the shift is recorded, so the
+    conversion can add it back by default instead of failing on negative
+    energies.
+    """
+    info = getattr(getattr(data, "scan", None), "info", {}) or {}
+    try:
+        value = float(np.asarray(info.get("fitEF.ef_subtracted", 0.0)).reshape(-1)[0])
+    except (TypeError, ValueError, IndexError):
+        return 0.0
+    return value if np.isfinite(value) else 0.0
+
+
 def cut_k_conversion_blocked(data):
     """Why this cut cannot be converted from angle to momentum, or None.
 
@@ -4468,10 +4511,15 @@ class CutKConversionDialog(QDialog):
             "Added to the energy axis before converting, for when it is not "
             "already a true kinetic energy.")
         cut.addRow("Energy offset (eV)", self.energy_offset_box)
-        self.file_note = QLabel(
-            "Deflector angle read from the file." if np.isfinite(recorded)
-            else "This file records no deflector angle — type it, or "
-                 "leave it at 0 if the cut was taken at the deflector's zero.")
+        note = ("Deflector angle read from the file." if np.isfinite(recorded)
+                else "This file records no deflector angle — type it, or "
+                     "leave it at 0 if the cut was taken at the deflector's zero.")
+        shifted = subtracted_fermi_level(window.data)
+        if shifted:
+            self.energy_offset_box.setValue(shifted)
+            note += (f" The energy axis is E − E_F; E_F = {shifted:.4f} eV "
+                     f"is added back so the conversion uses kinetic energies.")
+        self.file_note = QLabel(note)
         self.file_note.setWordWrap(True)
         cut.addRow("", self.file_note)
         layout.addWidget(cut_group)

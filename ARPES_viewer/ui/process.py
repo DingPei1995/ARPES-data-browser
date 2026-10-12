@@ -25,12 +25,12 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QObject, QEvent
 from PyQt5.QtWidgets import (QSizePolicy, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QComboBox, QCheckBox, QDialog,
                              QFormLayout, QDoubleSpinBox, QSpinBox, QLineEdit,
                              QDialogButtonBox, QApplication, QTabWidget,
-                             QGroupBox, QMessageBox, QProgressDialog)
+                             QGroupBox, QMessageBox, QProgressDialog, QStyle)
 
 import tools.process as P
 import tools.volume as V
@@ -117,6 +117,54 @@ def _decimate(values, axes, budget: int = PREVIEW_POINTS):
 # ==========================================================================
 # A small before/after preview
 # ==========================================================================
+def _axis_unit(label: str) -> str:
+    """The unit in an axis label: "Angle, slit (deg)" -> "deg"."""
+    label = str(label or "").strip()
+    if "(" in label and label.endswith(")"):
+        return label[label.rfind("(") + 1:-1].strip()
+    return ""
+
+
+class _TabHeightFollower(QObject):
+    """Caps a QTabWidget at the height of the page on show; see
+    :func:`fit_tabs_to_current_page`."""
+
+    def __init__(self, tabs):
+        super().__init__(tabs)
+        self.tabs = tabs
+        for i in range(tabs.count()):
+            tabs.widget(i).installEventFilter(self)
+        tabs.currentChanged.connect(lambda *_: self.update())
+        self.update()
+
+    def eventFilter(self, watched, event):
+        # A page that shows or hides rows (a method with more parameters)
+        # asks for a new layout; follow it, so nothing is ever clipped.
+        if event.type() == QEvent.LayoutRequest and watched is self.tabs.currentWidget():
+            QTimer.singleShot(0, self.update)
+        return False
+
+    def update(self):
+        page = self.tabs.currentWidget()
+        if page is None:
+            return
+        frame = self.tabs.tabBar().sizeHint().height() + 2 * self.tabs.style().pixelMetric(
+            QStyle.PM_DefaultFrameWidth) + 8
+        self.tabs.setMaximumHeight(page.sizeHint().height() + frame)
+
+
+def fit_tabs_to_current_page(tabs) -> None:
+    """Size a QTabWidget to the page on show, not to its tallest page.
+
+    A tab widget asks for the height of its largest page whichever is
+    showing, so one long tab left every short one with a band of empty
+    panel -- taken out of the previews above it, which are what the dialog
+    is for. The widget is capped at the current page's own height instead,
+    and the cap follows the page as it changes.
+    """
+    tabs._height_follower = _TabHeightFollower(tabs)
+
+
 class PreviewPair(QWidget):
     """The source on the left, the result on the right, same colour scale
     unless the operation changes what the numbers mean.
@@ -176,6 +224,10 @@ class PreviewPair(QWidget):
             "right for a k-vs-k map, meaningless for k against energy.\n"
             "Fill the box is the biggest picture, at the cost of the shape.")
         self.aspect.currentIndexChanged.connect(self._apply_aspect)
+        # Until the user picks a shape, it follows the axes (see set_labels).
+        self._shape_chosen = False
+        self.aspect.activated.connect(
+            lambda *_: setattr(self, "_shape_chosen", True))
         bar.addWidget(self.aspect)
         reset = QPushButton("Reset view")
         reset.setToolTip("Undo any panning and zooming.")
@@ -216,6 +268,21 @@ class PreviewPair(QWidget):
         for target in (self.before, self.after):
             target["view"].view.setLabel("bottom", x_label)
             target["view"].view.setLabel("left", y_label)
+        # Both axes in one unit -- an angle-vs-angle or k-vs-k plane -- is
+        # where "Equal axes" is the undistorted picture: a map stepped 0.5
+        # degrees along one axis and 0.2 along the other came out squeezed
+        # by 2.5 with square pixels. Anything else (k against energy) keeps
+        # square pixels. A shape the user picked is never overridden.
+        if not self._shape_chosen:
+            unit_x, unit_y = _axis_unit(x_label), _axis_unit(y_label)
+            wanted = ("Equal axes" if unit_x and unit_x == unit_y
+                      else "Square pixels")
+            if self.aspect.currentText() != wanted:
+                self.aspect.blockSignals(True)
+                self.aspect.setCurrentText(wanted)
+                self.aspect.blockSignals(False)
+                if self.before["view"].image is not None:
+                    self._apply_aspect()
 
     @staticmethod
     def _box(target):
@@ -340,6 +407,18 @@ class PreviewPair(QWidget):
                 view_box.setAspectLocked(True, abs(dy / dx) if dx else 1.0)
         self.reset_view()
 
+    def showEvent(self, event):
+        # The first fit happens while the dialog is still being built, at
+        # whatever size the views had then; once laid out at their real size
+        # an aspect-locked view keeps that scale and shows the data as a
+        # small island in a range several times too wide. Fit again, once,
+        # when the panel is first on screen (later shows keep the user's
+        # pan and zoom).
+        super().showEvent(event)
+        if not getattr(self, "_fitted_on_show", False):
+            self._fitted_on_show = True
+            QTimer.singleShot(0, self.reset_view)
+
     def reset_view(self):
         for target in (self.before, self.after):
             if self._axes is None:
@@ -445,6 +524,7 @@ class ProcessDialog(QDialog):
         self.tabs.currentChanged.connect(self.refresh)
         self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self.tabs, 0)
+        fit_tabs_to_current_page(self.tabs)
 
         self.note = QLabel("")
         self.note.setWordWrap(True)

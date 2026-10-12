@@ -304,6 +304,18 @@ def _solve_linear(design, y, sigma, n_peaks):
         return np.zeros(0)
     scaled = design / sigma[:, None]
     target = y / sigma
+    # The bound is inactive on almost every call: when the unconstrained
+    # solution already has every height at or above zero it *is* the
+    # bounded one (the problem is convex), and an ordinary least-squares
+    # solve costs a fraction of the bounded solver. This runs inside every
+    # residual evaluation of every line of a series, so it is the fit's
+    # inner loop.
+    try:
+        free = np.linalg.lstsq(scaled, target, rcond=None)[0]
+        if np.all(np.isfinite(free)) and np.all(free[:n_peaks] >= 0.0):
+            return free
+    except np.linalg.LinAlgError:
+        pass
     lower = np.concatenate([np.zeros(n_peaks),
                             np.full(design.shape[1] - n_peaks, -np.inf)])
     upper = np.full(design.shape[1], np.inf)

@@ -347,7 +347,9 @@ def label_for(key) -> str:
     if record.get("memory") is not None:
         return record["name"]
     siblings = [k for k in loaded_items if k[0] == key[0]]
-    if len(siblings) > 1 and record["entry"]:
+    # A saved file names its rows after their entries; "cut_LH · cut_LH"
+    # would only say the same thing twice (the list row already skips it).
+    if len(siblings) > 1 and record["entry"] and record["entry"] != record["name"]:
         return f"{record['name']} \u00b7 {record['entry']}"
     return record["name"]
 
@@ -355,15 +357,9 @@ def label_for(key) -> str:
 def current_label() -> str:
     """How to name the selected dataset in messages and window titles: the
     filename, plus the entry when its file holds more than one."""
-    record = loaded_items.get(current_key)
-    if record is None:
+    if loaded_items.get(current_key) is None:
         return "(nothing selected)"
-    if record.get("memory") is not None:
-        return record["name"]
-    siblings = [k for k in loaded_items if k[0] == current_key[0]]
-    if len(siblings) > 1 and record["entry"]:
-        return f"{record['name']} \u00b7 {record['entry']}"
-    return record["name"]
+    return label_for(current_key)
 
 
 def ClearList():

@@ -96,6 +96,10 @@ class CutArithmeticDialog(QDialog):
         self.metadata.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.metadata.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch)
+        # Compact rows, so the handful of quantities that matter are all in
+        # sight at once (with the default row height only three were).
+        self.metadata.verticalHeader().setDefaultSectionSize(
+            self.metadata.fontMetrics().height() + 6)
         self.metadata.setMaximumHeight(150)
         self.metadata.setToolTip(
             "What each measurement recorded. Rows in orange differ by more "
@@ -194,6 +198,10 @@ class CutArithmeticDialog(QDialog):
             for column, cell in enumerate(cells):
                 self.metadata.setItem(index, column, cell)
         self.metadata.setVisible(bool(rows))
+        # As tall as its rows, up to eight of them; beyond that it scrolls.
+        header = self.metadata.horizontalHeader().height() or 24
+        row = self.metadata.verticalHeader().defaultSectionSize()
+        self.metadata.setFixedHeight(header + row * min(len(rows), 8) + 4)
         self._differing = [name for name, _a, _b, differs in rows
                            if differs and name != "Polarisation"]
 

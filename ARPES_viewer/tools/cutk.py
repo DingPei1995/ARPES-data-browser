@@ -209,8 +209,15 @@ def convert_cut(slit_deg, energy_eV, value, *, deflector_deg: float,
                     gamma_slit_deg=gamma_slit_deg, azimuth_deg=azimuth_deg)
     along, across, unit = cut_directions(slit, **geometry)
     k0 = k0_of_energy(energy)
-    if not np.any(k0 > 0):
-        raise ValueError("no positive kinetic energies to convert")
+    if not np.all(k0 > 0):
+        # The usual cause is an axis already shifted to E - E_F: every row at
+        # or below the Fermi level then has no momentum at all, and the
+        # monotonicity check below would blame the angles instead.
+        raise ValueError(
+            f"the energy axis reaches {float(np.min(energy)):.4g} eV, which is "
+            f"not a kinetic energy (an axis shifted to E - E_F?). Set the "
+            f"energy offset to the kinetic energy of E_F -- photon energy "
+            f"minus work function -- so every row is a true kinetic energy")
 
     k_par = along[:, None] * k0[None, :]
     k_perp = across[:, None] * k0[None, :]

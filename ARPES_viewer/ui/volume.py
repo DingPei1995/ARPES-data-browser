@@ -889,6 +889,8 @@ class VolumeProcessDialog(QDialog):
         self.tabs.currentChanged.connect(self.refresh)
         self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self.tabs, 0)
+        from ui.process import fit_tabs_to_current_page
+        fit_tabs_to_current_page(self.tabs)
 
         self.note = QLabel("")
         self.note.setWordWrap(True)

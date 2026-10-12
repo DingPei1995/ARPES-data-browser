@@ -242,8 +242,29 @@ def _fold_to_right_angle(rotation: float, tol: float = 1e-9) -> float:
     return float(folded) + 0.0      # normalise -0.0, which prints as "-0.000"
 
 
+def result_dtype(dtype) -> np.dtype:
+    """What a resampled cube is stored as, given the measurement's dtype.
+
+    Counts that arrived as float32 (or as integers float32 holds exactly)
+    come back as float32: the interpolation is done in float64 plane by
+    plane, but keeping the whole converted cube at double precision only
+    doubled its memory and its file, for digits the measurement never had.
+    """
+    dtype = np.dtype(dtype)
+    if (np.issubdtype(dtype, np.floating) and dtype.itemsize <= 4) or \
+            (np.issubdtype(dtype, np.integer) and dtype.itemsize <= 2):
+        return np.dtype(np.float32)
+    return np.dtype(np.float64)
+
+
 def _resample_energy(cube: np.ndarray, energy: np.ndarray, n_energy: int):
-    """Linearly resample the cube along its energy axis."""
+    """Linearly resample the cube along its energy axis.
+
+    Vectorised: every spectrum shares the same sample and target energies,
+    so the bracketing indices and weights are worked out once and applied to
+    the whole cube, rather than one ``np.interp`` per (theta, phi) spectrum
+    -- a hundred thousand Python-level calls on a real map.
+    """
     if n_energy is None or n_energy == energy.size:
         return cube, energy
     if n_energy < 2:
@@ -252,12 +273,17 @@ def _resample_energy(cube: np.ndarray, energy: np.ndarray, n_energy: int):
     # interp needs an ascending sample axis
     order = np.argsort(energy)
     src_e = energy[order]
-    src = cube[:, :, order]
-    flat = src.reshape(-1, src.shape[2])
-    out = np.empty((flat.shape[0], target.size), dtype=float)
-    for i, row in enumerate(flat):
-        out[i] = np.interp(target, src_e, row)
-    return out.reshape(cube.shape[0], cube.shape[1], target.size), target
+    upper = np.clip(np.searchsorted(src_e, target, side="right"), 1, src_e.size - 1)
+    lower = upper - 1
+    gap = src_e[upper] - src_e[lower]
+    weight = np.where(gap > 0, (target - src_e[lower]) / np.where(gap > 0, gap, 1.0), 0.0)
+    weight = np.clip(weight, 0.0, 1.0)
+    out = np.empty(cube.shape[:2] + (target.size,), dtype=result_dtype(cube.dtype))
+    for j in range(target.size):        # one energy plane at a time: no
+        a = cube[:, :, order[lower[j]]]     # full-size temporaries
+        b = cube[:, :, order[upper[j]]]
+        out[:, :, j] = (1.0 - weight[j]) * a + weight[j] * b
+    return out, target
 
 
 def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
@@ -287,12 +313,15 @@ def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
     ``(n_kx, n_ky, n_energy)`` and NaN wherever the target point was not
     measured.
     """
-    from scipy.interpolate import RegularGridInterpolator
+    from scipy.ndimage import map_coordinates
 
     theta_deg = np.asarray(theta_deg, dtype=float)
     phi_deg = np.asarray(phi_deg, dtype=float)
     energy = np.asarray(energy_eV, dtype=float) + float(energy_offset_eV)
-    cube = np.asarray(cube, dtype=float)
+    # Kept in its own dtype: each energy plane is promoted to float64 as it
+    # is used, rather than the whole cube up front (twice a float32 map's
+    # size in memory, for no gain in the result).
+    cube = np.asarray(cube)
 
     if cube.shape != (theta_deg.size, phi_deg.size, energy.size):
         raise ValueError(
@@ -322,12 +351,17 @@ def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
 
     # The angle axes must ascend for the interpolator; remember the order so
     # the cube can be presented the same way.
-    t_order = np.argsort(theta_deg)
-    p_order = np.argsort(phi_deg)
+    t_order = np.argsort(theta_deg, kind="stable")
+    p_order = np.argsort(phi_deg, kind="stable")
     theta_sorted = theta_deg[t_order]
     phi_sorted = phi_deg[p_order]
+    ascending = (np.array_equal(t_order, np.arange(t_order.size))
+                 and np.array_equal(p_order, np.arange(p_order.size)))
+    t_index = np.arange(theta_sorted.size, dtype=float)
+    p_index = np.arange(phi_sorted.size, dtype=float)
 
-    out = np.full((int(n_kx), int(n_ky), energy.size), np.nan, dtype=float)
+    out = np.full((int(n_kx), int(n_ky), energy.size), np.nan,
+                  dtype=result_dtype(cube.dtype))
     for m in range(energy.size):
         if k0[m] <= 0:
             continue                      # no momentum to speak of at E<=0
@@ -346,13 +380,25 @@ def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
         phi_q = np.degrees(np.arcsin(np.clip(vy, -1.0, 1.0)))
         theta_q = np.degrees(np.arctan2(vx, vz))
 
-        interp = RegularGridInterpolator(
-            (theta_sorted, phi_sorted),
-            cube[np.ix_(t_order, p_order, [m])][:, :, 0],
-            bounds_error=False, fill_value=np.nan)
-        points = np.stack([theta_q[inside], phi_q[inside]], axis=-1)
+        # Bilinear interpolation on the (possibly unevenly spaced) angle
+        # grid: each angle is turned into a fractional index by the same
+        # piecewise-linear map along its own axis, and the plane is then
+        # sampled at those indices. That is the same arithmetic as a linear
+        # RegularGridInterpolator, without building one per energy slice.
+        source = cube[:, :, m]
+        if not ascending:
+            source = source[np.ix_(t_order, p_order)]
+        source = np.asarray(source, dtype=float)
+        tq, pq = theta_q[inside], phi_q[inside]
+        reach = ((tq >= theta_sorted[0]) & (tq <= theta_sorted[-1])
+                 & (pq >= phi_sorted[0]) & (pq <= phi_sorted[-1]))
+        values = map_coordinates(
+            source, [np.interp(tq, theta_sorted, t_index),
+                     np.interp(pq, phi_sorted, p_index)],
+            order=1, mode="nearest", prefilter=False)
+        values[~reach] = np.nan
         plane = np.full(KX.shape, np.nan)
-        plane[inside] = interp(points)
+        plane[inside] = values
         out[:, :, m] = plane
 
         if progress is not None:

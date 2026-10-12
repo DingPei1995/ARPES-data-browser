@@ -141,6 +141,16 @@ class FigurePainter:
                                 self._font(size_pt * 0.72, scale, bold))
 
     @staticmethod
+    def label_centre(centre: float, width: float, page_width: float = None) -> float:
+        """Where to centre an axis label of ``width``: under its panel, but
+        moved in rather than cut off when it is wider than the panel and the
+        panel is at the edge of the page -- "Angle, deflector (de" on the
+        right-hand column of a narrow figure."""
+        if not page_width or width >= page_width:
+            return centre
+        return float(min(max(centre, width / 2.0), page_width - width / 2.0))
+
+    @staticmethod
     def _ticks(lo, hi, step, target=4):
         if step and step > 0:
             first = np.ceil(lo / step - 1e-9) * step
@@ -157,6 +167,7 @@ class FigurePainter:
         figure = self.figure
         style = figure.style
         width, height, rects = figure.layout()
+        self._page_width = width * scale
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
@@ -316,7 +327,10 @@ class FigurePainter:
             for value in x_ticks:
                 self._draw_markup(painter, px(value), baseline, x_fmt % value,
                                   tick_pt, scale, style.axis_color, anchor="center")
-            self._draw_markup(painter, box.center().x(),
+            label_width = self._markup_width(painter, panel.label_x(), label_pt, scale)
+            self._draw_markup(painter,
+                              self.label_centre(box.center().x(), label_width,
+                                                getattr(self, "_page_width", None)),
                               baseline + 1.25 * metrics.height(),
                               panel.label_x(), label_pt, scale, style.axis_color,
                               anchor="center")
