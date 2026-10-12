@@ -42,7 +42,8 @@ import numpy as np
 from scipy.spatial import ConvexHull, HalfspaceIntersection
 
 __all__ = ["BrillouinZone", "wigner_seitz_cell", "plane_basis", "plane_cut",
-           "tile_and_cut", "face_planes", "irreducible_wedge", "cut_points_3d"]
+           "tile_and_cut", "face_planes", "irreducible_wedge", "cut_points_3d",
+           "cuts_in_frame", "kz_frame", "kz_zone_cuts"]
 
 
 @dataclass
@@ -413,3 +414,151 @@ def tile_and_cut(zone: BrillouinZone, b: np.ndarray, normal: np.ndarray,
                     continue
                 polygons.append((u, v))
     return polygons
+
+
+# -- cuts containing the surface normal: the zone a k_z map sees -------------
+def cuts_in_frame(zone: BrillouinZone, b: np.ndarray, origin, e1, e2,
+                  x_range, y_range, limit: int = 20000):
+    """Cut every translated copy of ``zone`` by the plane through ``origin``
+    spanned by the orthonormal ``e1`` and ``e2``, and return the polygons
+    that reach the rectangle ``x_range`` x ``y_range`` -- in that frame's
+    own coordinates, ``x = (p - origin) . e1`` and ``y = (p - origin) . e2``.
+
+    :func:`tile_and_cut` answers the same question in the plane's own
+    :func:`plane_basis`, which is fine for a constant-energy map (the
+    azimuth turns it afterwards) but useless when the two drawn axes are
+    fixed by the measurement, as a k_z map's are: there one axis *is* the
+    surface normal and the other the slit direction, and a cut has to come
+    out in exactly those.
+
+    It also does not search a box of indices around the origin: which
+    copies can touch the window is worked out from the window itself, so a
+    k_z map that starts at 3 A^-1 costs no more than one starting at 0.
+    """
+    b = np.asarray(b, dtype=float)
+    e1 = np.asarray(e1, dtype=float)
+    e2 = np.asarray(e2, dtype=float)
+    origin = np.asarray(origin, dtype=float)
+    normal = np.cross(e1, e2)
+    normal /= np.linalg.norm(normal)
+    reach = float(np.max(np.linalg.norm(zone.vertices, axis=1)))
+
+    # every point within ``reach`` of the window, as a box of corners, in
+    # lattice coordinates: any copy whose centre is outside its index range
+    # cannot reach the window at all
+    x0, x1 = float(min(x_range)) - reach, float(max(x_range)) + reach
+    y0, y1 = float(min(y_range)) - reach, float(max(y_range)) + reach
+    corners = np.array([origin + x * e1 + y * e2 + s * normal
+                        for x in (x0, x1) for y in (y0, y1)
+                        for s in (-reach, reach)])
+    indices = corners @ np.linalg.inv(b)
+    low = np.floor(indices.min(axis=0)).astype(int)
+    high = np.ceil(indices.max(axis=0)).astype(int)
+    if np.prod(high - low + 1) > 50 * limit:
+        raise ValueError("the window is too large for this zone: it would "
+                         "take too many copies of the zone to fill")
+    grid = np.stack(np.meshgrid(*(np.arange(lo, hi + 1)
+                                  for lo, hi in zip(low, high)),
+                                indexing="ij"), axis=-1).reshape(-1, 3)
+    centres = grid @ b
+    relative = centres - origin
+    along_x, along_y = relative @ e1, relative @ e2
+    keep = ((np.abs(relative @ normal) <= reach + 1e-9)
+            & (along_x >= x0) & (along_x <= x1)
+            & (along_y >= y0) & (along_y <= y1))
+    centres = centres[keep]
+    if len(centres) > limit:
+        raise ValueError(f"{len(centres)} copies of the zone reach this "
+                         f"window; that is too many to draw")
+
+    polygons = []
+    for centre in centres:
+        u, v = plane_cut([loop + centre for loop in zone.faces], normal, origin)
+        if u is None:
+            continue
+        points = cut_points_3d(u, v, normal, origin) - origin
+        xs, ys = points @ e1, points @ e2
+        if (xs.max() < min(x_range) or xs.min() > max(x_range)
+                or ys.max() < min(y_range) or ys.min() > max(y_range)):
+            continue
+        polygons.append((xs, ys))
+    return polygons
+
+
+def kz_frame(params, surface_hkl, inplane_hkl=None, rotation_deg: float = 0.0):
+    """The two axes of a k_z map, as unit vectors in Cartesian k-space.
+
+    Returns ``(along_kz, along_kpar, across)``: the surface normal, the
+    in-plane direction the slit measures along, and the third axis that
+    completes them (the one a deflector or manipulator tilt would move
+    along).
+
+    ``surface_hkl`` is read against the **conventional** reciprocal cell,
+    like every Miller index the user types (see
+    :meth:`ui.windows.BrillouinZoneDialog._zone_3d`). ``inplane_hkl`` names
+    a reciprocal-lattice direction whose component perpendicular to the
+    normal becomes k_par; ``None`` (or ``(0, 0, 0)``) picks the first
+    conventional reciprocal axis that is not along the normal -- a* for a
+    (001) surface, which is the usual Gamma-M of a hexagonal crystal.
+    ``rotation_deg`` then turns k_par about the normal, for a slit that sits
+    between two named directions.
+    """
+    from tools.lattice import conventional_vectors, reciprocal_vectors
+
+    b_conventional = reciprocal_vectors(conventional_vectors(params))
+    normal = np.asarray(surface_hkl, dtype=float) @ b_conventional
+    length = float(np.linalg.norm(normal))
+    if length < 1e-9:
+        raise ValueError("the surface normal (h, k, l) cannot be (0, 0, 0)")
+    normal = normal / length
+
+    def perpendicular(vector):
+        vector = np.asarray(vector, dtype=float)
+        scale = float(np.linalg.norm(vector))
+        if scale < 1e-12:
+            return None
+        flat = vector - np.dot(vector, normal) * normal
+        if np.linalg.norm(flat) < 1e-6 * scale:
+            return None
+        return flat / np.linalg.norm(flat)
+
+    if inplane_hkl is not None and any(int(v) for v in inplane_hkl):
+        along = perpendicular(np.asarray(inplane_hkl, dtype=float) @ b_conventional)
+        if along is None:
+            raise ValueError("the k_par direction is parallel to the surface "
+                             "normal, so it has no in-plane part")
+    else:
+        along = None
+        for axis in b_conventional:
+            along = perpendicular(axis)
+            if along is not None:
+                break
+    across = np.cross(normal, along)
+    radians = np.radians(float(rotation_deg))
+    along, across = (np.cos(radians) * along + np.sin(radians) * across,
+                     -np.sin(radians) * along + np.cos(radians) * across)
+    return normal, along, across
+
+
+def kz_zone_cuts(zone: BrillouinZone, b: np.ndarray, frame, kz_range,
+                 kpar_range, offset: float = 0.0, tile: bool = True):
+    """The zone as a k_z map shows it: polygons in ``(k_z, k_par)``.
+
+    ``frame`` is :func:`kz_frame`'s three axes. ``offset`` slides the
+    measured plane along the third, out-of-slit axis, from Gamma -- a map
+    taken off normal emission in the other direction. With ``tile`` off
+    only the one copy whose centre is nearest the middle of the window is
+    returned, rather than the one at Gamma, which a k_z map several zones
+    out from the surface would not even contain.
+    """
+    along_kz, along_kpar, across = (np.asarray(v, dtype=float) for v in frame)
+    origin = float(offset) * across
+    polygons = cuts_in_frame(zone, b, origin, along_kz, along_kpar,
+                             kz_range, kpar_range)
+    if tile or not polygons:
+        return polygons
+    middle = np.array([0.5 * (kz_range[0] + kz_range[1]),
+                       0.5 * (kpar_range[0] + kpar_range[1])])
+    distances = [np.hypot(xs[:-1].mean() - middle[0], ys[:-1].mean() - middle[1])
+                 for xs, ys in polygons]
+    return [polygons[int(np.argmin(distances))]]

@@ -2036,6 +2036,12 @@ class BrillouinZoneDialog(QDialog):
     space periodicity, so it only means something once the contour's axes
     are actually momenta.
 
+    On a converted photon-energy scan (``kz_map_k``) the contour is the
+    plane holding the surface normal and the slit, ``(k_z, k_par)``, so
+    there the (h k l) is the *surface normal* and a k_par direction is asked
+    for too; the zone is cut by that plane (:func:`tools.bz3d.kz_zone_cuts`)
+    for any surface, not only (001) -- see :meth:`_adapt_to_kz_map`.
+
     Two modes and two kinds of zone
     -------------------------------
     **3D crystal** starts from the space-group number, and the space group
@@ -2079,6 +2085,9 @@ class BrillouinZoneDialog(QDialog):
         self.contour = contour
         self.setModal(False)
         self.setWindowTitle("Brillouin zone")
+        # A converted photon-energy scan: its contour is (k_z, k_par), a
+        # plane holding the surface normal, not one perpendicular to it.
+        self._kz_map = getattr(contour.data, "kind", None) == "kz_map_k"
         self._direction_points = []
         self._zone_cache = None
         self._preview = None
@@ -2145,6 +2154,26 @@ class BrillouinZoneDialog(QDialog):
             "The plane's normal as Miller indices of the reciprocal lattice: "
             "h*b1 + k*b2 + l*b3. (0, 0, 1) is the usual surface-normal cut.")
         form_cut.addRow("Normal (hkl)", normal_row)
+        self._normal_row = normal_row
+
+        # Only for a k_z map: which way the slit ran in the surface.
+        kpar_row = QWidget()
+        kpar_box = QHBoxLayout(kpar_row)
+        kpar_box.setContentsMargins(0, 0, 0, 0)
+        self.kpar_h_box = self._miller_box(0)
+        self.kpar_k_box = self._miller_box(0)
+        self.kpar_l_box = self._miller_box(0)
+        for text, box in (("h", self.kpar_h_box), ("k", self.kpar_k_box),
+                          ("l", self.kpar_l_box)):
+            kpar_box.addWidget(QLabel(text))
+            kpar_box.addWidget(box)
+        kpar_box.addStretch(1)
+        kpar_row.setToolTip(
+            "The reciprocal-lattice direction the analyser slit ran along; "
+            "only its part perpendicular to the surface normal is used. "
+            "(0 0 0) picks the first of a*, b*, c* not along the normal.")
+        form_cut.addRow("k_par along (hkl)", kpar_row)
+        self._kpar_row = kpar_row
 
         self.offset_box = QDoubleSpinBox()
         self.offset_box.setDecimals(4)
@@ -2157,6 +2186,7 @@ class BrillouinZoneDialog(QDialog):
             "turning a photon energy into a kz that belongs here needs an "
             "inner potential, which is the separate kz feature's job.")
         form_cut.addRow("Offset along normal (Å⁻¹)", self.offset_box)
+        self._form_cut = form_cut
         self.offset_label = QLabel("")
         self.offset_label.setWordWrap(True)
         self.offset_label.setMinimumHeight(34)
@@ -2218,6 +2248,7 @@ class BrillouinZoneDialog(QDialog):
             "line it up with the data -- the zone's own axes have no fixed "
             "relation to kx/ky until this is set.")
         orient_form.addRow("Azimuth (deg)", self.azimuth_box)
+        self._orient_form = orient_form
         self.direction_button = QPushButton("Pick direction from contour...")
         self.direction_button.setCheckable(True)
         self.direction_button.setToolTip(
@@ -2313,17 +2344,53 @@ class BrillouinZoneDialog(QDialog):
         self.moire_same_cb.toggled.connect(self._toggle_moire_same)
         for box in (self.a_box, self.b_box, self.c_box, self.alpha_box,
                     self.beta_box, self.gamma_box, self.h_box, self.k_box,
-                    self.l_box, self.offset_box):
+                    self.l_box, self.offset_box, self.kpar_h_box,
+                    self.kpar_k_box, self.kpar_l_box, self.azimuth_box):
             box.valueChanged.connect(self._refresh_info)
         for box in (self.zone_conventional, self.zone_irreducible):
             box.toggled.connect(self._refresh_info)
 
+        if self._kz_map:
+            self._adapt_to_kz_map()
         self._load_saved_settings()
+        if self._kz_map:
+            self.mode_3d.setChecked(True)
+            self.moire_cb.setChecked(False)
         self._apply_constraints()
         self._toggle_mode()
         self._toggle_moire()
         self._toggle_moire_same()
         self._refresh_info()
+
+    def _adapt_to_kz_map(self):
+        """Re-read the controls for a (k_z, k_par) contour.
+
+        Same crystal, different plane: a constant-energy map is the plane
+        *perpendicular* to the surface normal, a k_z map the plane that
+        *holds* it, together with the slit direction. So the normal becomes
+        the k_z axis, a k_par direction is asked for, the azimuth turns
+        k_par about the normal instead of turning the picture, and the
+        offset moves the plane out of the slit direction. A 2-D layer has
+        no k_z to draw and a moire is two layers, so both are hidden.
+        """
+        self.mode_2d.setVisible(False)
+        self.mode_3d.setText("3D crystal (space group) -- k_z map")
+        self._form_cut.labelForField(self._normal_row).setText(
+            "Surface normal = k_z (hkl)")
+        self._form_cut.labelForField(self.offset_box).setText(
+            "Offset out of the slit plane (Å⁻¹)")
+        self.offset_box.setToolTip(
+            "How far the measured plane sits from Gamma along the third "
+            "axis, perpendicular to both k_z and k_par -- 0 for a scan "
+            "through normal emission.")
+        self._orient_form.labelForField(self.azimuth_box).setText(
+            "Rotate k_par about k_z (deg)")
+        self.azimuth_box.setToolTip(
+            "Turns the k_par direction about the surface normal, for a slit "
+            "that is not along a named direction.")
+        self.direction_button.setVisible(False)
+        self.direction_note.setVisible(False)
+        self.group_cut.setTitle("Measured plane (k_z, k_par)")
 
     # -- small widget factories --------------------------------------------
     @staticmethod
@@ -2404,6 +2471,10 @@ class BrillouinZoneDialog(QDialog):
         is_3d = self.mode_3d.isChecked()
         self.group_3d.setVisible(is_3d)
         self.group_cut.setVisible(is_3d)
+        # Qt 5's QFormLayout has no setRowVisible: hide the field and its
+        # label separately.
+        self._kpar_row.setVisible(self._kz_map)
+        self._form_cut.labelForField(self._kpar_row).setVisible(self._kz_map)
         self.group_2d.setVisible(not is_3d)
         # A moire pattern is two stacked layers, so it belongs to the 2-D
         # mode only; hiding rather than disabling keeps the 3-D panel from
@@ -2576,6 +2647,11 @@ class BrillouinZoneDialog(QDialog):
         if not self.mode_3d.isChecked():
             raise ValueError("there is no cut plane in 2D-layer mode")
         zone, b, b_conventional = self._zone_3d()
+        if self._kz_map:
+            _kz, _kpar, across = self.kz_frame()
+            point = across * float(self.offset_box.value())
+            u, v = plane_cut(zone.faces, across, point)
+            return zone, b, b_conventional, across, point, u, v
         normal = (self.h_box.value() * b_conventional[0]
                   + self.k_box.value() * b_conventional[1]
                   + self.l_box.value() * b_conventional[2])
@@ -2586,6 +2662,17 @@ class BrillouinZoneDialog(QDialog):
         point = normal * float(self.offset_box.value())
         u, v = plane_cut(zone.faces, normal, point)
         return zone, b, b_conventional, normal, point, u, v
+
+    def kz_frame(self):
+        """``(along_kz, along_kpar, across)`` for a k_z map, as unit
+        vectors (see :func:`tools.bz3d.kz_frame`)."""
+        from tools.bz3d import kz_frame
+        return kz_frame(self.lattice_params(),
+                        (self.h_box.value(), self.k_box.value(),
+                         self.l_box.value()),
+                        (self.kpar_h_box.value(), self.kpar_k_box.value(),
+                         self.kpar_l_box.value()),
+                        float(self.azimuth_box.value()))
 
     @staticmethod
     def _distance_to_boundary(zone, normal) -> float:
@@ -2607,6 +2694,15 @@ class BrillouinZoneDialog(QDialog):
         except Exception as exc:
             return str(exc)
         offset = float(self.offset_box.value())
+        if self._kz_map:
+            along_kz, along_kpar, _across = self.kz_frame()
+            text = (f"k_z along ({self.h_box.value()} {self.k_box.value()} "
+                    f"{self.l_box.value()}), k_par along "
+                    f"{np.round(along_kpar, 3).tolist()} (Cartesian, "
+                    f"a along x), offset {offset:.4g} Å⁻¹ out of that plane")
+            if u is None:
+                text += " — the plane misses the zone at Γ."
+            return text
         reach = self._distance_to_boundary(zone, normal)
         extent = float(np.max(np.linalg.norm(zone.vertices, axis=1)))
         text = (f"({self.h_box.value()} {self.k_box.value()} {self.l_box.value()}) "
@@ -2739,19 +2835,36 @@ class BrillouinZoneDialog(QDialog):
 
     def _plot_single(self) -> str:
         if self.mode_3d.isChecked():
-            from tools.bz3d import tile_and_cut
+            from tools.bz3d import tile_and_cut, kz_zone_cuts
             zone, b, _b_conv, normal, point, u, v = self.cut_geometry()
-            if self.tile_cb.isChecked():
-                u_range, v_range = self._view_window()
-                cuts = tile_and_cut(zone, b, normal, point, u_range, v_range)
+            if self._kz_map:
+                # Already in the contour's own (k_z, k_par) axes: the
+                # azimuth turned k_par about the normal inside kz_frame, so
+                # there is no picture rotation left to apply.
+                kz = np.asarray(self.contour.angle_defl, dtype=float)
+                kpar = np.asarray(self.contour.angle_slit, dtype=float)
+                polygons = kz_zone_cuts(
+                    zone, b, self.kz_frame(),
+                    (float(np.nanmin(kz)), float(np.nanmax(kz))),
+                    (float(np.nanmin(kpar)), float(np.nanmax(kpar))),
+                    offset=float(self.offset_box.value()),
+                    tile=self.tile_cb.isChecked())
+                if not polygons:
+                    raise ValueError(
+                        "no copy of the zone meets this k_z map's plane -- "
+                        "reduce the offset, or check the (h k l) normal")
             else:
-                cuts = [] if u is None else [(u, v)]
-            if not cuts:
-                raise ValueError(
-                    "the cut plane does not meet the zone -- reduce the "
-                    "offset, or check the (h k l) normal")
-            azimuth = self.azimuth_box.value()
-            polygons = [self._rotate_xy(cu, cv, azimuth) for cu, cv in cuts]
+                if self.tile_cb.isChecked():
+                    u_range, v_range = self._view_window()
+                    cuts = tile_and_cut(zone, b, normal, point, u_range, v_range)
+                else:
+                    cuts = [] if u is None else [(u, v)]
+                if not cuts:
+                    raise ValueError(
+                        "the cut plane does not meet the zone -- reduce the "
+                        "offset, or check the (h k l) normal")
+                azimuth = self.azimuth_box.value()
+                polygons = [self._rotate_xy(cu, cv, azimuth) for cu, cv in cuts]
         else:
             polygons, _g1, _g2 = self._zone_2d(
                 self.a2_box.value(), self.b2_box.value(), self.gamma2_box.value())
@@ -2850,6 +2963,7 @@ class BrillouinZoneDialog(QDialog):
         return (self.mode_3d, self.mode_2d, self.a_box, self.b_box, self.c_box,
                 self.alpha_box, self.beta_box, self.gamma_box,
                 self.spacegroup_box, self.h_box, self.k_box, self.l_box,
+                self.kpar_h_box, self.kpar_k_box, self.kpar_l_box,
                 self.offset_box, self.a2_box, self.b2_box, self.gamma2_box,
                 self.azimuth_box, self.tile_cb, self.moire_cb,
                 self.moire_same_cb, self.a2b_box, self.b2b_box,
@@ -2889,6 +3003,9 @@ class BrillouinZoneDialog(QDialog):
             self.h_box.setValue(int(saved("h", 0)))
             self.k_box.setValue(int(saved("k", 0)))
             self.l_box.setValue(int(saved("l", 1)))
+            self.kpar_h_box.setValue(int(saved("kpar_h", 0)))
+            self.kpar_k_box.setValue(int(saved("kpar_k", 0)))
+            self.kpar_l_box.setValue(int(saved("kpar_l", 0)))
             self.offset_box.setValue(float(saved("offset", 0.0)))
             self.a2_box.setValue(float(saved("a2", 3.0)))
             self.b2_box.setValue(float(saved("b2", 3.0)))
@@ -2921,6 +3038,9 @@ class BrillouinZoneDialog(QDialog):
             "gamma": self.gamma_box.value(),
             "h": int(self.h_box.value()), "k": int(self.k_box.value()),
             "l": int(self.l_box.value()),
+            "kpar_h": int(self.kpar_h_box.value()),
+            "kpar_k": int(self.kpar_k_box.value()),
+            "kpar_l": int(self.kpar_l_box.value()),
             "offset": self.offset_box.value(),
             "a2": self.a2_box.value(), "b2": self.b2_box.value(),
             "gamma2": self.gamma2_box.value(),
@@ -3045,8 +3165,9 @@ class ContourWindow(ViewerWindow):
             "Brillouin zone...", self.open_brillouin_zone,
             "Overlay a Brillouin zone (or a moire zone) on this contour. "
             "Needs momentum, not angle -- only available once a map has "
-            "been converted to k-space.",
-            section="Visualization", visible=data.kind == "k_map")
+            "been converted to k-space, or a photon-energy scan to "
+            "(k_z, k_par).",
+            section="Visualization", visible=data.kind in MOMENTUM_KINDS)
         self.slices_action = self.add_function(
             "Slice figure...", self.open_slice_figure,
             "A page of slices through this cube as one figure for a paper -- "

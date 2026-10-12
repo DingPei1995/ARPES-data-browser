@@ -376,7 +376,10 @@ the window is built around choosing it:
 
 - the preview reconverts one energy slice as you drag, in milliseconds;
 - the zone boundaries are drawn over it from the space group, lattice
-  constants and the surface normal;
+  constants, the surface normal and the in-plane direction the slit ran
+  along: the real cut of the 3-D zone by the (k_z, k_par) plane, for any
+  surface, not only (001). The converted map's **Brillouin zone...** entry
+  draws the same cut on its contour;
 - **Scan V0** converts one slice at each of a range of inner potentials,
   measures the k_z period each gives, and reports where it equals the
   lattice's. It also reports how well that pins V₀ — for a scan covering a

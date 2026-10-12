@@ -207,24 +207,104 @@ class KzConversionDialog(QDialog):
             "4*pi/a along [001], not 2*pi/a.")
         form.addRow("Space group", self.space_group)
         self.lat_a = self._spin(3.2, 0.1, 100.0, 0.01, " A")
+        self.lat_b = self._spin(3.2, 0.1, 100.0, 0.01, " A")
         self.lat_c = self._spin(6.0, 0.1, 100.0, 0.01, " A")
-        form.addRow("a", self.lat_a)
-        form.addRow("c", self.lat_c)
+        self.lat_alpha = self._spin(90.0, 1.0, 179.0, 0.5, " deg")
+        self.lat_beta = self._spin(90.0, 1.0, 179.0, 0.5, " deg")
+        self.lat_gamma = self._spin(120.0, 1.0, 179.0, 0.5, " deg")
+        for text, box in (("a", self.lat_a), ("b", self.lat_b),
+                          ("c", self.lat_c), ("alpha", self.lat_alpha),
+                          ("beta", self.lat_beta), ("gamma", self.lat_gamma)):
+            box.setToolTip("Greyed out means the space group fixes this one.")
+            form.addRow(text, box)
         self.normal_index = QComboBox()
         self.normal_index.setToolTip(
             "Which planes the crystal cleaved along. It sets the k_z period "
             "the zone lines are drawn with, and what the V0 scan matches "
             "against. Measure it with the two-point tool if unsure.")
         form.addRow("Surface normal", self.normal_index)
+
+        # Which way the slit runs in the surface. The zone a k_z map cuts
+        # is the plane holding the normal *and* this direction, so without
+        # it only the period along the normal is known -- not the shape.
+        kpar_row = QWidget()
+        kpar_box = QHBoxLayout(kpar_row)
+        kpar_box.setContentsMargins(0, 0, 0, 0)
+        self.kpar_h, self.kpar_k, self.kpar_l = (self._miller(0) for _ in range(3))
+        for box in (self.kpar_h, self.kpar_k, self.kpar_l):
+            kpar_box.addWidget(box)
+        kpar_row.setToolTip(
+            "The reciprocal-lattice direction (h k l) the analyser slit runs "
+            "along; only its part perpendicular to the surface normal is "
+            "used. (0 0 0) picks the first of a*, b*, c* that is not along "
+            "the normal.")
+        form.addRow("k_par along (hkl)", kpar_row)
+        self.kpar_rotation = self._spin(0.0, -180.0, 180.0, 1.0, " deg")
+        self.kpar_rotation.setToolTip(
+            "Turns the k_par direction about the surface normal, for a slit "
+            "that is not along a named direction.")
+        form.addRow("Rotate k_par by", self.kpar_rotation)
+
         self.zone_lines = QCheckBox("Draw the zone boundaries")
         self.zone_lines.setChecked(True)
         form.addRow("", self.zone_lines)
-        for widget in (self.space_group, self.lat_a, self.lat_c):
+        self.space_group.valueChanged.connect(self._apply_constraints)
+        self.lat_a.valueChanged.connect(self._sync_mirrored_lengths)
+        for widget in (self.space_group, self.lat_a, self.lat_b, self.lat_c,
+                       self.lat_alpha, self.lat_beta, self.lat_gamma):
             widget.valueChanged.connect(self._lattice_changed)
+        for widget in (self.kpar_h, self.kpar_k, self.kpar_l,
+                       self.kpar_rotation):
+            widget.valueChanged.connect(self.refresh)
         self.normal_index.currentIndexChanged.connect(self.refresh)
         self.zone_lines.toggled.connect(self.refresh)
+        self._apply_constraints()
         self._lattice_changed()
         return group
+
+    @staticmethod
+    def _miller(value):
+        box = QSpinBox()
+        box.setRange(-20, 20)
+        box.setValue(value)
+        box.setKeyboardTracking(False)
+        return box
+
+    def _apply_constraints(self, *_):
+        """Disable and drive the cell parameters the space group fixes.
+
+        The same rule as the Brillouin-zone dialog's: a hexagonal group
+        has gamma = 120 whether or not anyone typed it, and a cell that
+        contradicts its own space group builds the wrong reciprocal lattice
+        -- every period but the one along c comes out wrong.
+        """
+        from tools.lattice import free_parameters
+        try:
+            constraints = free_parameters(int(self.space_group.value()))
+        except Exception:                                   # noqa: BLE001
+            return
+        self._mirrors = dict(constraints.mirrors)
+        lengths = {"a": self.lat_a, "b": self.lat_b, "c": self.lat_c}
+        for name, box in lengths.items():
+            box.setEnabled(name not in constraints.mirrors)
+        angles = {"alpha": self.lat_alpha, "beta": self.lat_beta,
+                  "gamma": self.lat_gamma}
+        for name, box in angles.items():
+            fixed = constraints.fixed_angles.get(name)
+            box.setEnabled(fixed is None)
+            if fixed is not None:
+                box.blockSignals(True)
+                box.setValue(float(fixed))
+                box.blockSignals(False)
+        self._sync_mirrored_lengths()
+
+    def _sync_mirrored_lengths(self, *_):
+        lengths = {"a": self.lat_a, "b": self.lat_b, "c": self.lat_c}
+        for target, source in getattr(self, "_mirrors", {}).items():
+            box = lengths[target]
+            box.blockSignals(True)
+            box.setValue(lengths[source].value())
+            box.blockSignals(False)
 
     @staticmethod
     def _spin(value, low, high, step, suffix):
@@ -329,9 +409,23 @@ class KzConversionDialog(QDialog):
             theta_position=float(self.theta_position.value()))
 
     def lattice(self) -> LatticeParams:
-        a = float(self.lat_a.value())
-        return LatticeParams(a=a, b=a, c=float(self.lat_c.value()),
-                             space_group=int(self.space_group.value()))
+        return LatticeParams(
+            a=float(self.lat_a.value()), b=float(self.lat_b.value()),
+            c=float(self.lat_c.value()), alpha=float(self.lat_alpha.value()),
+            beta=float(self.lat_beta.value()),
+            gamma=float(self.lat_gamma.value()),
+            space_group=int(self.space_group.value()))
+
+    def surface_hkl(self) -> tuple:
+        """The chosen surface normal's Miller indices; (0 0 1) if none."""
+        data = self.normal_index.currentData()
+        if data is None:
+            return (0, 0, 1)
+        return tuple(int(v) for v in data[0])
+
+    def kpar_hkl(self) -> tuple:
+        return (int(self.kpar_h.value()), int(self.kpar_k.value()),
+                int(self.kpar_l.value()))
 
     def surface_period(self) -> float:
         """The k_z period the chosen surface normal implies, A^-1."""
@@ -342,7 +436,11 @@ class KzConversionDialog(QDialog):
 
     def _lattice_changed(self, *_):
         """Refill the surface-normal choices for the current lattice."""
-        previous = self.normal_index.currentText()
+        # Kept by its indices, not its text: the text carries the period,
+        # which changes with every lattice constant, so matching on it
+        # dropped the user's choice back to the first entry on every edit.
+        previous = self.normal_index.currentData()
+        previous = tuple(previous[0]) if previous is not None else (0, 0, 1)
         self.normal_index.blockSignals(True)
         self.normal_index.clear()
         complaints = []
@@ -359,9 +457,11 @@ class KzConversionDialog(QDialog):
                     f"{name}   period {length:.4f} A^-1", (hkl, length))
         except Exception as exc:                            # noqa: BLE001
             self.normal_index.addItem(f"lattice not usable: {exc}", None)
-        index = self.normal_index.findText(previous)
-        if index >= 0:
-            self.normal_index.setCurrentIndex(index)
+        for index in range(self.normal_index.count()):
+            data = self.normal_index.itemData(index)
+            if data is not None and _same_direction(data[0], previous):
+                self.normal_index.setCurrentIndex(index)
+                break
         self.normal_index.blockSignals(False)
         self._lattice_complaints = list(complaints)
         self.refresh()
@@ -422,29 +522,58 @@ class KzConversionDialog(QDialog):
         return kz_axis, kpar_axis, out[:, :, 0]
 
     def _draw_zone_lines(self, kz_axis, kpar_axis):
-        """Zone boundaries as vertical lines at multiples of the period.
+        """The Brillouin zone as this map cuts it.
 
-        A k_z scan cuts the Brillouin zone along one direction, so what the
-        zone contributes here is a set of planes perpendicular to k_z --
-        drawn as one polyline with gaps so a single item carries all of them.
+        A k_z map is a plane through k-space holding the surface normal and
+        the slit direction, so what it shows of the zone is that plane's
+        cut through every copy of it -- for a (001) surface of a simple
+        lattice a row of rectangles, but for anything else (a centred
+        lattice, a (110) or (111) surface) hexagons and rhombi whose
+        boundaries are neither perpendicular to k_z nor at multiples of the
+        period. Drawn as one polyline with gaps.
         """
+        self._zone_error = None
         if not self.zone_lines.isChecked():
             self.zone_item.setData([], [])
             return
-        period = self.surface_period()
-        if not np.isfinite(period) or period <= 0:
+        try:
+            polygons = self.zone_polygons(kz_axis, kpar_axis)
+        except Exception as exc:                            # noqa: BLE001
+            self._zone_error = str(exc)
             self.zone_item.setData([], [])
             return
-        first = int(np.floor(kz_axis[0] / period))
-        last = int(np.ceil(kz_axis[-1] / period))
         xs, ys = [], []
-        for n in range(first, last + 1):
-            position = n * period
-            if not (kz_axis[0] <= position <= kz_axis[-1]):
-                continue
-            xs += [position, position, np.nan]
-            ys += [kpar_axis[0], kpar_axis[-1], np.nan]
+        for px, py in polygons:
+            xs += list(px) + [np.nan]
+            ys += list(py) + [np.nan]
         self.zone_item.setData(np.array(xs), np.array(ys), connect="finite")
+
+    def zone_polygons(self, kz_axis, kpar_axis):
+        """``[(k_z, k_par), ...]`` polygons of the zone over these axes."""
+        from tools.bz3d import kz_frame, kz_zone_cuts
+        zone, b = self._zone()
+        frame = kz_frame(self.lattice(), self.surface_hkl(), self.kpar_hkl(),
+                         float(self.kpar_rotation.value()))
+        return kz_zone_cuts(zone, b, frame,
+                            (float(np.min(kz_axis)), float(np.max(kz_axis))),
+                            (float(np.min(kpar_axis)), float(np.max(kpar_axis))))
+
+    def _zone(self):
+        """The (conventional) first zone and its primitive reciprocal
+        vectors, cached on the lattice -- the preview redraws on every
+        change of V0, which leaves the zone alone."""
+        from tools.lattice import primitive_vectors, reciprocal_vectors
+        from tools.bz3d import wigner_seitz_cell
+        params = self.lattice()
+        key = (params.a, params.b, params.c, params.alpha, params.beta,
+               params.gamma, params.space_group)
+        cached = getattr(self, "_zone_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1], cached[2]
+        b = reciprocal_vectors(primitive_vectors(params))
+        zone = wigner_seitz_cell(b)
+        self._zone_cache = (key, zone, b)
+        return zone, b
 
     def _write_report(self, kz_axis, kpar_axis, plane):
         period = self.surface_period()
@@ -456,6 +585,9 @@ class KzConversionDialog(QDialog):
             f"k_par {kpar_axis[0]:.3f} to {kpar_axis[-1]:.3f} A<sup>-1</sup>",
             f"{coverage:.0f}% of the grid is covered by the measurement",
         ]
+        if getattr(self, "_zone_error", None):
+            lines.append(f"<span style='color:#a60'>Zone not drawn: "
+                         f"{self._zone_error}</span>")
         for complaint in getattr(self, "_lattice_complaints", ()):
             lines.append(f"<span style='color:#a60'>{complaint}</span>")
         if self._pick_points:
@@ -600,13 +732,38 @@ class KzConversionDialog(QDialog):
             "n_kpar": int(self.n_kpar.value()),
             "space_group": int(self.space_group.value()),
             "lattice_a": float(self.lat_a.value()),
+            "lattice_b": float(self.lat_b.value()),
             "lattice_c": float(self.lat_c.value()),
+            "lattice_alpha": float(self.lat_alpha.value()),
+            "lattice_beta": float(self.lat_beta.value()),
+            "lattice_gamma": float(self.lat_gamma.value()),
+            "surface_hkl": " ".join(str(v) for v in self.surface_hkl()),
+            "kpar_hkl": " ".join(str(v) for v in self.kpar_hkl()),
+            "kpar_rotation_deg": float(self.kpar_rotation.value()),
             "surface_period_invA": float(self.surface_period()),
         })
         info = record_step(dict(scan.info),
                            Step("kz_to_k", parameters,
                                 source=self.contour.filename))
         info["kz.inner_potential_eV"] = float(settings["inner_potential"])
+        # Hand the crystal on to the Brillouin-zone dialog of the converted
+        # map, so the zone drawn there starts as the one drawn here rather
+        # than as a 3 A cubic cell along (001).
+        h, k, l = self.surface_hkl()
+        kh, kk, kl = self.kpar_hkl()
+        info.update({
+            "bz.mode": "3d", "bz.zone": "conventional",
+            "bz.space_group": int(self.space_group.value()),
+            "bz.a": float(self.lat_a.value()), "bz.b": float(self.lat_b.value()),
+            "bz.c": float(self.lat_c.value()),
+            "bz.alpha": float(self.lat_alpha.value()),
+            "bz.beta": float(self.lat_beta.value()),
+            "bz.gamma": float(self.lat_gamma.value()),
+            "bz.h": h, "bz.k": k, "bz.l": l,
+            "bz.kpar_h": kh, "bz.kpar_k": kk, "bz.kpar_l": kl,
+            "bz.azimuth_deg": float(self.kpar_rotation.value()),
+            "bz.offset": 0.0,
+        })
 
         name = _unique(f"{self.contour.filename} [kz]",
                        self.contour.existing_names())
@@ -626,6 +783,16 @@ class KzConversionDialog(QDialog):
             f"k_par {kpar_axis[0]:.3f} to {kpar_axis[-1]:.3f} Å⁻¹, "
             f"{coverage:.0f}% covered.<br>"
             f"Added to the list as “{name}”.")
+
+
+def _same_direction(first, second) -> bool:
+    """Whether two Miller triples name the same set of planes: (002) and
+    (001), (-1 0 0) and (100) are one surface."""
+    first = np.asarray(first, dtype=float)
+    second = np.asarray(second, dtype=float)
+    if not first.any() or not second.any():
+        return False
+    return bool(np.linalg.norm(np.cross(first, second)) < 1e-9)
 
 
 def _unique(name: str, taken) -> str:

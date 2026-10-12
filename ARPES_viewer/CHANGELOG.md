@@ -10,6 +10,34 @@ file is the record of how it got that way.
 
 ---
 
+## Forty-fifth round: the zone on a k_z map, for any surface
+
+- **The zone drawn on a k_z map was only ever right for (001).** The
+  kz -> momentum preview drew vertical lines at multiples of the period
+  along the chosen normal. Those are Gamma points, not zone boundaries, and
+  the picture was the same whatever the surface: a k_z map is the plane
+  holding the surface normal *and* the slit direction, and on anything but
+  a simple (001) surface (a centred lattice, a (110) or (111) cleave) that
+  plane cuts the zone into hexagons and rhombi whose edges are neither
+  perpendicular to k_z nor at multiples of the period.
+  `tools.bz3d.kz_frame` / `kz_zone_cuts` now cut every copy of the 3-D
+  zone by that plane and return the polygons directly in (k_z, k_par);
+  the window asks which way the slit ran ("k_par along (hkl)", plus a
+  rotation about the normal).
+- **The Brillouin-zone dialog is offered on a converted k_z map** (it was
+  hidden for `kz_map_k`). There the (h k l) is the surface normal = k_z,
+  the azimuth turns k_par about it, and the offset moves the plane out of
+  the slit direction. The conversion hands its crystal and normal on, so
+  the dialog opens on the zone the preview showed.
+- **The kz window's lattice ignored gamma.** It built `LatticeParams(a, a,
+  c)` with every angle 90 even for its own default, hexagonal #194, so
+  every reciprocal length but the one along c was wrong (and a cubic group
+  took c independently of a). It now has all six parameters, with the ones
+  the space group fixes disabled and driven, like the zone dialog's.
+- **Editing a lattice constant reset the surface normal** to the first
+  entry, because the choice was found again by its text, which carries the
+  period. It is now kept by its (h k l).
+
 ## Forty-fourth round: the map's sliders slice memory, not the file
 
 - **Dragging the energy slider of a map was slow, and it was the access
