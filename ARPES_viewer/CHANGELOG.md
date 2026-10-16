@@ -10,6 +10,17 @@ file is the record of how it got that way.
 
 ---
 
+## Unreleased
+
+- **A decimal point in every number box, whatever the system language.**
+  Qt's spin boxes follow the system locale, so on a French (or German,
+  Spanish...) system the energy-integration range in the map window and
+  every other number field showed and expected a comma, `0,05`, and typing
+  `0.05` was refused. The program now sets Qt's default locale to the plain
+  C locale at start-up: a point for the decimal, no thousands separator, on
+  every machine. `test/test_number_locale.py` runs the program under a
+  French locale and checks a box shows `1234.500` and accepts `0.05`.
+
 ## Version 2026-10-12
 
 The forty-sixth to forty-eighth rounds below make up this version, saved as
