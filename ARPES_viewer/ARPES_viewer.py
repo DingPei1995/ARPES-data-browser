@@ -39,6 +39,12 @@ from PyQt5.QtWidgets import (QAction, QApplication, QMainWindow, QTableWidgetIte
 
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 QApplication.setHighDpiScaleFactorRoundingPolicy(QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+# Numbers are written and read the same way on every machine: a point for
+# the decimal and no thousands separator. Qt's number boxes otherwise follow
+# the system locale, so on a French or German Windows they showed "0,05" and
+# took "0.05" as invalid. Set before any widget exists -- a widget copies the
+# default locale when it is made.
+QtCore.QLocale.setDefault(QtCore.QLocale.c())
 
 from tools import system
 from tools import memory as memory_tools
