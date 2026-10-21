@@ -79,7 +79,10 @@ read.
 A numbered folder from CASSIOPEE (`<name>_1_ROI1_.txt`, `<name>_2_ROI1_.txt`,
 ...) is **one measurement**, not a pile of spectra. Select any file in it --
 or several, or all of them -- and the folder is listed once, as the assembled
-cube, with the individual spectra available below it.
+cube. Its row is named after the folder's base name with the photon energy
+and polarisation from the `_i` files (`FineMap 117eV LH`; a photon-energy
+scan shows its range, `KzScan 40-120eV LH`), so repeats of one scan at
+different settings can be told apart.
 
 What the folder becomes depends on what was stepped between the spectra,
 which is read from the small `_i` parameter files that sit beside them:

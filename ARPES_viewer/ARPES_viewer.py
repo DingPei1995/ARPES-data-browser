@@ -33,6 +33,7 @@ import time
 import traceback
 
 from PyQt5 import QtCore
+from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtWidgets import (QAction, QApplication, QMainWindow, QTableWidgetItem,
                               QListWidgetItem, QFileDialog, QMenu, QMessageBox,
                               QInputDialog, QDialog, QPushButton)
@@ -1838,6 +1839,30 @@ def offer_recovery():
     return len(paths)
 
 
+def open_autosave_folder():
+    """Show the auto-save folder in the system's file browser.
+
+    The copies are deleted on their own -- at a confirmed close, or
+    :data:`loader.session.KEEP_DAYS` after a crash -- but a beamline disk
+    fills up faster than that, and the quickest way to clear it is to look.
+    The status bar names this session's own folder, which is in use.
+    """
+    root = session.root
+    try:
+        os.makedirs(root, exist_ok=True)
+    except OSError as exc:
+        QMessageBox.warning(win, "Auto-save folder",
+                            f"Could not open {root}:\n{exc}")
+        return
+    if not QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(root)):
+        QMessageBox.information(win, "Auto-save folder",
+                                f"The auto-saved copies are in\n{root}")
+        return
+    ui.statusbar.showMessage(
+        f"Auto-save folder: {root} -- this session's own copies are in "
+        f"{session.name}; leave that one while the program is running")
+
+
 def show_operations_log():
     """The operations log, in a window. What was written, when, and where."""
     rows = nxs_session.read_log(session.root)
@@ -2029,6 +2054,7 @@ def SetConnect():
 
     ui.FreeMemoryButton.clicked.connect(free_memory)
     ui.CloseViewersButton.clicked.connect(close_all_viewers)
+    ui.OpenAutosaveButton.clicked.connect(open_autosave_folder)
 
 
 def InitializeUIWidgets():

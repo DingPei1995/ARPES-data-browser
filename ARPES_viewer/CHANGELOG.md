@@ -12,6 +12,23 @@ file is the record of how it got that way.
 
 ## Unreleased
 
+- **A CASSIOPEE folder adds one row, not two.** Loading a numbered folder
+  also listed the clicked spectrum on its own, named after its Scienta
+  region -- usually a placeholder such as "test". Only the assembled map is
+  listed now; a lone spectrum still lists as a cut.
+- **CASSIOPEE rows carry the photon energy and polarisation**, read from the
+  `_i` files: `FineMap 117eV LH`, or `KzScan 40-120eV LH` for a photon-energy
+  scan. The same scan repeated at another energy or polarisation used to
+  show as identical rows. The cut count stays in the row's tooltip.
+- **Open auto-save folder**, a button under the Memory box, opens the
+  session folders in the system's file browser so old working copies can be
+  deleted by hand.
+- **Old session folders from before the rename are swept too.** The
+  three-day sweep looked only in `~/.arpes_viewer/sessions`, while the
+  recovery offer also looks in the old `~/.nxsloader/sessions`, so folders
+  there were offered at every start and never went. A folder whose delete
+  fails (a file open elsewhere, on Windows) is now logged as not deleted
+  instead of as removed.
 - **A decimal point in every number box, whatever the system language.**
   Qt's spin boxes follow the system locale, so on a French (or German,
   Spanish...) system the energy-integration range in the map window and

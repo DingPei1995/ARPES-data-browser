@@ -178,6 +178,15 @@ class Ui_MainWindow:
         memory_layout.addLayout(memory_row)
         menu_layout.addWidget(self.MemoryBox)
 
+        # -- the auto-saved working copies, for clearing out by hand.
+        self.OpenAutosaveButton = QtWidgets.QPushButton(
+            "Open auto-save folder", self.centralwidget)
+        self.OpenAutosaveButton.setToolTip(
+            "Open the folder where computed datasets are auto-saved, in the "
+            "system's file browser, to delete old working copies by hand. "
+            "The folder of the session now running is in use; leave it.")
+        menu_layout.addWidget(self.OpenAutosaveButton)
+
         self.statusbar = QtWidgets.QStatusBar(MainWindow)
         MainWindow.setStatusBar(self.statusbar)
 

@@ -998,6 +998,50 @@ def load_cut(path: str, region_index: int = 0,
 # --------------------------------------------------------------------------
 # The loader itself
 # --------------------------------------------------------------------------
+# Labelling a row in the browser
+# --------------------------------------------------------------------------
+def _series_beam(members):
+    """``(photon energies, polarisation)`` of a series, from the small
+    ``_i`` files alone -- the same cheap read :func:`series_kind` makes."""
+    photon_energies, polarisation = [], None
+    for _index, member in members:
+        parameters = read_parameter_file(parameter_path(member))
+        photon_energies.append(parameters.get("photon_energy_eV"))
+        polarisation = polarisation or parameters.get("polarisation")
+    return photon_energies, polarisation
+
+
+def _photon_energy_label(values) -> str:
+    """``"117eV"``, or ``"40-120eV"`` for a photon-energy scan; ``""`` if
+    nothing usable was recorded. Rounded to 0.1 eV, since the readback
+    carries the monochromator's own jitter (117.0012 is 117)."""
+    finite = []
+    for value in values:
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(value):
+            finite.append(round(value, 1))
+    if not finite:
+        return ""
+    low, high = min(finite), max(finite)
+    if low == high:
+        return f"{low:g}eV"
+    return f"{low:g}-{high:g}eV"
+
+
+def _with_beam(name: str, beam) -> str:
+    """``name`` followed by the photon energy and polarisation it was
+    measured with, leaving out whichever is unknown."""
+    photon_energies, polarisation = beam
+    parts = [name, _photon_energy_label(photon_energies)]
+    if polarisation:
+        parts.append(str(polarisation))
+    return " ".join(part for part in parts if part)
+
+
+# --------------------------------------------------------------------------
 class CassiopeeLoader(Loader):
     name = "SOLEIL CASSIOPEE"
     description = ("Scienta text spectra from the CASSIOPEE beamline at "
@@ -1031,44 +1075,55 @@ class CassiopeeLoader(Loader):
         return SCIENTA_MARKER.encode("latin-1") in head
 
     def list_entries(self, path: str) -> list:
-        """The whole folder first, then this one spectrum.
+        """The whole folder as one map, or this one spectrum.
 
         A numbered folder here is *one measurement* -- the map is the point
-        and the individual spectra are its rows -- so the assembled series is
-        offered first and is what opening the folder gives you. The single
-        spectrum stays available below it, because checking one cut of a map
-        is a normal thing to want.
+        and the individual spectra are its rows -- so a member of a series
+        offers only the assembled map. Offering the clicked spectrum as well
+        put a second row in the list for every folder loaded, named after the
+        Scienta region (often a placeholder such as "test"), which nobody
+        had asked for.
 
         The series entry carries a ``path`` of its own: the folder's first
         member, whichever member was actually clicked. That is what makes
         selecting five files out of a folder add *one* map rather than five
         copies of it -- the entry identifies the measurement, not the file
         that happened to be picked.
+
+        Names end with the photon energy and polarisation ("FineMap 117eV
+        LH"): scans at one spot are routinely repeated at several energies
+        and polarisations under the same base name, and without them the
+        list shows several identical rows.
         """
-        entries = []
         members = series_members(path)
         if len(members) > 1:
             base = SERIES_PATTERN.match(
                 os.path.splitext(os.path.basename(path))[0]).group("base")
             stepped = series_kind(path)
-            entries.append({
+            return [{
                 "entry": "series",
                 "path": members[0][1],
                 "kind": KIND_FOR_SERIES.get(stepped, "Map"),
-                "name": f"{base} ({len(members)} cuts)",
+                "name": _with_beam(base, _series_beam(members)),
                 "title": SERIES_TITLES.get(stepped, "").format(n=len(members)),
                 "start_time": None,
-            })
+            }]
 
         try:
             regions = parse_scienta(path)
         except Exception:
-            return entries
+            return []
+        parameters = read_parameter_file(parameter_path(path))
+        entries = []
         for index, region in enumerate(regions):
+            beam = ([parameters.get("photon_energy_eV",
+                                    region.info.get("photon_energy_eV"))],
+                    parameters.get("polarisation"))
+            name = region.name or os.path.splitext(os.path.basename(path))[0]
             entries.append({
                 "entry": f"region {index + 1}" if len(regions) > 1 else "cut",
                 "kind": "Cut",
-                "name": region.name or os.path.splitext(os.path.basename(path))[0],
+                "name": _with_beam(name, beam),
                 "title": region.name,
                 "start_time": region.info.get("date"),
             })
