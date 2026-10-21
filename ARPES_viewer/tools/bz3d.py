@@ -147,6 +147,7 @@ def wigner_seitz_cell(b: np.ndarray, max_shell: int = 5,
     than silently returning an under-converged shape).
     """
     b1, b2, b3 = b
+    target = abs(float(np.linalg.det(np.asarray(b, dtype=float))))
     previous_volume = None
     result = None
     for shell in range(1, max_shell + 1):
@@ -168,6 +169,12 @@ def wigner_seitz_cell(b: np.ndarray, max_shell: int = 5,
 
         result = BrillouinZone(faces=faces, vertices=verts, volume=volume,
                                shells_used=shell)
+        # The intersection always *contains* the true cell, and the true
+        # cell's volume is the reciprocal cell's, so equal volume means
+        # done -- an exact test, where "the same as last shell" could in
+        # principle stall on two equally incomplete shells.
+        if abs(volume - target) <= 1e-7 * target:
+            return result
         if previous_volume is not None and \
                 abs(volume - previous_volume) <= rel_tol * previous_volume:
             return result
@@ -378,42 +385,28 @@ def tile_and_cut(zone: BrillouinZone, b: np.ndarray, normal: np.ndarray,
     -- i.e. "the same Brillouin zone, repeated" rather than higher-order
     zones, since every copy is the same shape.
 
-    ``margin`` extra shells of reciprocal-lattice translations are searched
-    beyond the box implied by ``u_range``/``v_range``, so a zone whose
-    centre sits just outside the visible range but whose corner pokes in is
-    not missed at the edge of the field of view.
+    ``margin`` is no longer used and is kept so existing callers still
+    work; see below.
 
     Returns a list of ``(u, v)`` polygons (each closed, as from
     :func:`plane_cut`).
+
+    The copies are found by :func:`cuts_in_frame`, from the window and the
+    plane's actual position. This used to search a box of ``span / |b_i|``
+    lattice indices around Gamma, which missed copies -- or every copy --
+    once the plane was slid further along its normal than the window is
+    wide (a rhombohedral (001) cut at 6 Å⁻¹ came back empty and was reported
+    as "the plane does not meet the zone"), and under-counted for an
+    oblique cell, where a short distance can take large lattice indices.
     """
-    b1, b2, b3 = b
     u_axis, v_axis = plane_basis(normal)
     span = max(u_range[1] - u_range[0], v_range[1] - v_range[0], 1e-9)
-    # how far one lattice translation moves the cut, in-plane, per index --
-    # a conservative (over-)estimate from each b_i's own length, so the
-    # search range is generous rather than tuned
-    scales = [max(np.linalg.norm(bi), 1e-9) for bi in (b1, b2, b3)]
-    n_i, n_j, n_k = (int(np.ceil(span / s)) + margin for s in scales)
-    n_i, n_j, n_k = (min(n, 20) for n in (n_i, n_j, n_k))  # sanity cap
-
-    polygons = []
-    idx_i = np.arange(-n_i, n_i + 1)
-    idx_j = np.arange(-n_j, n_j + 1)
-    idx_k = np.arange(-n_k, n_k + 1)
-    for i in idx_i:
-        for j in idx_j:
-            for k in idx_k:
-                shift = i * b1 + j * b2 + k * b3
-                shifted_faces = [loop + shift for loop in zone.faces]
-                u, v = plane_cut(shifted_faces, normal, point)
-                if u is None:
-                    continue
-                pad = 0.5 * span / max(len(idx_i), 1)  # generous edge margin
-                if (u.max() < u_range[0] - pad or u.min() > u_range[1] + pad or
-                        v.max() < v_range[0] - pad or v.min() > v_range[1] + pad):
-                    continue
-                polygons.append((u, v))
-    return polygons
+    # a little beyond the window, so a copy whose corner just pokes in at
+    # the edge of the field of view is not dropped
+    pad = 0.05 * span
+    return cuts_in_frame(zone, b, point, u_axis, v_axis,
+                         (u_range[0] - pad, u_range[1] + pad),
+                         (v_range[0] - pad, v_range[1] + pad))
 
 
 # -- cuts containing the surface normal: the zone a k_z map sees -------------

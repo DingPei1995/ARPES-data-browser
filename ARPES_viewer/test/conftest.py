@@ -18,3 +18,11 @@ def _collect_between_tests():
     gc.collect()
     if was_enabled:
         gc.enable()
+
+
+@pytest.fixture(autouse=True)
+def _private_config_dir(tmp_path, monkeypatch):
+    """Settings a dialog remembers between uses (the Brillouin-zone tool's
+    last crystal) go to a folder of this test's own, not the user's home --
+    so no test sees what another one, or a real session, left behind."""
+    monkeypatch.setenv("ARPES_VIEWER_CONFIG_DIR", str(tmp_path / "config"))

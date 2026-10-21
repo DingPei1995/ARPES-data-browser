@@ -344,8 +344,13 @@ Sur une carte k : *Functions → Visualization → Brillouin zone...*.
    layer** pour un réseau de surface.
 2. **Cut plane** : la normale à la surface (hkl) et un décalage le long de
    celle-ci — on trace la section de la zone 3D par ce plan, pour n'importe
-   quelle surface et pas seulement (001). **Show cut plane in 3D...** la
-   prévisualise.
+   quelle surface et pas seulement (001). **Through point** donne les
+   décalages pour lesquels le plan passe par un point de haute symétrie (Γ,
+   Z, L, F ... pour un cristal rhomboédrique) : choisissez-en un plutôt que
+   de calculer la valeur. **Show cut plane in 3D...** la prévisualise, avec
+   les points nommés et, entourés, ceux que contient le plan ; **Label
+   high-symmetry points** les écrit sur le contour, ce qui aide à régler
+   l'azimut. La fenêtre s'ouvre sur le dernier cristal utilisé.
 3. Zone **Conventional** ou **Irreducible** ; **Azimuth** (ou **Pick
    direction from contour...**) ; **Repeat across the field of view**.
 4. **Moiré** ajoute une seconde couche, tournée ou désaccordée, et sa zone de

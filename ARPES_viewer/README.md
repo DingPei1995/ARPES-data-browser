@@ -321,7 +321,11 @@ mouse to pause; a map held in memory follows it live.
   datasets at once when they really are the same format.
 - **Brillouin zone** -- overlay a conventional or irreducible zone, or a
   moiré zone, on a converted contour. Space group first, then the lattice
-  parameters it constrains; a 3-D preview shows how the cut plane sits.
+  parameters it constrains; a 3-D preview shows how the cut plane sits,
+  with the named high-symmetry points (Γ, M, K, Z, L, ...) marked, and a
+  **Through point** list offers the offsets that put the cut through one of
+  them. The points the plane holds are labelled on the contour too. The
+  dialog starts from the last crystal used (`~/.arpes_viewer/brillouin_zone.json`).
 - **kz map processing** and **kz -> momentum** -- see below.
 - **The curve viewer**, its **curve fit** and **spin analysis** -- see below.
 - **De-grid** -- remove the detector's grid (MCP pattern or mesh) from a map
@@ -731,7 +735,7 @@ you what it may depend on.
 | `tools/cutops.py` | Arithmetic between two cuts: scaling, resampling, dichroism, reference division, Poisson uncertainty, and which recorded conditions differ. |
 | `tools/cleavage.py` | From a measured k_z period to which lattice planes could have produced it. |
 | `tools/fermi.py`, `tools/peaks.py`, `tools/dispersion.py` | The Fermi-edge model, MDC/EDC peak fitting, and what the fitted band says (`v_F`, `m*`, self-energy). |
-| `tools/lattice.py`, `tools/spacegroups.py`, `tools/bz3d.py`, `tools/bz2d.py`, `tools/moire.py` | The Brillouin-zone geometry: lattices and point groups, the 3-D and 2-D zones and their irreducible wedges, and the moiré zone. |
+| `tools/lattice.py`, `tools/spacegroups.py`, `tools/bz3d.py`, `tools/bz2d.py`, `tools/moire.py`, `tools/highsym.py` | The Brillouin-zone geometry: lattices and point groups, the 3-D and 2-D zones and their irreducible wedges, the moiré zone, and the named high-symmetry points (a static table per Bravais lattice, after Setyawan & Curtarolo 2010). |
 | `tools/figure.py`, `tools/export.py` | What a publication figure *is*, and what leaves the program. |
 | `tools/colormaps.py`, `tools/system.py` | Generated colormap tables; the stand-ins for the lab's `tools_packages`. |
 | **`ui/`** | |

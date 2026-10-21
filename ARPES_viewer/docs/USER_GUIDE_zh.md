@@ -285,7 +285,11 @@ cut**），此时等能面窗口保持隐藏，需要时用 *Functions → Show 
 1. 先选**空间群**（1–230）；被空间群约束的晶格参数显示为灰色并自动跟随。也可
    切换到 **2D layer** 使用二维表面晶格。
 2. **Cut plane**：表面法线 (hkl) 及沿法线的偏移——画出的是三维布里渊区被该平面
-   截出的截面，适用于任意晶面，而不只是 (001)。**Show cut plane in 3D...** 可预览。
+   截出的截面，适用于任意晶面，而不只是 (001)。**Through point** 列出平面经过高对称点
+   （菱方晶体为 Γ、Z、L、F……）时的偏移量，直接选择即可，无需自己计算。
+   **Show cut plane in 3D...** 可预览，图中标出高对称点，并圈出该平面经过的点；
+   **Label high-symmetry points** 会把这些点标在等能面图上，方便设置方位角。
+   对话框会自动沿用上一次使用的晶体参数。
 3. 选择 **Conventional**（常规）或 **Irreducible**（不可约）区；设置 **Azimuth**
    （或 **Pick direction from contour...**）；**Repeat across the field of view**
    在视野内重复绘制。

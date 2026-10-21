@@ -317,7 +317,13 @@ On a k-map: *Functions → Visualization → Brillouin zone...*.
    and follow the free ones. Or switch to **2D layer** for a surface lattice.
 2. **Cut plane**: the surface normal (hkl) and an offset along it — the cut of
    the 3-D zone by that plane is drawn, for any surface, not only (001).
-   **Show cut plane in 3D...** previews it.
+   **Through point** lists the offsets at which the plane passes through a
+   high-symmetry point (Γ, Z, L, F ... for a rhombohedral crystal); choose
+   one rather than working the number out. **Show cut plane in 3D...**
+   previews it, with the named points marked and the ones in the plane
+   ringed; **Label high-symmetry points** writes them on the contour, which
+   is the quickest way to set the azimuth. The dialog opens on the last
+   crystal you used, so a second map of the same sample needs no retyping.
 3. **Conventional** or **Irreducible** zone; **Azimuth** (or **Pick
    direction from contour...**); **Repeat across the field of view**.
 4. **Moiré** adds a second, twisted or mismatched layer and its moiré zone.
