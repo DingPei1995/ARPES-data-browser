@@ -44,7 +44,8 @@ from loader.registry import Loader, register
 class SoleilAntaresLoader(Loader):
     name = "SOLEIL ANTARES"
     description = ("Nano-ARPES .nxs files from the ANTARES beamline at "
-                   "SOLEIL: spatial scans, deflector maps and single cuts.")
+                   "SOLEIL: spatial scans, deflector maps, single cuts and "
+                   "photon-energy (PhD) scans.")
     patterns = ("*.nxs",)
     priority = 10
 
@@ -71,8 +72,8 @@ class SoleilAntaresLoader(Loader):
     def list_entries(self, path: str) -> list:
         return list_datasets(path)
 
-    def load(self, path: str, entry: str = None):
-        return load_soleil_nxs(path, entry=entry)
+    def load(self, path: str, entry: str = None, progress=None):
+        return load_soleil_nxs(path, entry=entry, progress=progress)
 
 
 register(SoleilAntaresLoader())

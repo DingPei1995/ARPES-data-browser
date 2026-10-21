@@ -63,6 +63,9 @@ Data "kinds" produced
                    material for a (kx, ky, E) visualization. See
                    :func:`deflector_angle_to_kx` to convert the raw deflector
                    angle axis to a momentum axis.
+- ``"kz_map"``   : a photon-energy (PhD) scan, (hv, angle, E), assembled
+                   from one single-frame entry per photon energy (case 6,
+                   see :func:`_parse_phd`).
 - ``"unsupported"``: case 1 (``Scan2D_MBS_vs_PIX_PIY``), left unimplemented
                    in the .m file too ("not finish for 2019 version").
 """
@@ -169,6 +172,12 @@ def _classify_entry(f: h5py.File, g: str) -> Optional[int]:
             return 4
         if has_case3:
             return 3
+
+    # Case 6: one frame of a photon-energy (PhD) scan -- a group beside
+    # ANTARES/User holding a single MBS image and its scales. See
+    # _parse_phd for how a file of these becomes one kz map.
+    if _phd_group(f, g) is not None:
+        return 6
 
     return GROUP_NAME_TO_CASE.get(g)
 
@@ -1297,6 +1306,271 @@ def _parse_case34(f: h5py.File, g: str, e_idx: tuple, x_idx: tuple, v_idx: str) 
 
 
 # --------------------------------------------------------------------------
+# Photon-energy dependent scans (PhD)
+# --------------------------------------------------------------------------
+#: An ANTARES photon-energy scan is not one entry with a scanned axis, the
+#: way a deflector map is. It is one top-level entry *per photon energy* --
+#: ``Phd_0002``, ``Phd_0003``, ... -- each holding a single MBS frame in a
+#: group of its own (``MBS_0_0``, ``MBS_0_1``, ...) beside the usual
+#: ``ANTARES`` and ``User`` trees, with the frame's own scales and the
+#: photon energy it was taken at::
+#:
+#:     /Phd_0002/MBS_0_0/Image32_1       (angle, energy) int32
+#:     /Phd_0002/MBS_0_0/Escale_Min_1, Escale_Mult_1, Escale_Max_1
+#:     /Phd_0002/MBS_0_0/Xscale_Min_1, Xscale_Mult_1, Xscale_Max_1
+#:     /Phd_0002/MBS_0_0/hv, Theta, Phi, PI-X, PI-Y, PI-Z
+#:
+#: The first entry of a real file (``Phd_0001``) holds only the beamline
+#: state and no frame, so "is this a PhD entry" is decided by the frame
+#: being there, not by the name. The browser lists the frames of a file as
+#: one ``kz_map`` under the entry name :data:`PHD_WILDCARD` appended to their
+#: shared prefix (``"Phd_*"``); each frame can still be opened on its own,
+#: by its own name, as a cut.
+PHD_IMAGE = "Image32_1"
+PHD_WILDCARD = "*"
+
+#: What the analyser work function is taken to be when a PhD scan's energy
+#: axis is kinetic and has to be referred to the Fermi level. The files do
+#: not record one. It is written into the scan's info as
+#: ``work_function_eV``, which the k_z conversion reads back, so the two
+#: steps cannot disagree; a wrong value is a rigid energy shift, which the
+#: Fermi-edge tools correct.
+PHD_WORK_FUNCTION_EV = 4.5
+
+
+def _phd_group(f: h5py.File, g: str) -> Optional[str]:
+    """The group under entry ``g`` holding a single MBS frame, or None."""
+    try:
+        entry = f[g]
+    except KeyError:
+        return None
+    if not isinstance(entry, h5py.Group):
+        return None
+    for name in entry.keys():
+        if name in ("ANTARES", "User", "scan_data", "scan_config"):
+            continue
+        sub = entry.get(name)
+        if (isinstance(sub, h5py.Group) and PHD_IMAGE in sub
+                and "Escale_Min_1" in sub and "Xscale_Min_1" in sub):
+            return f"{g}/{name}"
+    return None
+
+
+def _phd_prefix(names) -> str:
+    """``["Phd_0002", "Phd_0003"]`` -> ``"Phd_"``: the shared name with its
+    running number taken off."""
+    stems = {re.sub(r"\d+$", "", name) for name in names}
+    return stems.pop() if len(stems) == 1 else "PhD_"
+
+
+def phd_entries(f: h5py.File) -> "list[str]":
+    """The top-level entries of ``f`` that are one frame of a PhD scan, in
+    file order."""
+    return [name for name in f.keys()
+            if _classify_entry(f, "/" + name) == 6]
+
+
+def _phd_hv(f: h5py.File, g: str, mbs: str) -> float:
+    """The photon energy one PhD frame was taken at: the frame's own record
+    of it, else the monochromator's."""
+    for path in (f"{mbs}/hv", f"{g}/ANTARES/i12-m-c04-op-mono1/energy"):
+        if path in f:
+            try:
+                return scalar0(f[path][()], path)
+            except (ValueError, TypeError):
+                continue
+    return float("nan")
+
+
+def _phd_frame_axes(f: h5py.File, mbs: str):
+    """``(dataset, perm, angle, energy)`` for one frame: the energy and
+    slit axes from its scales, and which raw axis of the image is which.
+
+    The scales are ``min:mult:max``, and that range can come out one point
+    longer or shorter than the image by rounding, so the image's own
+    lengths decide the axis length and the scales only say which is which
+    and where they start.
+    """
+    def scale(prefix):
+        lo = scalar0(f[f"{mbs}/{prefix}_Min_1"][()], f"{prefix}_Min_1")
+        step = scalar0(f[f"{mbs}/{prefix}_Mult_1"][()], f"{prefix}_Mult_1")
+        hi = scalar0(f[f"{mbs}/{prefix}_Max_1"][()], f"{prefix}_Max_1")
+        return lo, step, len(matlab_colon(lo, step, hi))
+
+    dataset = f[f"{mbs}/{PHD_IMAGE}"]
+    if dataset.ndim != 2:
+        raise ValueError(f"{mbs}/{PHD_IMAGE}: expected a 2-D frame, got "
+                         f"shape {dataset.shape}")
+    e0, de, ne = scale("Escale")
+    x0, dx, nx = scale("Xscale")
+    shape = dataset.shape
+    as_stored = abs(shape[0] - nx) + abs(shape[1] - ne)
+    swapped = abs(shape[0] - ne) + abs(shape[1] - nx)
+    perm = (0, 1) if as_stored <= swapped else (1, 0)
+    n_angle, n_energy = shape[perm[0]], shape[perm[1]]
+    angle = x0 + dx * np.arange(n_angle)
+    energy = e0 + de * np.arange(n_energy)
+    return dataset, perm, angle, energy
+
+
+def _resample_energy(frame: np.ndarray, source: np.ndarray,
+                     target: np.ndarray) -> np.ndarray:
+    """Linear resampling of ``frame`` (angle, energy) from the evenly
+    stepped ``source`` energy axis onto ``target``, which lies inside it."""
+    step = source[1] - source[0] if source.size > 1 else 1.0
+    position = (target - source[0]) / step
+    position = np.clip(position, 0, source.size - 1)
+    low = np.minimum(np.floor(position).astype(int), source.size - 2)
+    low = np.maximum(low, 0)
+    weight = (position - low).astype(frame.dtype)
+    high = np.minimum(low + 1, source.size - 1)
+    return frame[:, low] * (1 - weight) + frame[:, high] * weight
+
+
+def _parse_phd(f: h5py.File, names: "list[str]", progress=None) -> NxsScan:
+    """Assemble the PhD frames ``names`` into one (hv, angle, energy) cube.
+
+    Each frame is measured at its own photon energy, so the same kinetic
+    energy is a different state in each, and a cube has only one energy
+    axis. When the frames' axes are kinetic (they lie near hv, not near
+    zero) each is referred to the Fermi level by its own photon energy,
+    ``E - E_F = E_kin - hv + W``, with ``W`` = :data:`PHD_WORK_FUNCTION_EV`;
+    an axis that is already a binding energy is used as it is. If the
+    referred windows coincide the frames are stacked untouched; otherwise
+    they are resampled, linearly and along energy only, onto the range all
+    of them cover.
+    """
+    frames = []
+    for position, name in enumerate(names):
+        g = "/" + name
+        if progress is not None:
+            progress(position, len(names), name)
+        mbs = _phd_group(f, g)
+        dataset, perm, angle, energy = _phd_frame_axes(f, mbs)
+        frame = np.transpose(np.asarray(dataset[()], dtype=np.float32), perm)
+        frames.append({
+            "entry": name, "frame": frame, "angle": angle, "energy": energy,
+            "hv": _phd_hv(f, g, mbs),
+            "theta": _read_opt(f, f"{mbs}/Theta"),
+            "phi": _read_opt(f, f"{mbs}/Phi"),
+        })
+
+    shapes = {item["frame"].shape for item in frames}
+    if len({shape[0] for shape in shapes}) != 1:
+        raise ValueError(
+            f"the frames of this photon-energy scan do not all have the same "
+            f"number of angles ({sorted(shapes)}); they cannot be one cube")
+    frames.sort(key=lambda item: item["hv"])
+    hv = np.asarray([item["hv"] for item in frames], dtype=float)
+    angle = frames[0]["angle"]
+
+    notes = {}
+    kinetic = bool(np.all(np.isfinite(hv))) and all(
+        np.median(item["energy"]) > 0.5 * item["hv"] for item in frames)
+    if kinetic:
+        referred = [item["energy"] - item["hv"] + PHD_WORK_FUNCTION_EV
+                    for item in frames]
+        energy_label = f"E - E_F ({ENERGY_UNIT})"
+        notes["work_function_eV"] = PHD_WORK_FUNCTION_EV
+        notes["antares.energy_reference"] = (
+            f"each frame referred by its own hv: E_kin - hv + "
+            f"{PHD_WORK_FUNCTION_EV:g} eV (assumed work function)")
+    else:
+        referred = [item["energy"] for item in frames]
+        energy_label = f"Energy ({ENERGY_UNIT})"
+        notes["antares.energy_reference"] = "as recorded"
+
+    first = referred[0]
+    step = abs(first[1] - first[0]) if first.size > 1 else 1.0
+    same = all(axis.size == first.size
+               and np.max(np.abs(axis - first)) < 0.01 * step
+               for axis in referred)
+    if same:
+        energy = first
+        cube = np.stack([item["frame"] for item in frames], axis=0)
+    else:
+        low = max(float(axis.min()) for axis in referred)
+        high = min(float(axis.max()) for axis in referred)
+        if high <= low:
+            raise ValueError(
+                "the energy windows of this photon-energy scan's frames do "
+                "not overlap once referred to the Fermi level, so there is "
+                "no energy range common to all of them")
+        energy = low + step * np.arange(int(np.floor((high - low) / step
+                                                     + 1e-9)) + 1)
+        cube = np.empty((len(frames), angle.size, energy.size),
+                        dtype=np.float32)
+        for index, (item, axis) in enumerate(zip(frames, referred)):
+            if axis[0] > axis[-1]:
+                axis, frame = axis[::-1], item["frame"][:, ::-1]
+            else:
+                frame = item["frame"]
+            cube[index] = _resample_energy(frame, axis, energy)
+        notes["antares.energy_resampled"] = (
+            f"frames resampled onto their common range, "
+            f"{energy[0]:.4g} to {energy[-1]:.4g} eV")
+
+    varies = bool(np.all(np.isfinite(hv))) and np.ptp(hv) > 1e-6
+    scan = NxsScan(kind="kz_map" if varies else "map",
+                   filename_prefix="PhD_")
+    if varies:
+        stepped = hv
+        if hv.size > 2:
+            # The monochromator reads back where it stopped, not the even
+            # step that was asked for; straighten it when it is plainly a
+            # jittered even scan, since the viewers place rows evenly anyway.
+            index = np.arange(hv.size, dtype=float)
+            slope, intercept = np.polyfit(index, hv, 1)
+            straight = index * slope + intercept
+            if np.max(np.abs(straight - hv)) < 0.25 * abs(slope):
+                stepped = straight
+        scan.x = stepped
+        scan.labels = {"x": f"Photon energy ({ENERGY_UNIT})"}
+        scan.info["axis0.role"] = "photon_energy"
+    else:
+        scan.x = np.arange(1, len(frames) + 1, dtype=float)
+        scan.labels = {"x": "Index (cut)"}
+        scan.info["axis0.role"] = "other"
+    scan.k, scan.z = angle, np.asarray(energy, dtype=float)
+    scan.value = cube
+    scan.labels.update({"k": f"Angle along slit ({ANGLE_UNIT})",
+                        "z": energy_label})
+
+    scan.info.update(_read_common_info(f, "/" + frames[0]["entry"]))
+    scan.info.update(notes)
+    scan.info["antares.phd_members"] = len(frames)
+    scan.info["antares.phd_entries"] = [item["entry"] for item in frames]
+    scan.info["antares.axis0_measured"] = hv
+    if varies:
+        scan.info["PhotonEnergy"] = f"{hv.min():g} to {hv.max():g}"
+        scan.info["antares.photon_energy_range_eV"] = \
+            f"{hv.min():g} to {hv.max():g}"
+    for key in ("theta", "phi"):
+        values = [item[key] for item in frames]
+        if all(value is not None for value in values):
+            values = np.asarray([_scalarize(np.asarray(value))
+                                 for value in values], dtype=float)
+            scan.info[f"antares.{key}_deg"] = (
+                float(values[0]) if np.ptp(values) < 1e-6 else values)
+    if progress is not None:
+        progress(len(names), len(names), "")
+    return scan
+
+
+def _parse_phd_frame(f: h5py.File, g: str) -> NxsScan:
+    """One PhD frame on its own, as a cut."""
+    mbs = _phd_group(f, g)
+    dataset, perm, angle, energy = _phd_frame_axes(f, mbs)
+    scan = NxsScan(kind="cut", filename_prefix="Cut_")
+    scan.x, scan.y = angle, energy
+    scan.value = np.transpose(np.asarray(dataset[()], dtype=np.float32), perm)
+    scan.labels = {"x": f"Angle along slit ({ANGLE_UNIT})",
+                   "y": f"Energy ({ENERGY_UNIT})"}
+    _read_group_fields(f, mbs, "MBS", scan.info)
+    return scan
+
+
+# --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
 def _entry_kind(f: h5py.File, g: str) -> Optional[str]:
@@ -1316,6 +1590,8 @@ def _entry_kind(f: h5py.File, g: str) -> Optional[str]:
         return KIND_LABELS.get(str(kind), str(kind) or None)
     if case == 2:
         return "SPEM"
+    if case == 6:
+        return "Cut"
     if case in (3, 4):
         # Cut vs Map is decided by how many deflector positions were
         # scanned; the shape alone answers that, no data needed.
@@ -1520,8 +1796,15 @@ def list_datasets(path: str) -> "list[dict]":
     out = []
     try:
         with HANDLES.borrow(path) as f:
+            phd = phd_entries(f)
             for name in f.keys():
                 g = "/" + name
+                if len(phd) > 1 and name in phd:
+                    # The frames of a photon-energy scan are one
+                    # measurement: listed once, where the first one is.
+                    if name == phd[0]:
+                        out.append(_phd_listing(f, phd))
+                    continue
                 try:
                     kind = _entry_kind(f, g)
                 except Exception:
@@ -1537,6 +1820,21 @@ def list_datasets(path: str) -> "list[dict]":
     except Exception:
         return []
     return out
+
+
+def _phd_listing(f: h5py.File, names: "list[str]") -> dict:
+    """The one browser row for the PhD frames ``names``: a ``kz map``
+    when the photon energy was stepped, a plain map of cuts when it was
+    not. Reads only the scalar ``hv`` of each frame."""
+    hv = [_phd_hv(f, "/" + name, _phd_group(f, "/" + name)) for name in names]
+    varies = all(np.isfinite(hv)) and np.ptp(hv) > 1e-6
+    g = "/" + names[0]
+    return {
+        "entry": _phd_prefix(names) + PHD_WILDCARD,
+        "kind": KIND_LABELS["kz_map"] if varies else KIND_LABELS["map"],
+        "title": _first_string(f, f"{g}/title"),
+        "start_time": _first_string(f, f"{g}/start_time"),
+    }
 
 
 def probe_kind(path: str) -> str:
@@ -1602,7 +1900,8 @@ def _pick_entry(f: h5py.File, path: str, top_level: "list[str]") -> str:
     return chosen
 
 
-def load_soleil_nxs(path: str, entry: Optional[str] = None) -> NxsScan:
+def load_soleil_nxs(path: str, entry: Optional[str] = None,
+                    progress=None) -> NxsScan:
     """Load a SOLEIL ANTARES nano-ARPES ``*.nxs`` file. Returns an
     :class:`NxsScan`. Raises for unsupported/unrecognized files rather than
     silently returning garbage (unlike the .m file, which would error out
@@ -1612,6 +1911,13 @@ def load_soleil_nxs(path: str, entry: Optional[str] = None) -> NxsScan:
     than one (see :func:`list_entries`). By default the entry is picked
     automatically among the entries whose *content* is recognized (see
     :func:`_pick_entry`); pass this explicitly to override that guess.
+    A photon-energy (PhD) scan is read whole, as a ``kz_map``, when
+    ``entry`` is its wildcard name (``"Phd_*"``, as :func:`list_datasets`
+    lists it) or when ``entry`` is None and the file holds one; naming one
+    of its frames reads that frame alone, as a cut.
+
+    ``progress`` is ``callable(done, total, label)`` or None; only the PhD
+    assembly, which reads one frame per photon energy, reports through it.
     """
     # Any of the HDF5 extensions, not just .nxs. The check is here to catch
     # a file of the wrong *type* being pointed at -- a text spectrum, a
@@ -1633,6 +1939,27 @@ def load_soleil_nxs(path: str, entry: Optional[str] = None) -> NxsScan:
     keep_open = False
     try:
         top_level = list(f.keys())
+        phd = phd_entries(f)
+        if entry is not None and entry.endswith(PHD_WILDCARD):
+            stem = entry.lstrip("/")[:-len(PHD_WILDCARD)]
+            members = [name for name in phd if name.startswith(stem)]
+            if not members:
+                raise KeyError(
+                    f"No photon-energy scan frames matching '{entry}' in "
+                    f"{path}; available: {top_level}")
+        elif entry is None and len(phd) > 1:
+            members = phd
+        else:
+            members = None
+        if members is not None:
+            scan = _parse_phd(f, members, progress=progress)
+            scan.info["_group"] = "/" + _phd_prefix(members) + PHD_WILDCARD
+            scan.info["_case"] = 6
+            others = [t for t in top_level if t not in members]
+            if others:
+                scan.info["_other_entries"] = others
+            return scan
+
         if entry is not None:
             g = entry if entry.startswith("/") else "/" + entry
             if g.lstrip("/") not in f:
@@ -1660,6 +1987,8 @@ def load_soleil_nxs(path: str, entry: Optional[str] = None) -> NxsScan:
             scan = _parse_native(f, g)
         elif case == 4:
             scan = _parse_case34(f, g, ("data_04", "data_05", "data_06"), ("data_07", "data_08", "data_09"), "data_11")
+        elif case == 6:
+            scan = _parse_phd_frame(f, g)
         else:
             raise AssertionError(f"unreachable case {case}")
 

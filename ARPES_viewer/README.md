@@ -105,6 +105,26 @@ what a proper per-photon-energy Fermi-edge calibration will need later.
 above), `"per_member"` (place each member by its own hv and keep only the
 range they share) and `"kinetic"` (no referencing at all).
 
+### ANTARES photon-energy scans (PhD)
+
+An ANTARES photon-energy scan is saved as one top-level entry **per photon
+energy** -- `Phd_0002`, `Phd_0003`, ... -- each holding a single MBS frame
+(`MBS_0_<n>/Image32_1`) with its own energy and angle scales and its `hv`.
+The browser lists the whole file as **one `kz map` row** (entry `Phd_*`);
+the first entry, which holds only the beamline state, is skipped.
+
+- Frames are sorted by `hv`; the photon-energy axis is the readback,
+  straightened when it is plainly an even scan that jitters (the readbacks
+  stay in `antares.axis0_measured`).
+- **Energy is referred to E_F per frame**: `E - E_F = E_kin - hv + W`, with
+  `W = 4.5 eV` assumed (the files record none) and written to
+  `work_function_eV`, which **kz -> momentum** reads back. If the referred
+  windows coincide, frames are stacked untouched; if not, they are resampled
+  linearly along energy onto the range all of them cover. Run **kz map
+  processing** to fit the real Fermi level per photon energy.
+- A single frame can still be opened on its own, by its entry name, as a
+  cut.
+
 ### CASSIOPEE spin end station (MBS)
 
 The spin-resolved end station's MBS A-1 analyser writes `.krx` (binary)
