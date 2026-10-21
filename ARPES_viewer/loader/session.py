@@ -290,24 +290,45 @@ class SessionStore:
         went. Never touches this session's own folder, and records what it
         removed in the log -- a sweep that silently deleted a folder
         somebody was about to go looking for would defeat the point of
-        keeping a log at all."""
-        if not os.path.isdir(self.root):
-            return 0
+        keeping a log at all.
+
+        The folders from before the program was renamed are swept too: they
+        are offered back by :meth:`leftovers`, so leaving them out here
+        meant they were offered for ever and never went. A folder is only
+        counted (and logged) as removed if it is actually gone -- on Windows
+        a file still open somewhere makes the delete fail, and that used to
+        be logged as a success and then quietly found again at the next
+        start.
+        """
+        from loader.nxs_file import HANDLES
+
+        roots = [self.root]
+        if self.root == DEFAULT_ROOT:
+            roots.extend(LEGACY_ROOTS)
         cutoff = time.time() - keep_days * 86400
         removed = 0
-        for name in sorted(os.listdir(self.root)):
-            path = os.path.join(self.root, name)
-            if path == self.folder or not os.path.isdir(path):
+        for root in roots:
+            if not os.path.isdir(root):
                 continue
-            try:
-                if os.path.getmtime(path) < cutoff:
+            for name in sorted(os.listdir(root)):
+                path = os.path.join(root, name)
+                if path == self.folder or not os.path.isdir(path):
+                    continue
+                try:
+                    if os.path.getmtime(path) >= cutoff:
+                        continue
                     files = len([f for f in os.listdir(path) if f.endswith(".nxs")])
+                    HANDLES.close_under(path)
                     shutil.rmtree(path, ignore_errors=True)
+                except OSError:
+                    continue
+                if os.path.exists(path):
                     self.log("PRUNE", name, path,
-                             f"older than {keep_days} days, {files} dataset(s)")
-                    removed += 1
-            except OSError:
-                continue
+                             f"older than {keep_days} days, could not be deleted")
+                    continue
+                self.log("PRUNE", name, path,
+                         f"older than {keep_days} days, {files} dataset(s)")
+                removed += 1
         return removed
 
     def leftovers(self, include_legacy: bool = True):

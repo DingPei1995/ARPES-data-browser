@@ -495,3 +495,29 @@ def test_a_crashed_session_is_still_kept_for_three_days(tmp_path):
     old = os.path.getmtime(crashed.folder) - 4 * 86400
     os.utime(crashed.folder, (old, old))
     assert later.prune_old() == 1
+
+
+def test_pruning_sweeps_the_legacy_folder_too(tmp_path, monkeypatch):
+    """Folders from before the rename are offered back at every start, so
+    they have to age out as well or they are offered for ever."""
+    import time as _time
+    from loader import session as session_module
+    root, legacy = tmp_path / "new", tmp_path / "legacy"
+    old = legacy / "20200101-000000-1"
+    old.mkdir(parents=True)
+    os.utime(old, (_time.time() - 10 * 86400,) * 2)
+    monkeypatch.setattr(session_module, "DEFAULT_ROOT", str(root))
+    monkeypatch.setattr(session_module, "LEGACY_ROOTS", (str(legacy),))
+    store = SessionStore()
+    assert store.prune_old() == 1
+    assert not old.exists()
+
+
+def test_a_folder_that_could_not_be_deleted_is_not_counted(tmp_path, monkeypatch):
+    import time as _time
+    from loader import session as session_module
+    old = SessionStore(root=str(tmp_path))
+    old.store(_map_item())
+    os.utime(old.folder, (_time.time() - 10 * 86400,) * 2)
+    monkeypatch.setattr(session_module.shutil, "rmtree", lambda *a, **k: None)
+    assert SessionStore(root=str(tmp_path)).prune_old() == 0

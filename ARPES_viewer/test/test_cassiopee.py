@@ -552,16 +552,33 @@ def test_a_lone_spectrum_lists_one_entry(spectrum):
     assert entries[0]["kind"] == "Cut"
 
 
-def test_a_member_of_a_series_lists_both_itself_and_the_series(tmp_path):
-    """The same file is a spectrum in its own right and a slice of a map,
-    and which one is wanted depends on what is being looked at."""
+def test_a_member_of_a_series_lists_only_the_series(tmp_path):
+    """A folder is one measurement: loading it must not add a second row for
+    the clicked spectrum (named after its Scienta region, often "test")."""
     paths = make_series(str(tmp_path), base="Map80eV_Phi18", count=4,
                         thetas=[-3.0, -1.0, 1.0, 3.0])
     entries = registry.list_entries(paths[1])
-    kinds = {e["entry"]: e["kind"] for e in entries}
-    assert kinds == {"cut": "Cut", "series": "Map"}
-    series = [e for e in entries if e["entry"] == "series"][0]
-    assert "Map80eV_Phi18" in series["name"] and "4" in series["name"]
+    assert [(e["entry"], e["kind"]) for e in entries] == [("series", "Map")]
+    assert entries[0]["name"] == "Map80eV_Phi18 150eV LH"
+    assert "4 spectra" in entries[0]["title"]
+
+
+def test_a_photon_energy_scan_is_named_by_its_range(tmp_path):
+    paths = make_series(str(tmp_path), base="KzScan", count=3,
+                        photon_energies=[80.0, 90.0, 100.0])
+    entries = registry.list_entries(paths[0])
+    assert entries[0]["name"] == "KzScan 80-100eV LH"
+
+
+def test_a_lone_spectrum_is_named_with_its_photon_energy(spectrum):
+    entries = registry.list_entries(spectrum[0])
+    assert entries[0]["name"] == "fixed_cut 150eV"
+
+
+def test_the_beam_label_leaves_out_what_is_unknown():
+    assert cassiopee._with_beam("FineMap", ([117.0012], "LH")) == "FineMap 117eV LH"
+    assert cassiopee._with_beam("FineMap", ([None], None)) == "FineMap"
+    assert cassiopee._with_beam("FineMap", ([], "CR")) == "FineMap CR"
 
 
 def test_loading_through_the_registry_gives_a_cut(spectrum):

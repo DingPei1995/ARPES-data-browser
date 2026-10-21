@@ -643,6 +643,9 @@ your own; several selected rows go into one file.
   drops cached copies of computed data (they are re-read from their autosaved
   file when needed); **Close all viewers** closes every window and then frees
   memory.
+- **Open auto-save folder** (below the Memory box) shows the session folders
+  in the system's file browser, to delete old working copies by hand. The
+  folder of the session now running (named in the status bar) is in use.
 - **Long operations** (reading a big map, converting, de-gridding, assembling
   a folder) run off the GUI thread with a progress bar and a working Cancel.
 - **Closing** with unsaved computed data asks first, and names the datasets:

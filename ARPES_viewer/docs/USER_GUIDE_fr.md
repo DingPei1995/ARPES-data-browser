@@ -704,6 +704,10 @@ dans un même fichier.
   conservées. **Free memory** abandonne les copies en cache des données
   calculées (elles sont relues depuis leur fichier de sauvegarde au besoin) ;
   **Close all viewers** ferme toutes les fenêtres puis libère la mémoire.
+- **Open auto-save folder** (sous le cadre Memory) ouvre le dossier des
+  sessions dans l'explorateur de fichiers, pour supprimer à la main les
+  anciennes copies de travail. Le dossier de la session en cours (nommé dans
+  la barre d'état) est utilisé : n'y touchez pas.
 - **Les opérations longues** (lecture d'une grande carte, conversion,
   dégrillage, assemblage d'un dossier) tournent hors du fil de l'interface,
   avec une barre de progression et un bouton Cancel qui fonctionne.
