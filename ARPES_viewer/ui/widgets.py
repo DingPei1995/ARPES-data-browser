@@ -1130,6 +1130,7 @@ class _InteractiveImageBase(pg.ImageView):
         self._pick_markers = None
         self._overlay_curve = None
         self._bz_layers = {}
+        self._bz_labels = []
         self._colormap_name, self._colormap_flip = DEFAULT_COLORMAP, False
 
         # What an export calls this panel and what metadata travels with it.
@@ -1722,10 +1723,35 @@ class _InteractiveImageBase(pg.ImageView):
             item.setPen(pg.mkPen(color, width=width))
         item.setData(np.asarray(xs), np.asarray(ys))
 
+    def set_bz_labels(self, labels, color: str = "#ffd166"):
+        """Write the names of high-symmetry points on the picture:
+        ``labels`` is ``[(text, x, y), ...]``, each drawn as a dot with its
+        name beside it; empty removes them. Replaces whatever was there."""
+        for item in self._bz_labels:
+            self.view_box.removeItem(item)
+        self._bz_labels = []
+        if not labels:
+            return
+        xs = [float(x) for _text, x, _y in labels]
+        ys = [float(y) for _text, _x, y in labels]
+        dots = pg.ScatterPlotItem(xs, ys, size=6, pen=pg.mkPen("#111111"),
+                                  brush=pg.mkBrush(color))
+        dots.setZValue(29)
+        self.view_box.addItem(dots, ignoreBounds=True)
+        self._bz_labels.append(dots)
+        for text, x, y in labels:
+            item = pg.TextItem(str(text), color=color, anchor=(-0.15, 1.0))
+            item.setZValue(29)
+            item.setPos(float(x), float(y))
+            self.view_box.addItem(item, ignoreBounds=True)
+            self._bz_labels.append(item)
+
     def clear_bz_overlay(self):
-        """Remove every Brillouin-zone layer set by :meth:`set_bz_layer`."""
+        """Remove every Brillouin-zone layer set by :meth:`set_bz_layer`,
+        and the point labels set by :meth:`set_bz_labels`."""
         for name in list(self._bz_layers):
             self.set_bz_layer(name, [])
+        self.set_bz_labels([])
 
     def enable_swap_action(self, enabled: bool, text: str = None):
         self.action_swap.setVisible(enabled)

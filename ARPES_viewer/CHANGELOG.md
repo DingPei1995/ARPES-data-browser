@@ -12,6 +12,36 @@ file is the record of how it got that way.
 
 ## Unreleased
 
+- **High-symmetry points in the Brillouin-zone tool.** The 3-D view of the
+  cut plane marks the named points (Γ, M, K, Z, L, F, ...), every copy as a
+  dot and one of each labelled, and rings the ones the plane passes
+  through. A new **Through point** list beside the offset offers the
+  offsets that put the plane through one of them -- for space group 166,
+  a = 5.416, c = 13.413 along (001): Γ at 0, L at π/c, F at 2π/c, Z at
+  3π/c. A chosen offset is kept unrounded, so a plane meant to lie in the
+  zone's top face does not miss it by the box's fourth decimal. The points
+  the plane holds are also labelled on the contour (**Label high-symmetry
+  points**), which shows which way Γ-M and Γ-K run before the azimuth is
+  set. The points are a static table per Bravais lattice
+  (`tools/highsym.py`, after Setyawan & Curtarolo 2010), not a search;
+  the rhombohedral and body-centred tetragonal rows are formulas of the
+  cell, because their points move with its shape. `test/test_highsym.py`
+  checks every tabulated point lies on the zone surface.
+- **Fixed: tiled zones went missing for an offset plane.** Tiling searched
+  lattice translations around Γ only, so a plane slid along its normal
+  further than the window is wide found too few copies of the zone, or
+  none ("the cut plane does not meet the zone" for a rhombohedral (001)
+  cut at 6 Å⁻¹). It now finds the copies from the plane's actual position,
+  as the k_z-map cut already did; a brute-force search agrees.
+- **The zone construction stops as soon as it is exact** (volume equal to
+  the reciprocal cell's), instead of only when a second shell of
+  neighbours changes nothing -- a rigorous test, and one shell cheaper for
+  every ordinary cell.
+- **The Brillouin-zone dialog remembers the last crystal**, across maps
+  and restarts (`~/.arpes_viewer/brillouin_zone.json`); a dataset's own
+  saved settings still come first, and the offset is not carried over.
+- The (hkl) tooltip now says the indices are read against the conventional
+  a*, b*, c* (the hexagonal axes for a rhombohedral group).
 - **A CASSIOPEE folder adds one row, not two.** Loading a numbered folder
   also listed the clicked spectrum on its own, named after its Scienta
   region -- usually a placeholder such as "test". Only the assembled map is

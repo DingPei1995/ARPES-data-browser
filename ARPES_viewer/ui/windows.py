@@ -1798,7 +1798,11 @@ class CutPlanePreviewDialog(QDialog):
     is set to), the plane as a dashed square, the polygon where the plane
     actually cuts the zone -- filled, and it is this polygon that becomes
     the overlay on the contour -- the plane's normal as an arrow from Gamma,
-    and the three reciprocal-lattice vectors for orientation.
+    and the three reciprocal-lattice vectors for orientation. And the
+    named high-symmetry points (:mod:`tools.highsym`): every copy in the
+    zone as a faint dot, one of each labelled, and those the plane passes
+    through ringed in the plane's colour, so it can be seen which offset
+    puts the cut through Z, L, M ...
     """
 
     def __init__(self, parent: "BrillouinZoneDialog"):
@@ -1812,7 +1816,8 @@ class CutPlanePreviewDialog(QDialog):
         layout = QVBoxLayout(self)
         intro = QLabel(
             "Drag to turn the zone; right-drag to zoom. The filled polygon is "
-            "the cut that goes onto the contour.")
+            "the cut that goes onto the contour. Yellow: high-symmetry points "
+            "(one of each named); ringed in pink: the ones this plane holds.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -2018,7 +2023,54 @@ class CutPlanePreviewDialog(QDialog):
         gamma.setPos(*[float(c[0]) for c in self._project(np.zeros(3), camera)])
         self.plot.addItem(gamma)
 
-        self.note.setText(self.bz_dialog.cut_description())
+        in_plane = self._draw_high_symmetry(camera)
+
+        text = self.bz_dialog.cut_description()
+        if in_plane:
+            text += f"\nIn this plane: {', '.join(in_plane)}."
+        self.note.setText(text)
+
+    def _draw_high_symmetry(self, camera):
+        """The named points: every copy in the zone as a small dot, one of
+        each labelled, and the ones the plane passes through ringed and
+        labelled in the plane's colour -- which is what tells you the offset
+        has landed where you meant. Returns the names in the plane."""
+        try:
+            representatives, copies = self.bz_dialog.high_symmetry()
+            on_plane = self.bz_dialog.points_in_plane()
+        except Exception:                                  # noqa: BLE001
+            return []
+        if copies:
+            xs, ys = self._project(np.array([p.k for p in copies]), camera)
+            self.plot.addItem(pg.ScatterPlotItem(
+                xs, ys, size=4, pen=None, brush=pg.mkBrush(255, 209, 102, 110)))
+        shown = set()
+        for point in representatives:
+            if point.label == "Γ":
+                continue
+            x, y = (float(c[0]) for c in self._project(point.k, camera))
+            self.plot.addItem(pg.ScatterPlotItem(
+                [x], [y], size=7, pen=pg.mkPen("#111111"),
+                brush=pg.mkBrush("#ffd166")))
+            label = pg.TextItem(point.label, color="#ffd166", anchor=(-0.2, 1.0))
+            label.setPos(x, y)
+            self.plot.addItem(label)
+            shown.add(tuple(np.round(point.k, 6)))
+        names = []
+        if on_plane:
+            xs, ys = self._project(np.array([k for _label, k in on_plane]), camera)
+            self.plot.addItem(pg.ScatterPlotItem(
+                xs, ys, size=11, pen=pg.mkPen("#ff3ce0", width=2.0),
+                brush=pg.mkBrush(0, 0, 0, 0)))
+            for (label, k), x, y in zip(on_plane, xs, ys):
+                if label not in names:
+                    names.append(label)
+                if tuple(np.round(k, 6)) in shown or label == "Γ":
+                    continue
+                item = pg.TextItem(label, color="#ff8cf0", anchor=(-0.2, 0.0))
+                item.setPos(float(x), float(y))
+                self.plot.addItem(item)
+        return names
 
     def closeEvent(self, event):
         self.bz_dialog.preview_closed()
@@ -2087,6 +2139,26 @@ class BrillouinZoneDialog(QDialog):
     Only the first zone is ever drawn, repeated by translation across the
     field of view if asked -- never a second- or higher-order zone.
     """
+
+    #: Where the last settings used anywhere are kept, so the dialog opened
+    #: on the next dataset -- or after a restart -- starts from the crystal
+    #: of the last one: an experiment is usually one crystal, and typing its
+    #: space group and cell again for every map is the chore this saves.
+    #: A dataset's own saved ``bz.*`` settings still win over it. Beside
+    #: the program's config.json; ``ARPES_VIEWER_CONFIG_DIR`` moves it
+    #: (the tests point it at a temporary folder).
+    LAST_USED_NAME = "brillouin_zone.json"
+
+    @classmethod
+    def last_used_path(cls) -> str:
+        folder = os.environ.get("ARPES_VIEWER_CONFIG_DIR") or os.path.join(
+            os.path.expanduser("~"), ".arpes_viewer")
+        return os.path.join(folder, cls.LAST_USED_NAME)
+
+    #: Settings that belong to one dataset rather than to the crystal, and
+    #: so are not carried over: the offset follows the photon energy (k_z)
+    #: of the map it was set on.
+    _NOT_CARRIED = ("offset",)
 
     #: flat "bz.<key>" keys in scan.info, matching the app's own
     #: "kconv.*"/"arbcut.*" convention -- save_dataset only ever writes
@@ -2169,8 +2241,10 @@ class BrillouinZoneDialog(QDialog):
             normal_box.addWidget(box)
         normal_box.addStretch(1)
         normal_row.setToolTip(
-            "The plane's normal as Miller indices of the reciprocal lattice: "
-            "h*b1 + k*b2 + l*b3. (0, 0, 1) is the usual surface-normal cut.")
+            "The plane's normal as Miller indices, read against the "
+            "conventional reciprocal axes: h*a* + k*b* + l*c* (for a "
+            "rhombohedral group, the hexagonal axes' a*, b*, c*). (0, 0, 1) "
+            "is the usual surface-normal cut.")
         form_cut.addRow("Normal (hkl)", normal_row)
         self._normal_row = normal_row
 
@@ -2205,6 +2279,19 @@ class BrillouinZoneDialog(QDialog):
             "inner potential, which is the separate kz feature's job.")
         form_cut.addRow("Offset along normal (Å⁻¹)", self.offset_box)
         self._form_cut = form_cut
+        #: The offset a preset below put in the box, unrounded. The box
+        #: shows four decimals, and a plane rounded a hair past the face it
+        #: was meant to lie in (the top of the zone, at Z) misses the zone.
+        self._exact_offset = None
+        self.offset_points_combo = QComboBox()
+        self.offset_points_combo.setToolTip(
+            "Offsets along this normal at which the plane passes through a "
+            "high-symmetry point of the first zone. Choosing one sets the "
+            "offset above; the points the plane then holds are marked in the "
+            "3-D view and labelled on the contour.")
+        self.offset_points_combo.activated.connect(self._offset_point_chosen)
+        form_cut.addRow("Through point", self.offset_points_combo)
+        self._offset_presets_key = None
         self.offset_label = QLabel("")
         self.offset_label.setWordWrap(True)
         self.offset_label.setMinimumHeight(34)
@@ -2287,6 +2374,13 @@ class BrillouinZoneDialog(QDialog):
             "range, not only the one at the origin -- never a higher-order "
             "zone, only repeats of this one.")
         orient_form.addRow("", self.tile_cb)
+        self.labels_cb = QCheckBox("Label high-symmetry points")
+        self.labels_cb.setChecked(True)
+        self.labels_cb.setToolTip(
+            "Write the names of the high-symmetry points the plane holds "
+            "(Γ, M, K, Z, ...) on the contour, so the azimuth can be set by "
+            "eye. 3-D crystal only.")
+        orient_form.addRow("", self.labels_cb)
         layout.addWidget(orient_group)
 
         # -- moire (2D layers only) -------------------------------------------
@@ -2397,6 +2491,9 @@ class BrillouinZoneDialog(QDialog):
             "Surface normal = k_z (hkl)")
         self._form_cut.labelForField(self.offset_box).setText(
             "Offset out of the slit plane (Å⁻¹)")
+        self.offset_points_combo.setToolTip(
+            "Offsets out of the slit plane at which the measured plane "
+            "passes through a high-symmetry point of the first zone.")
         self.offset_box.setToolTip(
             "How far the measured plane sits from Gamma along the third "
             "axis, perpendicular to both k_z and k_par -- 0 for a scan "
@@ -2532,6 +2629,7 @@ class BrillouinZoneDialog(QDialog):
                     f"{info.point_group}\n{free_parameters(number).note}")
             except Exception as exc:
                 self.spacegroup_label.setText(str(exc))
+            self._refresh_offset_presets()
             self.offset_label.setText(self.cut_description())
         else:
             self.spacegroup_label.setText("")
@@ -2667,7 +2765,7 @@ class BrillouinZoneDialog(QDialog):
         zone, b, b_conventional = self._zone_3d()
         if self._kz_map:
             _kz, _kpar, across = self.kz_frame()
-            point = across * float(self.offset_box.value())
+            point = across * self.offset_value()
             u, v = plane_cut(zone.faces, across, point)
             return zone, b, b_conventional, across, point, u, v
         normal = (self.h_box.value() * b_conventional[0]
@@ -2677,9 +2775,141 @@ class BrillouinZoneDialog(QDialog):
         if length < 1e-9:
             raise ValueError("the cut plane normal (h, k, l) cannot be (0, 0, 0)")
         normal = normal / length
-        point = normal * float(self.offset_box.value())
+        point = normal * self.offset_value()
         u, v = plane_cut(zone.faces, normal, point)
         return zone, b, b_conventional, normal, point, u, v
+
+    def offset_value(self) -> float:
+        """The offset along the normal: the box's value, or the unrounded
+        one a preset put there if the box still shows it."""
+        shown = float(self.offset_box.value())
+        exact = self._exact_offset
+        step = 10.0 ** -self.offset_box.decimals()
+        if exact is not None and abs(exact - shown) <= 0.51 * step:
+            return float(exact)
+        return shown
+
+    def high_symmetry(self):
+        """``(representatives, copies)`` of the named points for the current
+        crystal (see :mod:`tools.highsym`): one of each, and every copy in
+        the first zone. Cached with the zone, since both follow the cell."""
+        from tools.highsym import high_symmetry_points, equivalent_points
+        from tools.lattice import reciprocal_vectors, primitive_vectors
+        from tools.bz3d import wigner_seitz_cell
+        params = self.lattice_params()
+        key = (params.a, params.b, params.c, params.alpha, params.beta,
+               params.gamma, params.space_group)
+        cached = getattr(self, "_highsym_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1], cached[2]
+        representatives = high_symmetry_points(params)
+        # the full zone's copies whichever zone is drawn: an irreducible
+        # wedge is a part of the same zone, and its corners are among them
+        full = wigner_seitz_cell(reciprocal_vectors(primitive_vectors(params)))
+        copies = equivalent_points(params, representatives, full)
+        self._highsym_cache = (key, representatives, copies)
+        return representatives, copies
+
+    def _plane_normal(self):
+        """The unit vector the offset is measured along: the cut normal, or
+        for a k_z map the axis out of the measured plane."""
+        if self._kz_map:
+            return self.kz_frame()[2]
+        normal = np.array([self.h_box.value(), self.k_box.value(),
+                           self.l_box.value()], dtype=float) @ self._zone_3d()[2]
+        length = float(np.linalg.norm(normal))
+        if length < 1e-9:
+            raise ValueError("the cut plane normal (h, k, l) cannot be (0, 0, 0)")
+        return normal / length
+
+    #: the most offsets offered at once; a low-symmetry normal passes
+    #: through a different point every few hundredths of an Å⁻¹
+    _MAX_PRESETS = 24
+
+    def _refresh_offset_presets(self):
+        """Fill the "Through point" list for the current crystal and normal."""
+        from tools.highsym import plane_offsets
+        combo = self.offset_points_combo
+        try:
+            normal = self._plane_normal()
+            key = (tuple(np.round(normal, 9)), self.lattice_params())
+            if key == self._offset_presets_key:
+                return
+            _representatives, copies = self.high_symmetry()
+            presets = plane_offsets(copies, normal)
+        except Exception as exc:                          # noqa: BLE001
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(f"(unavailable: {exc})", None)
+            combo.blockSignals(False)
+            self._offset_presets_key = None
+            return
+        self._offset_presets_key = key
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Choose a high-symmetry point...", None)
+        for offset, labels in presets[:self._MAX_PRESETS]:
+            combo.addItem(f"{', '.join(labels)}   ({offset:.4f} Å⁻¹)", offset)
+        if len(presets) > self._MAX_PRESETS:
+            combo.addItem(f"... {len(presets) - self._MAX_PRESETS} more, "
+                          "further out", None)
+        combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
+    def _offset_point_chosen(self, index: int):
+        offset = self.offset_points_combo.itemData(index)
+        if offset is None:
+            return
+        self._exact_offset = float(offset)
+        # setValue emits valueChanged, which refreshes the text and preview
+        self.offset_box.setValue(float(offset))
+        if abs(self.offset_box.value() - float(offset)) < 1e-12:
+            self._refresh_info()
+
+    def points_in_plane(self):
+        """The copies of the named points lying in the current plane, with
+        their position: ``[(label, k), ...]`` (Cartesian)."""
+        from tools.highsym import points_on_plane
+        _representatives, copies = self.high_symmetry()
+        normal = self._plane_normal()
+        return [(p.label, p.k) for p in
+                points_on_plane(copies, normal, self.offset_value(), tol=1e-4)]
+
+    def _contour_labels(self, tiled: bool):
+        """``[(label, x, y), ...]`` to write on the contour: the named points
+        the plane holds, in the contour's own coordinates (after the azimuth
+        for a constant-energy map; (k_z, k_par) for a k_z map)."""
+        from tools.highsym import points_in_frame
+        from tools.bz3d import plane_basis
+        _zone, b, _b_conv = self._zone_3d()
+        _representatives, copies = self.high_symmetry()
+        if self._kz_map:
+            along_kz, along_kpar, across = self.kz_frame()
+            kz = np.asarray(self.contour.angle_defl, dtype=float)
+            kpar = np.asarray(self.contour.angle_slit, dtype=float)
+            x_range = (float(np.nanmin(kz)), float(np.nanmax(kz)))
+            y_range = (float(np.nanmin(kpar)), float(np.nanmax(kpar)))
+            found = points_in_frame(copies, b, across * self.offset_value(),
+                                    along_kz, along_kpar, x_range, y_range,
+                                    tol=1e-4)
+            return found
+        normal = self._plane_normal()
+        point = normal * self.offset_value()
+        u_axis, v_axis = plane_basis(normal)
+        if tiled:
+            u_range, v_range = self._view_window()
+            found = points_in_frame(copies, b, point, u_axis, v_axis,
+                                    u_range, v_range, tol=1e-4)
+        else:
+            found = [(label, float(np.dot(k - point, u_axis)),
+                      float(np.dot(k - point, v_axis)))
+                     for label, k in self.points_in_plane()]
+        azimuth = self.azimuth_box.value()
+        out = []
+        for label, x, y in found:
+            rx, ry = self._rotate_xy(x, y, azimuth)
+            out.append((label, float(rx), float(ry)))
+        return out
 
     def kz_frame(self):
         """``(along_kz, along_kpar, across)`` for a k_z map, as unit
@@ -2711,7 +2941,7 @@ class BrillouinZoneDialog(QDialog):
             zone, _b, _b_conv, normal, _point, u, _v = self.cut_geometry()
         except Exception as exc:
             return str(exc)
-        offset = float(self.offset_box.value())
+        offset = self.offset_value()
         if self._kz_map:
             along_kz, along_kpar, _across = self.kz_frame()
             text = (f"k_z along ({self.h_box.value()} {self.k_box.value()} "
@@ -2737,7 +2967,13 @@ class BrillouinZoneDialog(QDialog):
             text += (f" = {offset / reach:.3f} of the {reach:.4g} "
                      f"Å⁻¹ from Γ to the zone edge along it")
         if u is None:
-            text += " — the plane misses the zone entirely."
+            top = float(np.max(zone.vertices @ normal))
+            if abs(offset - top) < 1e-4:
+                text += (" — the plane only touches this zone at a corner or "
+                         "an edge; with Repeat on, the copies beside it are "
+                         "cut there.")
+            else:
+                text += " — the plane misses the zone entirely."
         else:
             text += f"; the cut is a {len(u) - 1}-sided polygon."
         return text
@@ -2865,7 +3101,7 @@ class BrillouinZoneDialog(QDialog):
                     zone, b, self.kz_frame(),
                     (float(np.nanmin(kz)), float(np.nanmax(kz))),
                     (float(np.nanmin(kpar)), float(np.nanmax(kpar))),
-                    offset=float(self.offset_box.value()),
+                    offset=self.offset_value(),
                     tile=self.tile_cb.isChecked())
                 if not polygons:
                     raise ValueError(
@@ -2890,8 +3126,19 @@ class BrillouinZoneDialog(QDialog):
         for name in ("bz_top", "bz_bottom", "bz_moire"):
             self.contour.view.set_bz_layer(name, [])
         self.contour.view.set_bz_layer("bz_main", polygons, color="#39c2ff")
-        return (f"{self.zone_kind()} zone: {len(polygons)} polygon(s) drawn "
+        labels = []
+        if self.mode_3d.isChecked() and self.labels_cb.isChecked():
+            try:
+                labels = self._contour_labels(self.tile_cb.isChecked())
+            except Exception:                              # noqa: BLE001
+                labels = []     # the zone is the point; names are a help
+        self.contour.view.set_bz_labels(labels)
+        text = (f"{self.zone_kind()} zone: {len(polygons)} polygon(s) drawn "
                 f"on the contour.")
+        if labels:
+            names = sorted({label for label, _x, _y in labels})
+            text += f" Points labelled: {', '.join(names)}."
+        return text
 
     def _plot_moire(self) -> str:
         from tools.bz2d import (reciprocal_vectors_2d, wigner_seitz_cell_2d,
@@ -2952,6 +3199,7 @@ class BrillouinZoneDialog(QDialog):
             "bz_moire", moire_polygons if self.show_moire_cb.isChecked() else [],
             color="#ff3ce0")
         self.contour.view.set_bz_layer("bz_main", [])
+        self.contour.view.set_bz_labels([])
 
         message = (f"moire real-space period ≈ {moire_period:.4g} Å "
                    f"({len(top_polygons)} top, {len(bottom_polygons)} bottom, "
@@ -2983,7 +3231,7 @@ class BrillouinZoneDialog(QDialog):
                 self.spacegroup_box, self.h_box, self.k_box, self.l_box,
                 self.kpar_h_box, self.kpar_k_box, self.kpar_l_box,
                 self.offset_box, self.a2_box, self.b2_box, self.gamma2_box,
-                self.azimuth_box, self.tile_cb, self.moire_cb,
+                self.azimuth_box, self.tile_cb, self.labels_cb, self.moire_cb,
                 self.moire_same_cb, self.a2b_box, self.b2b_box,
                 self.gamma2b_box, self.twist_box, self.show_top_cb,
                 self.show_bottom_cb, self.show_moire_cb,
@@ -2995,8 +3243,18 @@ class BrillouinZoneDialog(QDialog):
             widget.blockSignals(True)
         try:
             info = self.contour.data.scan.info
+            last = self._last_used()
+
+            # The azimuth turns the picture on a constant-energy map and
+            # k_par about the normal on a k_z map: not the same number, so
+            # it only carries over between two maps of the same kind.
+            skipped = set(self._NOT_CARRIED)
+            if int(last.get("kz_map", 0)) != int(self._kz_map):
+                skipped.add("azimuth_deg")
 
             def saved(key, default):
+                if key not in skipped:
+                    default = last.get(key, default)
                 return info.get(self._PREFIX + key, default)
 
             # Not setChecked(False) on whichever radio is currently checked:
@@ -3030,6 +3288,7 @@ class BrillouinZoneDialog(QDialog):
             self.gamma2_box.setValue(float(saved("gamma2", 120.0)))
             self.azimuth_box.setValue(float(saved("azimuth_deg", 0.0)))
             self.tile_cb.setChecked(bool(int(saved("tile", 1))))
+            self.labels_cb.setChecked(bool(int(saved("labels", 1))))
             self.moire_cb.setChecked(bool(int(saved("moire", 0))))
             self.moire_same_cb.setChecked(bool(int(saved("moire_same", 1))))
             self.a2b_box.setValue(float(saved("a2b", 3.0)))
@@ -3045,9 +3304,34 @@ class BrillouinZoneDialog(QDialog):
             for widget in widgets:
                 widget.blockSignals(False)
 
+    @classmethod
+    def _last_used(cls) -> dict:
+        from tools.system import load_config
+        try:
+            return load_config(cls.last_used_path(), {})
+        except Exception:                                  # noqa: BLE001
+            return {}
+
+    @classmethod
+    def _remember(cls, values: dict):
+        from tools.system import dump_config
+        try:
+            dump_config(cls.last_used_path(),
+                        {key: value for key, value in values.items()
+                         if key not in cls._NOT_CARRIED})
+        except Exception:                                  # noqa: BLE001
+            pass    # a convenience: an unwritable home must not stop Plot
+
     def _save_settings(self):
+        """Keep the settings with the dataset, and as the last used."""
+        values = self._current_settings()
         info = self.contour.data.scan.info
-        values = {
+        for key, value in values.items():
+            info[self._PREFIX + key] = value
+        self._remember(values)
+
+    def _current_settings(self) -> dict:
+        return {
             "mode": "3d" if self.mode_3d.isChecked() else "2d",
             "zone": self.zone_kind(),
             "space_group": int(self.spacegroup_box.value()),
@@ -3059,11 +3343,12 @@ class BrillouinZoneDialog(QDialog):
             "kpar_h": int(self.kpar_h_box.value()),
             "kpar_k": int(self.kpar_k_box.value()),
             "kpar_l": int(self.kpar_l_box.value()),
-            "offset": self.offset_box.value(),
+            "offset": self.offset_value(),
             "a2": self.a2_box.value(), "b2": self.b2_box.value(),
             "gamma2": self.gamma2_box.value(),
             "azimuth_deg": self.azimuth_box.value(),
             "tile": int(self.tile_cb.isChecked()),
+            "labels": int(self.labels_cb.isChecked()),
             "moire": int(self.moire_cb.isChecked()),
             "moire_same": int(self.moire_same_cb.isChecked()),
             "a2b": self.a2b_box.value(), "b2b": self.b2b_box.value(),
@@ -3072,11 +3357,13 @@ class BrillouinZoneDialog(QDialog):
             "show_top": int(self.show_top_cb.isChecked()),
             "show_bottom": int(self.show_bottom_cb.isChecked()),
             "show_moire": int(self.show_moire_cb.isChecked()),
+            "kz_map": int(self._kz_map),
         }
-        for key, value in values.items():
-            info[self._PREFIX + key] = value
 
     def closeEvent(self, event):
+        # Remembered on close too, not only on Plot: typing the crystal in
+        # and closing again is setting it up for the next map.
+        self._remember(self._current_settings())
         # Same rule as the other picking dialogs: picking must not outlive
         # the dialog. The drawn zone itself is untouched -- it is meant to
         # stay on the contour after this closes.

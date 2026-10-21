@@ -58,22 +58,28 @@ def test_bz_volume_matches_reciprocal_cell_volume(space_group, a, c, gamma):
     assert bz.volume == pytest.approx(expected, rel=1e-9)
 
 
-def test_shell_growth_needed_for_oblique_cell():
-    """A very oblique triclinic cell needs more than the single +-1
-    neighbour shell ``gen_brillouin.m`` always uses -- this is the failure
-    mode that motivates growing the shell automatically."""
+def test_shell_growth_needed_for_a_skewed_basis():
+    """A basis that is not reduced -- here the simple cubic lattice written
+    with b3 = (3, 0, 1) -- needs neighbours well beyond the single +-1 shell
+    ``gen_brillouin.m`` always uses; the shell grows until the volume is
+    exactly the reciprocal cell's, and the cube comes out regardless."""
+    b = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [3.0, 0.0, 1.0]])
+    bz = wigner_seitz_cell(b)
+    assert bz.shells_used >= 3
+    assert bz.volume == pytest.approx(1.0, rel=1e-9)
+    assert len(bz.faces) == 6
+
+
+def test_an_oblique_cell_stops_as_soon_as_the_volume_is_exact():
     params = LatticeParams(4.0, 4.0, 4.0, alpha=75.0, beta=75.0, gamma=75.0,
                            space_group=1)
-    prim = primitive_vectors(params)
-    b = reciprocal_vectors(prim)
+    b = reciprocal_vectors(primitive_vectors(params))
     bz = wigner_seitz_cell(b)
-    assert bz.shells_used >= 2
-    # and the volume is still exactly the reciprocal cell volume
     expected = abs(np.dot(b[0], np.cross(b[1], b[2])))
     assert bz.volume == pytest.approx(expected, rel=1e-9)
+    assert bz.shells_used == 1
 
 
-# -- plane_cut ---------------------------------------------------------------
 def test_plane_cut_cubic_p_gives_square_half_width_pi_over_a():
     a = 4.0
     bz, b, _ = _bz(195, a=a)
