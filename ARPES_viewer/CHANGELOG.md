@@ -12,6 +12,15 @@ file is the record of how it got that way.
 
 ## Unreleased
 
+- **ANTARES photon-energy (PhD) scans load as a kz map.** A PhD `.nxs`
+  file is one `Phd_NNNN` entry per photon energy, each a single MBS frame
+  (`MBS_0_<n>/Image32_1` with its `Escale`/`Xscale` and `hv`), laid out
+  from a real file's h5info. The ANTARES loader now lists such a file as
+  one `kz map` (entry `Phd_*`), sorts the frames by `hv`, refers each
+  kinetic-energy axis to E_F by its own photon energy (W = 4.5 eV,
+  recorded as `work_function_eV` for the k_z conversion), and resamples
+  onto the common window only when the windows differ. Each frame still
+  opens alone as a cut. `test/test_antares_phd.py`.
 - **High-symmetry points in the Brillouin-zone tool.** The 3-D view of the
   cut plane marks the named points (Γ, M, K, Z, L, F, ...), every copy as a
   dot and one of each labelled, and rings the ones the plane passes
