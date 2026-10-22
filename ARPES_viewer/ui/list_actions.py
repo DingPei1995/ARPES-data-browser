@@ -38,6 +38,7 @@ RULES = {
     "figure": ("any", frozenset({"cut"}) | CURVES, "cuts or curves"),
     "stack": ("one", frozenset({"cut"}), "a cut"),
     "fit": ("one", frozenset({"cut"}), "a cut"),
+    "corelevel": ("one", frozenset({"cut"}), "a cut"),
     "view3d": ("one", CUBES, "a map"),
     "arithmetic": ("two", frozenset({"cut"}), "two cuts"),
     "save": ("any", None, "datasets"),

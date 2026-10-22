@@ -486,6 +486,11 @@ def show_list_menu(position):
     add("fit", "MDC / EDC fit...",
         "Fit peaks line by line, then read the band off the fitted centres: "
         "Fermi velocity, effective mass, self-energy. Converted cuts only.")
+    add("corelevel", "Core-level check...",
+        "Which element and orbital each peak of the angle-integrated EDC "
+        "is: the sample's elements against tabulated binding energies, after "
+        "checking E_F and the photon energy; unexplained peaks get possible "
+        "contaminants.")
     add("view3d", "3D view...",
         "Orthogonal slices, the notched cube, an isosurface and the volume "
         "projections.")
@@ -537,6 +542,7 @@ def run_list_action(name):
         "figure": plot_selected_as_figure,
         "stack": open_stack_plot,
         "fit": open_curve_fit,
+        "corelevel": open_core_level_check,
         "view3d": open_volume_view,
         "arithmetic": open_cut_arithmetic,
         "save": save_selected,
@@ -1437,6 +1443,49 @@ def open_curve_fit():
     window.datasetsCreated.connect(_list_computed)
     window.closed.connect(_forget_viewer)
     window.closed.connect(release_once(data))
+    window.show()
+    viewer_windows.append(window)
+    return window
+
+
+def open_core_level_check():
+    """Name the peaks of the selected cut's angle-integrated EDC.
+
+    Asks for the sample's elements, then for the energy reference (E_F
+    found from the data where the window holds the edge, else hν − W), and
+    opens the results window; see ui.corelevel. The window keeps its own
+    copy of the EDC, so the dataset is released straight away.
+    """
+    from ui.corelevel import start
+    from ui.windows import metadata_temperature
+
+    key = selected_key()
+    if key is None:
+        return None
+    try:
+        data = load_dataset(key)
+    except Exception as exc:
+        QMessageBox.warning(win, "Core-level check", str(exc))
+        return None
+    try:
+        if data.kind != "cut":
+            QMessageBox.information(
+                win, "Core-level check",
+                "The core-level check works on a cut: an angle-vs-energy "
+                "spectrum, integrated over its angle axis.")
+            return None
+        window = start(data, label_for(key), win,
+                       temperature=metadata_temperature(data))
+    except Exception as exc:                                # noqa: BLE001
+        QMessageBox.warning(win, "Core-level check",
+                            f"The check failed:\n{exc}")
+        return None
+    finally:
+        data.close()
+    if window is None:
+        return None
+    window.datasetsCreated.connect(_list_computed)
+    window.closed.connect(_forget_viewer)
     window.show()
     viewer_windows.append(window)
     return window

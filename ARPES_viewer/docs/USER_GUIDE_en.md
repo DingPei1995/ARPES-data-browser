@@ -285,6 +285,41 @@ a velocity in eV·deg would be meaningless.
 **Save table...** writes every fitted line; **Band to list** puts a band in
 the main list.
 
+### 7.4 Core-level check
+
+A wide scan of the core levels is listed as a cut too. Right-click it in the
+main list → **Core-level check...** to find out what its peaks are.
+
+1. Type the sample's elements — `NbSCl` or `Nb, S, Cl` — and press **Next**.
+   *Match within* (0.5 eV) is how close a peak must be to a tabulated level
+   to count as the sample's.
+
+   ![Elements](images/core_level_elements.png)
+
+2. Check the energy reference. E_F is fitted when the window holds the
+   Fermi edge, otherwise put at hν − W. Change the photon energy, the work
+   function or E_F if they are wrong (the green line can be dragged); a
+   hν − E_F far from 4–5 eV means the photon energy is off. Press
+   **Analyse**.
+
+   ![Energy reference](images/core_level_reference.png)
+
+3. The results: the EDC on a binding-energy axis, each peak marked —
+   green *sample* (orbital named), orange *uncertain* (a level of the
+   sample within 2 eV: chemical shift or charging — your call), red *not
+   the sample* (common elements that could explain it: contamination,
+   higher-order light, Auger lines). Click a row for the full list of
+   candidates. Type your own assignment in the *Assignment* column.
+
+   ![Core-level check](images/core_level_check.png)
+
+If every peak is off by the same amount, the notes say so and **Apply
+suggested shift** corrects it (a charged sample, or a wrong E_F). **Add EDC
+to list** lists the EDC on the binding-energy scale; **Copy report** copies
+the whole result as text. Measuring at a second photon energy settles what
+stays doubtful: core levels stay put in binding energy, Auger lines and
+higher-order light move.
+
 ---
 
 ## 8. From angles to momentum for a map, and the Brillouin zone

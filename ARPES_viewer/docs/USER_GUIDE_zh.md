@@ -258,6 +258,34 @@ cut**），此时等能面窗口保持隐藏，需要时用 *Functions → Show 
 
 ---
 
+### 7.4 芯能级检查（Core-level check）
+
+宽范围的芯能级扫描也以 cut 的形式列出。在主列表中右键点击它 →
+**Core-level check...**，即可判断各个峰的来源。
+
+1. 输入样品所含元素——`NbSCl` 或 `Nb, S, Cl`——然后按 **Next**。
+   *Match within*（0.5 eV）是峰与手册中结合能的最大偏差，在此范围内即认为是样品信号。
+
+   ![元素](images/core_level_elements.png)
+
+2. 检查能量参考。若窗口内包含费米边，则拟合得到 E_F；否则取 hν − W。
+   如光子能量、功函数或 E_F 有误可直接修改（绿色竖线可拖动）；若 hν − E_F
+   明显偏离 4–5 eV，说明光子能量不准。按 **Analyse**。
+
+   ![能量参考](images/core_level_reference.png)
+
+3. 结果：以结合能为横轴的积分 EDC，每个峰都有标注——绿色 *sample*
+   （标出轨道），橙色 *uncertain*（2 eV 内有样品能级：化学位移或荷电，由您判断），
+   红色 *not the sample*（列出可能的常见元素：污染、高次光、俄歇峰）。
+   点击表格某行可查看全部候选；在 *Assignment* 列可填写您自己的判读。
+
+   ![芯能级检查](images/core_level_check.png)
+
+若所有峰整体偏移相同的量，备注中会给出提示，**Apply suggested shift**
+可一键修正（样品荷电或 E_F 有误）。**Add EDC to list** 将结合能标度下的 EDC
+加入列表；**Copy report** 复制全部结果文本。仍有疑问时，换一个光子能量再测：
+芯能级的结合能不变，俄歇峰和高次光会移动。
+
 ## 8. Map 的角度→动量转换与布里渊区
 
 ### 8.1 Map 的 k 转换

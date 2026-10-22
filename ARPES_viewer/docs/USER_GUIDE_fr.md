@@ -311,6 +311,44 @@ une bande à la liste principale.
 
 ---
 
+### 7.4 Vérification des niveaux de cœur
+
+Un balayage large des niveaux de cœur est lui aussi listé comme une coupe.
+Clic droit dessus dans la liste principale → **Core-level check...** pour
+savoir d'où viennent ses pics.
+
+1. Saisir les éléments de l'échantillon — `NbSCl` ou `Nb, S, Cl` — puis
+   **Next**. *Match within* (0,5 eV) est l'écart maximal entre un pic et
+   l'énergie de liaison tabulée pour l'attribuer à l'échantillon.
+
+   ![Éléments](images/core_level_elements.png)
+
+2. Vérifier la référence en énergie. E_F est ajusté si la fenêtre contient
+   le front de Fermi, sinon placé à hν − W. Corriger l'énergie de photon,
+   le travail de sortie ou E_F s'ils sont faux (la ligne verte se déplace à
+   la souris) ; un hν − E_F loin de 4–5 eV signale une énergie de photon
+   erronée. **Analyse**.
+
+   ![Référence en énergie](images/core_level_reference.png)
+
+3. Les résultats : l'EDC en énergie de liaison, chaque pic marqué — vert
+   *sample* (orbitale nommée), orange *uncertain* (un niveau de
+   l'échantillon à moins de 2 eV : déplacement chimique ou charge — à vous
+   de juger), rouge *not the sample* (éléments courants qui pourraient
+   l'expliquer : contamination, lumière d'ordre supérieur, raies Auger).
+   Cliquer une ligne affiche tous les candidats ; la colonne *Assignment*
+   accepte votre propre attribution.
+
+   ![Vérification des niveaux de cœur](images/core_level_check.png)
+
+Si tous les pics sont décalés de la même quantité, les notes le disent et
+**Apply suggested shift** corrige (échantillon chargé, ou E_F faux).
+**Add EDC to list** ajoute l'EDC en énergie de liaison à la liste ;
+**Copy report** copie le résultat en texte. Une mesure à une seconde
+énergie de photon tranche ce qui reste douteux : les niveaux de cœur
+restent fixes en énergie de liaison, les raies Auger et la lumière d'ordre
+supérieur se déplacent.
+
 ## 8. D'angles en impulsion pour une carte, et la zone de Brillouin
 
 ### 8.1 Conversion en k d'une carte

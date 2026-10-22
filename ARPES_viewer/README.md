@@ -174,7 +174,7 @@ not fit and why -- at once, as the pointer moves.
 | Open, Show information, Rename | one | any |
 | Open slit cut / deflector cut | one or more | maps (angle, kz, k) |
 | Plot as a figure | one or more | cuts, EDC / MDC / spin EDC |
-| Stack plot, MDC / EDC fit | one | cut |
+| Stack plot, MDC / EDC fit, Core-level check | one | cut |
 | 3D view | one | map |
 | Cut arithmetic on the two | two | cuts |
 | Save, Remove | one or more | any readable / any |
@@ -331,6 +331,8 @@ mouse to pause; a map held in memory follows it live.
   them: `v_F`, `m*`, and the self-energy. Only accepts a cut whose in-plane
   axis is already in Å⁻¹, because every quantity built on the fitted band
   would otherwise carry meaningless units.
+- **Core-level check** -- which element and orbital each peak of a cut's
+  angle-integrated EDC is; see below.
 - **Arbitrary cuts** -- any straight line through a contour.
 - **Fermi-surface correction**, **stack plots**.
 - **Cut arithmetic** -- linear and circular dichroism, dividing by a
@@ -350,6 +352,74 @@ mouse to pause; a map held in memory follows it live.
 - **The curve viewer**, its **curve fit** and **spin analysis** -- see below.
 - **De-grid** -- remove the detector's grid (MCP pattern or mesh) from a map
   or a cut; see below.
+
+### Core-level check
+
+Right-click a cut in the list → **Core-level check...**. Some "cuts" are
+really a wide core-level scan, and the first question about one is what
+the peaks are. Three steps, each correctable before the next:
+
+1. **Elements.** Type what the sample is made of: symbols (`Nb, S, Cl`) or
+   a formula (`NbSCl`, `Bi2Se3`). The match tolerance (0.5 eV) and the
+   "uncertain" window (2 eV) are set here too; the last values are kept in
+   `~/.arpes_viewer/corelevel.json`.
+2. **Energy reference.** The whole cut is summed over angle and the Fermi
+   edge looked for where it should be (hν − W on a kinetic axis, zero on
+   `E - E_F`). If the window holds it, it is fitted -- the nominal photon
+   energy is often off by more than the tolerance -- and hν − E_F is shown
+   as an implied work function, which should be 4-5 eV. If not (the usual
+   core-level window), E_F is put at hν − W. The axis type, hν, W and E_F
+   are all editable, and the E_F line can be dragged.
+3. **Results.** The EDC on a binding-energy axis (deeper to the left), each
+   peak marked and listed:
+   - **sample** -- within the tolerance of a level of the sample's
+     elements, with the orbital named (and its spin-orbit partner, when
+     that peak is there too);
+   - **sample (orbital ambiguous)** -- two levels of the sample fit;
+   - **uncertain** -- no level within the tolerance but one within the
+     uncertain window: a chemical shift, charging, or not the sample; the
+     nearest levels are listed and the call is yours;
+   - **not the sample** -- the lines of *common* elements near it (neither
+     radioactive nor highly toxic, the usual UHV contaminants first: C, O,
+     N, F, Cl, Na, K, S, Si, Ca, Ar, Ta, Mo, W, Cu, Ag, In, Au, ...) with
+     where each typically comes from, plus second- and third-order light
+     and Auger lines.
+
+   The assignment column is editable; **Copy report** includes what was
+   changed by hand. **Add EDC to list** lists the integrated EDC on the
+   binding-energy scale.
+
+The table is Table 1-1 of the X-ray Data Booklet (`Table_1-1.pdf` at the
+top of the repository), turned once into `tools/corelevel_table.py` by
+`devtools/gen_corelevels.py` -- the PDF is never read at run time. What
+the check adds beyond a lookup:
+
+- **Gas-phase values.** The table gives H, N, O, F, Cl and the rare gases
+  against the vacuum level of the free gas (O 1s 543.1 eV, where an oxide
+  is at ~530). Typical solid-state values (oxides, hydroxides, chlorides,
+  sulfides, sulfates, adventitious carbon and its oxidised forms, PTFE,
+  SiO2, implanted Ar, the common metal oxides) are compared as well; the
+  checkbox turns them off.
+- **Spin-orbit doublets** confirm an assignment when both components are
+  found at the tabulated splitting.
+- **Higher-order light.** A level deeper than hν − W can appear at E_B − hν
+  (2hν) or E_B − 2hν (3hν).
+- **Auger lines** (C, N, O, F, Na KLL) are named; they sit at a fixed
+  kinetic energy, so measuring at a second photon energy tells them apart:
+  a core level stays put in binding energy, an Auger line and higher-order
+  light move.
+- **A rigid shift.** If shifting every peak by the same amount would make
+  clearly more of them fit (charging of an insulating sample, or a wrong
+  E_F or hν), the shift is reported; **Apply suggested shift** applies it.
+- **What is missing.** Levels of the sample inside the window with no peak,
+  and elements with no level in the window at all (with the nearest levels
+  reachable at this photon energy).
+
+Peaks are maxima of the lightly smoothed EDC that stand 8 noise sigmas
+(peak to valley) above their surroundings, the noise measured from the
+curve itself and scaled as √counts for counting data; each is refined by a
+Gaussian on a sloping background. **Peak threshold** lowers it for weak
+lines.
 
 ### kz map processing
 
@@ -754,6 +824,7 @@ you what it may depend on.
 | `tools/degrid.py` | Removing the detector grid: the map's own grid estimate, the per-slice contrast / shift / local fit, the single-cut paths, and the pixel-lock check. |
 | `tools/cutops.py` | Arithmetic between two cuts: scaling, resampling, dichroism, reference division, Poisson uncertainty, and which recorded conditions differ. |
 | `tools/cleavage.py` | From a measured k_z period to which lattice planes could have produced it. |
+| `tools/corelevel.py`, `tools/corelevel_table.py` | The core-level check: the integrated EDC, the energy reference, peak finding, assignment against Table 1-1 and typical chemical states, contaminants, higher-order light, the rigid-shift test. The table is generated. |
 | `tools/fermi.py`, `tools/peaks.py`, `tools/dispersion.py` | The Fermi-edge model, MDC/EDC peak fitting, and what the fitted band says (`v_F`, `m*`, self-energy). |
 | `tools/lattice.py`, `tools/spacegroups.py`, `tools/bz3d.py`, `tools/bz2d.py`, `tools/moire.py`, `tools/highsym.py` | The Brillouin-zone geometry: lattices and point groups, the 3-D and 2-D zones and their irreducible wedges, the moiré zone, and the named high-symmetry points (a static table per Bravais lattice, after Setyawan & Curtarolo 2010). |
 | `tools/figure.py`, `tools/export.py` | What a publication figure *is*, and what leaves the program. |
@@ -769,12 +840,13 @@ you what it may depend on.
 | `ui/kzmap.py` | The kz map processing window. |
 | `ui/kzconv.py` | The kz-to-momentum window: V0, the zone lines, the period tool. |
 | `ui/cutops.py` | The cut arithmetic window. |
+| `ui/corelevel.py` | The core-level check: elements, energy reference, results window. |
 | `ui/degrid.py` | The De-grid window. |
 | `ui/curves.py` | The curve viewer, its curve fit panel and the spin analysis panel. |
 | `ui/jobs.py` | Running one long operation at a time off the GUI thread. |
 | `ui/figure.py`, `ui/fit.py`, `ui/process.py`, `ui/volume.py` | The figure composer, the MDC/EDC fit panel, and the 2-D and 3-D processing panels. |
 | **`devtools/`, `test/`** | |
-| `devtools/gen_colormaps.py`, `devtools/gen_spacegroups.py` | Generate the tables in `tools/`; need scipy + the lab's `.mat`, and `spglib`, neither of which the program itself does. |
+| `devtools/gen_colormaps.py`, `devtools/gen_spacegroups.py`, `devtools/gen_corelevels.py` | Generate the tables in `tools/`; need scipy + the lab's `.mat`, `spglib`, and poppler's `pdftotext` with `Table_1-1.pdf`, none of which the program itself does. |
 | `devtools/demo_data.py`, `devtools/guide_screenshots.py`, `devtools/build_guide_pdfs.py` | Synthetic data to try the program on, the script that re-takes the user guides' screenshots from it (offscreen), and the one that prints the guides to PDF (pandoc + Playwright). |
 | `test/test_imports.py` | Checks on the shape of the code: that no local shadows an imported module, that no package is referenced by its bare name, that everything imports, and that `loader/` and `tools/` stay Qt-free. |
 
