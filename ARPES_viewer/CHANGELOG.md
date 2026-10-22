@@ -12,6 +12,24 @@ file is the record of how it got that way.
 
 ## Unreleased
 
+- **Core-level check** (right-click a cut → *Core-level check...*). Some
+  cuts are a wide core-level scan; this names the peaks of the cut's
+  angle-integrated EDC. It asks for the sample's elements (symbols or a
+  formula), finds the Fermi edge -- fitted when the window holds it, else
+  hν − W -- and shows hν, W and E_F for the user to confirm or change, then
+  compares every peak with the binding energies of Table 1-1 of the X-ray
+  Data Booklet: within 0.5 eV it is the sample's and gets its orbital,
+  within 2 eV it is left to the user with the nearest levels named, and a
+  peak nothing in the sample explains gets the lines of common
+  (non-radioactive, not highly toxic) elements near it as possible
+  contamination. Beyond the table lookup it also checks spin-orbit
+  partners, typical solid-state values for the elements the table gives
+  as free gases (O 1s at 530, not 543.1 eV), second- and third-order
+  light, Auger lines, a rigid shift that would make more peaks fit
+  (charging, or a wrong E_F / hν), and levels that should be in the window
+  and are not. The table is a constant module, `tools/corelevel_table.py`,
+  generated once from `Table_1-1.pdf` by `devtools/gen_corelevels.py`.
+  `tools/corelevel.py`, `ui/corelevel.py`, `test/test_corelevel.py`.
 - **ANTARES photon-energy (PhD) scans load as a kz map.** A PhD `.nxs`
   file is one `Phd_NNNN` entry per photon energy, each a single MBS frame
   (`MBS_0_<n>/Image32_1` with its `Escale`/`Xscale` and `hv`), laid out
