@@ -215,6 +215,79 @@ def test_second_order_light_is_recognised():
                for m in peak.higher_order)
 
 
+def _strong_and_weak(seed=3):
+    """A Nb 3d doublet at ~10^6 counts and, 20 eV away, an S 2p3/2 line at
+    0.3 % of its height (still ~70 sigma clear of the noise), plus a
+    shoulder on the strong line's flank with no maximum of its own."""
+    rng = np.random.default_rng(seed)
+    be = np.arange(150.0, 230.0, 0.05)
+    clean = 500 + 2.0 * be
+    for centre, height, fwhm in ((202.3, 1.0e6, 0.8), (205.0, 6.7e5, 0.8),
+                                 (162.5, 3000, 0.8), (207.6, 4.0e4, 1.0)):
+        clean = clean + height * np.exp(-0.5 * ((be - centre)
+                                                / (fwhm / 2.355)) ** 2)
+    return be, rng.poisson(clean).astype(float)
+
+
+def test_a_weak_line_next_to_a_strong_one_is_found():
+    be, counts = _strong_and_weak()
+    found = [p.binding for p in CL.find_peaks(be, counts)]
+    assert any(abs(e - 162.5) < 0.1 for e in found)
+    # the old 1 % cut lost it
+    old = [p.binding for p in CL.find_peaks(be, counts, min_relative=0.01)]
+    assert not any(abs(e - 162.5) < 0.1 for e in old)
+
+
+def test_a_peak_added_by_hand_is_refined_and_named():
+    be, counts = _strong_and_weak()
+    peak = CL.peak_at(be, counts, 162.9)
+    assert peak.manual and abs(peak.binding - 162.5) < 0.05
+    assert 0.6 < peak.fwhm < 1.0 and peak.significance > 20
+    # a position with nothing to fit keeps the click and says so
+    flat = CL.peak_at(be, counts, 180.0)
+    assert flat.binding == 180.0 and not np.isfinite(flat.fwhm)
+
+    reference = CL.EnergyReference("binding", 0.0, HV, W)
+    report = CL.check(be, counts, ["Nb"], reference, manual=[162.9])
+    added = [a for a in report.assignments if a.peak.manual]
+    assert len(added) == 1
+    # the found peak at the same place made way for it
+    assert sum(abs(a.peak.binding - 162.5) < 0.3 for a in report.assignments) == 1
+    sample, others = added[0].suggestions
+    assert not sample           # Nb has nothing within 2 eV of 162.5
+    assert any(m.line.element == "S" and m.line.orbital.startswith("2p")
+               for m in others)
+    assert "[added by hand]" in report.text()
+
+
+def test_a_removed_peak_stays_out():
+    be, counts = _strong_and_weak()
+    reference = CL.EnergyReference("binding", 0.0, HV, W)
+    found = CL.check(be, counts, ["Nb", "S"], reference)
+    assert any(abs(p.binding - 162.5) < 0.1 for p in found.peaks)
+    removed = CL.check(be, counts, ["Nb", "S"], reference, ignored=[162.5])
+    assert not any(abs(p.binding - 162.5) < 0.3 for p in removed.peaks)
+    assert len(removed.peaks) == len(found.peaks) - 1
+
+
+def test_candidates_within_two_ev_put_the_sample_first():
+    sample, others = CL.candidates_near(530.5, ["Nb", "O"])
+    assert sample and all(m.line.element == "O" for m in sample)
+    assert all(abs(m.delta) <= CL.HINT_EV for m in sample + others)
+    assert not any(m.line.element in ("Nb", "O") for m in others)
+    assert [abs(m.delta) for m in others] == sorted(abs(m.delta) for m in others)
+    assert "O 1s" in CL.describe_candidates(530.5, ["Nb", "O"])
+    assert "no tabulated level" in CL.describe_candidates(-50.0, ["Nb"])
+
+
+def test_the_reference_maps_binding_back_to_the_axis():
+    for scale, level in (("kinetic", 595.5), ("relative", 0.0),
+                         ("binding", 0.3)):
+        reference = CL.EnergyReference(scale, level, HV, W)
+        axis = np.array([10.0, 250.0, 590.0])
+        assert np.allclose(reference.axis(reference.binding(axis)), axis)
+
+
 # -- the window ---------------------------------------------------------------
 @pytest.fixture(scope="module")
 def app():
@@ -283,6 +356,55 @@ def test_the_shift_button_moves_the_reference(app):
     assert window.shift_button.isEnabled()
     report = window.apply_shift()
     assert _at(report, 202.3).status == "sample"
+    window.close()
+
+
+def test_the_window_draws_log_counts_and_takes_peaks_by_hand(app):
+    from ui import corelevel as UC
+
+    be, counts = _strong_and_weak()
+    window = UC.CoreLevelWindow(
+        be, counts, "Binding energy (eV)", ["Nb", "S"],
+        UC.CL.EnergyReference("binding", 0.0, HV, W), "strong and weak",
+        settings={"min_relative": 0.002})
+    n_found = window.table.rowCount()
+
+    window.log_scale.setChecked(True)
+    x, y = window.curve.getData()
+    assert np.nanmax(y) < 7 and np.isfinite(y).all()      # log10 of ~10^6
+    assert window.plot.getAxis("left").logMode
+    window.log_scale.setChecked(False)
+    assert np.nanmax(window.curve.getData()[1]) > 1e5
+
+    # the shoulder at 207.6 eV has no maximum of its own: add it by hand
+    report = window.add_peak(207.4)
+    added = [a for a in report.assignments if a.peak.manual]
+    assert len(added) == 1 and abs(added[0].peak.binding - 207.6) < 0.2
+    row = report.assignments.index(added[0])
+    assert window.table.item(row, 0).text().endswith("◆")
+    assert "within ±2 eV" in window.table.item(row, 6).text()
+    assert "207" in window.hint.text()
+    assert window.add_peak(207.4) is report            # no double click twice
+    assert window.add_peak(999.0) is None              # outside the window
+
+    # a name typed by hand survives a re-analysis
+    window.table.item(row, 5).setText("Nb 3d satellite")
+    window.analyse()
+    row = next(n for n, a in enumerate(window.report.assignments)
+               if a.peak.manual)
+    assert window.table.item(row, 5).text() == "Nb 3d satellite"
+
+    # remove it again, and a found peak too; reset brings the found one back
+    window.table.selectRow(row)
+    window.remove_selected()
+    assert not any(a.peak.manual for a in window.report.assignments)
+    assert window.table.rowCount() == n_found
+    window.table.selectRow(0)
+    window.remove_selected()
+    assert window.table.rowCount() == n_found - 1
+    assert "Removed by hand" in window.report_text()
+    window.reset_peaks()
+    assert window.table.rowCount() == n_found
     window.close()
 
 

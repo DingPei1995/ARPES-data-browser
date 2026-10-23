@@ -14,7 +14,11 @@ Three steps, each the user can correct before the next one runs:
    hang on, so they are shown and editable rather than silently applied.
 3. :class:`CoreLevelWindow` -- the EDC on the binding-energy scale with
    every peak marked, a table of what each one is (or might be), and what
-   is missing. The assignment column is the user's to overwrite.
+   is missing. The assignment column is the user's to overwrite. The count
+   axis can be logarithmic, so weak lines next to a strong one show; a peak
+   the search missed can be added by hand (click the plot, or type its
+   energy) and a false one removed, and every position -- an added peak,
+   or wherever the cursor is -- is named with the levels within ±2 eV.
 
 The analysis itself is :mod:`tools.corelevel`, with no Qt in it.
 """
@@ -37,6 +41,9 @@ from PyQt5.QtWidgets import (QDialog, QMainWindow, QWidget, QVBoxLayout,
 import tools.corelevel as CL
 from ui.process import spin
 from ui.widgets import strip_stock_menu
+
+#: Plot symbol of a found peak and of one added by hand.
+FOUND_SYMBOL, MANUAL_SYMBOL = "o", "d"
 
 #: Marker colour of each status, on the plot and in the table.
 STATUS_COLOURS = {
@@ -391,6 +398,10 @@ class CoreLevelWindow(QMainWindow):
         self.report = None
         settings = dict(settings or {})
         self._items = []
+        #: peaks added by hand and found peaks removed, as positions on the
+        #: data's own axis so they follow a change of the energy reference
+        self.manual = []
+        self.ignored = []
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -423,6 +434,15 @@ class CoreLevelWindow(QMainWindow):
             "How far above the noise a maximum must stand to count as a "
             "peak. Lower it for weak lines, raise it if noise is marked.")
         row.addWidget(self.sensitivity)
+        row.addWidget(QLabel("Min height"))
+        self.min_relative = spin(
+            100 * float(settings.get("min_relative", CL.MIN_RELATIVE)),
+            0.0, 20.0, 0.1, 2, " %")
+        self.min_relative.setToolTip(
+            "Smallest peak kept, in % of the strongest one. The noise "
+            "threshold already rejects noise; raise this only to hide weak "
+            "structure next to a strong line.")
+        row.addWidget(self.min_relative)
         self.chemical = QCheckBox("Chemical states")
         self.chemical.setChecked(bool(settings.get("chemical_states", True)))
         self.chemical.setToolTip("Compare typical solid-state values (oxides, "
@@ -433,6 +453,52 @@ class CoreLevelWindow(QMainWindow):
         row.addWidget(self.analyse_button)
         row.addStretch(1)
         layout.addWidget(controls)
+
+        # -- the peaks by hand ------------------------------------------------
+        manual = QGroupBox("Peaks by hand")
+        row = QHBoxLayout(manual)
+        self.log_scale = QCheckBox("Log counts")
+        self.log_scale.setChecked(bool(settings.get("log_scale", False)))
+        self.log_scale.setToolTip(
+            "Logarithmic count axis: weak lines next to a strong one show.")
+        self.log_scale.toggled.connect(lambda *_: self._draw())
+        row.addWidget(self.log_scale)
+        row.addSpacing(12)
+        self.click_add = QPushButton("Click to add peak")
+        self.click_add.setCheckable(True)
+        self.click_add.setToolTip(
+            "While pressed, a click on the plot puts a peak there (a "
+            "double-click always does). Its position is refined by a local "
+            "fit, and it is named with the levels within "
+            f"±{CL.HINT_EV:g} eV.")
+        row.addWidget(self.click_add)
+        row.addWidget(QLabel("or at"))
+        self.add_energy = spin(0.0, -100.0, 20000.0, 0.1, 2, " eV")
+        self.add_energy.setToolTip("Binding energy of a peak to add.")
+        row.addWidget(self.add_energy)
+        self.add_button = QPushButton("Add")
+        self.add_button.clicked.connect(
+            lambda: self.add_peak(self.add_energy.value()))
+        row.addWidget(self.add_button)
+        row.addSpacing(12)
+        self.remove_button = QPushButton("Remove selected")
+        self.remove_button.setToolTip(
+            "Drop the selected peaks: one added by hand goes, a found one "
+            "is ignored until Reset.")
+        self.remove_button.clicked.connect(self.remove_selected)
+        row.addWidget(self.remove_button)
+        self.reset_button = QPushButton("Reset peaks")
+        self.reset_button.setToolTip("Forget the peaks added by hand and "
+                                     "bring back the ones removed.")
+        self.reset_button.clicked.connect(self.reset_peaks)
+        row.addWidget(self.reset_button)
+        row.addStretch(1)
+        layout.addWidget(manual)
+        self.hint = QLabel("")
+        self.hint.setWordWrap(True)
+        self.hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.hint.setStyleSheet("color: #555555;")
+        layout.addWidget(self.hint)
 
         # -- plot, table, notes -------------------------------------------
         splitter = QSplitter(Qt.Vertical)
@@ -448,6 +514,8 @@ class CoreLevelWindow(QMainWindow):
                                                                 style=Qt.DotLine))
         self.highlight.setVisible(False)
         self.plot.addItem(self.highlight, ignoreBounds=True)
+        self.plot.scene().sigMouseMoved.connect(self._mouse_moved)
+        self.plot.scene().sigMouseClicked.connect(self._mouse_clicked)
         self.show_lines = QCheckBox("Show the sample's tabulated levels")
         self.show_lines.setChecked(True)
         self.show_lines.toggled.connect(lambda *_: self._draw())
@@ -501,24 +569,44 @@ class CoreLevelWindow(QMainWindow):
         return self.reference.binding(self.energy)
 
     def analyse(self):
+        own = self._own_assignments()
         self.report = CL.check(self.binding(), self.intensity, self.elements,
                                self.reference,
                                sensitivity=self.sensitivity.value(),
                                tolerance=self.tolerance.value(),
                                uncertain=self.uncertain.value(),
-                               chemical_states=self.chemical.isChecked())
+                               chemical_states=self.chemical.isChecked(),
+                               min_relative=self.min_relative.value() / 100,
+                               manual=self.reference.binding(self.manual),
+                               ignored=self.reference.binding(self.ignored))
         self.elements_label.setText("Sample: " + ", ".join(self.elements))
         self._draw()
-        self._fill_table()
+        self._fill_table(own)
         self.notes.setPlainText(self._notes_text())
         self.shift_button.setEnabled(self.report.shift is not None)
         counts = {s: sum(a.status == s for a in self.report.assignments)
                   for s in CL.STATUSES}
+        by_hand = sum(p.manual for p in self.report.peaks)
         self.statusBar().showMessage(
             f"{len(self.report.peaks)} peak(s): {counts['sample']} sample, "
             f"{counts['ambiguous']} ambiguous, {counts['uncertain']} uncertain, "
-            f"{counts['unexplained']} not the sample")
+            f"{counts['unexplained']} not the sample"
+            + (f"; {by_hand} added by hand" if by_hand else "")
+            + (f"; {len(self.ignored)} removed" if self.ignored else ""))
         return self.report
+
+    def _own_assignments(self) -> dict:
+        """Binding energy -> what the user typed, for every row whose
+        assignment is no longer the automatic one, so a re-analysis keeps
+        it."""
+        own = {}
+        if self.report is None:
+            return own
+        for row, a in enumerate(self.report.assignments):
+            item = self.table.item(row, 5)
+            if item is not None and item.text() != self._assignment_text(a):
+                own[a.peak.binding] = item.text()
+        return own
 
     def _notes_text(self) -> str:
         report, rows = self.report, []
@@ -535,6 +623,8 @@ class CoreLevelWindow(QMainWindow):
         for symbol, text in report.out_of_window.items():
             rows.append(f"{symbol}: {text}")
         rows += report.notes
+        rows.append(f"Peaks marked ◆ were added by hand. Hover over the plot "
+                    f"for the levels within ±{CL.HINT_EV:g} eV of the cursor.")
         rows.append("Status: sample = within the tolerance of a level of the "
                     "sample; uncertain = within a chemical shift, check it; "
                     "not the sample = the candidates listed are common "
@@ -543,28 +633,48 @@ class CoreLevelWindow(QMainWindow):
                     "changes; an Auger line and higher-order light do not.")
         return "\n".join(rows)
 
+    def _y(self, values):
+        """Intensities as plotted: log10 on the log axis, where what is not
+        positive is put just below the smallest positive count."""
+        values = np.asarray(values, dtype=float)
+        if not self.log_scale.isChecked():
+            return values
+        positive = self.intensity[np.isfinite(self.intensity)
+                                  & (self.intensity > 0)]
+        floor = 0.5 * float(positive.min()) if positive.size else 1e-3
+        with np.errstate(invalid="ignore"):
+            return np.log10(np.where(values > floor, values, floor))
+
     def _draw(self):
         for item in self._items:
             self.plot.removeItem(item)
         self._items = []
+        log = self.log_scale.isChecked()
+        self.plot.getAxis("left").setLogMode(log)
+        self.plot.setLabel("left", "counts (log scale)" if log
+                           else "counts (angle-integrated)")
         b = self.binding()
         order = np.argsort(b)
-        self.curve.setData(b[order], self.intensity[order])
+        self.curve.setData(b[order], self._y(self.intensity[order]))
         report = self.report
         if report is None:
             return
         spots = []
         for n, a in enumerate(report.assignments, 1):
             colour = STATUS_COLOURS[a.status]
-            spots.append({"pos": (a.peak.binding, a.peak.height),
+            y = float(self._y(a.peak.height))
+            spots.append({"pos": (a.peak.binding, y),
                           "brush": pg.mkBrush(colour), "pen": pg.mkPen("w"),
+                          "symbol": MANUAL_SYMBOL if a.peak.manual
+                          else FOUND_SYMBOL,
+                          "size": 12 if a.peak.manual else 10,
                           "data": n - 1})
             text = pg.TextItem(f"{n}: {a.label}", color=colour, anchor=(0.5, 1.2))
-            text.setPos(a.peak.binding, a.peak.height)
+            text.setPos(a.peak.binding, y)
             self.plot.addItem(text, ignoreBounds=True)
             self._items.append(text)
         self.markers.setData(spots)
-        finite = self.intensity[np.isfinite(self.intensity)]
+        finite = self._y(self.intensity[np.isfinite(self.intensity)])
         if finite.size:
             # room above the tallest peak for its label
             lo, hi = float(finite.min()), float(finite.max())
@@ -583,20 +693,32 @@ class CoreLevelWindow(QMainWindow):
                 self.plot.addItem(item, ignoreBounds=True)
                 self._items.append(item)
 
-    def _fill_table(self):
+    def _fill_table(self, own=None):
         report = self.report
+        own = dict(own or {})
         self.table.blockSignals(True)
         self.table.setRowCount(len(report.assignments))
         for row, a in enumerate(report.assignments):
             p = a.peak
             details = self._candidates_text(a)
-            values = (str(row + 1), f"{p.binding:.2f}"
+            assigned = self._assignment_text(a)
+            if own:
+                # what the user typed for this peak before the re-analysis
+                previous = min(own, key=lambda e: abs(e - p.binding))
+                if abs(previous - p.binding) <= 0.15:
+                    assigned = own.pop(previous)
+            values = (f"{row + 1} ◆" if p.manual else str(row + 1),
+                      f"{p.binding:.2f}"
                       + (f" ± {p.error:.2f}" if np.isfinite(p.error) else ""),
-                      f"{p.fwhm:.2f}", f"{p.significance:.0f}",
-                      CL.STATUS_LABELS[a.status], self._assignment_text(a),
+                      f"{p.fwhm:.2f}" if np.isfinite(p.fwhm) else "—",
+                      f"{p.significance:.0f}" if np.isfinite(p.significance)
+                      else "—",
+                      CL.STATUS_LABELS[a.status], assigned,
                       details.replace("\n", "  |  "))
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
+                if column == 0 and p.manual:
+                    item.setToolTip("Added by hand")
                 if column == 6 and details:
                     item.setToolTip(details)
                 if column != 5:
@@ -637,6 +759,13 @@ class CoreLevelWindow(QMainWindow):
             parts.append("higher-order light: "
                          + "; ".join(m.describe() for m in a.higher_order))
         parts += a.notes
+        sample, others = a.suggestions
+        if sample:
+            parts.append(f"sample within ±{CL.HINT_EV:g} eV: "
+                         + "; ".join(m.describe() for m in sample))
+        if others:
+            parts.append(f"other elements within ±{CL.HINT_EV:g} eV: "
+                         + "; ".join(m.describe() for m in others))
         return "\n".join(parts)
 
     def _row_selected(self):
@@ -651,12 +780,92 @@ class CoreLevelWindow(QMainWindow):
         self.highlight.setVisible(True)
         p = a.peak
         head = (f"Peak {row + 1} at {p.binding:.2f} eV (FWHM {p.fwhm:.2f} eV, "
-                f"{p.significance:.0f}σ): {CL.STATUS_LABELS[a.status]}")
+                f"{p.significance:.0f}σ): {CL.STATUS_LABELS[a.status]}"
+                + (" — added by hand" if p.manual else ""))
         assigned = self._assignment_text(a)
         body = ([f"Assignment: {assigned}"] if assigned else []) + \
             [self._candidates_text(a) or "Nothing near it in the tables."]
+        if not p.manual:
+            body.append(f"Within ±{CL.HINT_EV:g} eV: " + CL.describe_candidates(
+                p.binding, self.elements,
+                chemical_states=self.chemical.isChecked()))
         self.notes.setPlainText("\n".join([head] + body + ["", "—" * 20,
                                                           self._notes_text()]))
+
+    # -- the peaks by hand --------------------------------------------------
+    def _view_x(self, scene_pos):
+        """The binding energy under a scene position, or None off the plot."""
+        box = self.plot.getPlotItem().vb
+        if not box.sceneBoundingRect().contains(scene_pos):
+            return None
+        return float(box.mapSceneToView(scene_pos).x())
+
+    def _mouse_moved(self, scene_pos):
+        energy = self._view_x(scene_pos)
+        if energy is None:
+            return
+        self.hint.setText(f"Cursor at {energy:.2f} eV — " + CL.describe_candidates(
+            energy, self.elements, chemical_states=self.chemical.isChecked()))
+
+    def _mouse_clicked(self, event):
+        if event.button() != Qt.LeftButton:
+            return
+        if not (self.click_add.isChecked() or event.double()):
+            return
+        energy = self._view_x(event.scenePos())
+        if energy is not None:
+            event.accept()
+            self.add_peak(energy)
+
+    def add_peak(self, binding: float):
+        """Put a peak at ``binding`` eV and analyse again; the new peak's
+        row is selected, so its hints show."""
+        binding = float(binding)
+        b = self.binding()
+        if not np.nanmin(b) <= binding <= np.nanmax(b):
+            self.statusBar().showMessage(
+                f"{binding:.2f} eV is outside the window "
+                f"({np.nanmin(b):.2f} to {np.nanmax(b):.2f} eV)")
+            return None
+        position = float(self.reference.axis(binding))
+        if any(abs(position - e) < 0.05 for e in self.manual):
+            return self.report      # the second click of a double-click
+        self.manual.append(position)
+        report = self.analyse()
+        rows = [n for n, a in enumerate(report.assignments) if a.peak.manual]
+        if rows:
+            row = min(rows, key=lambda n: abs(
+                report.assignments[n].peak.binding - binding))
+            self.table.selectRow(row)
+            a = report.assignments[row]
+            self.hint.setText(f"Added peak {row + 1} at {a.peak.binding:.2f} eV "
+                              "— " + CL.describe_candidates(
+                                  a.peak.binding, self.elements,
+                                  chemical_states=self.chemical.isChecked()))
+        return report
+
+    def remove_selected(self):
+        """Drop the selected peaks: one added by hand is forgotten, a found
+        one is ignored until :meth:`reset_peaks`."""
+        if self.report is None:
+            return None
+        rows = sorted({index.row() for index in self.table.selectedIndexes()})
+        if not rows:
+            self.statusBar().showMessage("Select the peaks to remove first")
+            return None
+        for row in rows:
+            p = self.report.assignments[row].peak
+            if p.manual:
+                if self.manual:
+                    positions = self.reference.binding(self.manual)
+                    del self.manual[int(np.argmin(np.abs(positions - p.binding)))]
+            else:
+                self.ignored.append(float(self.reference.axis(p.binding)))
+        return self.analyse()
+
+    def reset_peaks(self):
+        self.manual, self.ignored = [], []
+        return self.analyse()
 
     # -- the buttons --------------------------------------------------------
     def change_elements(self):
@@ -728,11 +937,14 @@ class CoreLevelWindow(QMainWindow):
     def report_text(self) -> str:
         text = self.report.text()
         own = []
-        for row in range(self.table.rowCount()):
+        for row, a in enumerate(self.report.assignments):
             item = self.table.item(row, 5)
-            automatic = self._assignment_text(self.report.assignments[row])
-            if item is not None and item.text() != automatic:
+            if item is not None and item.text() != self._assignment_text(a):
                 own.append(f"Peak {row + 1}: {item.text()}")
+        if self.ignored:
+            text += ("\n\nRemoved by hand (found, but not peaks): "
+                     + ", ".join(f"{e:.2f} eV" for e in
+                                 self.reference.binding(self.ignored)))
         if own:
             text += "\n\nAssigned by hand:\n" + "\n".join(own)
         return text
@@ -741,7 +953,9 @@ class CoreLevelWindow(QMainWindow):
         return {"tolerance": self.tolerance.value(),
                 "uncertain": self.uncertain.value(),
                 "chemical_states": self.chemical.isChecked(),
-                "sensitivity": self.sensitivity.value()}
+                "sensitivity": self.sensitivity.value(),
+                "min_relative": self.min_relative.value() / 100,
+                "log_scale": self.log_scale.isChecked()}
 
     def closeEvent(self, event):
         save_last_used({**load_last_used(), **self._settings()})
@@ -773,7 +987,8 @@ def start(data, label: str, parent=None, *, temperature: float = 30.0,
     if elements_dialog is None and dialog.exec_() != QDialog.Accepted:
         return None
     elements = dialog.elements()[0]
-    settings = dialog.settings()
+    # the results window's own settings (threshold, log axis...) as last used
+    settings = {**load_last_used(), **dialog.settings()}
 
     ref_dialog = reference_dialog or EnergyReferenceDialog(
         energy, intensity, energy_label, info, parent, temperature=temperature)

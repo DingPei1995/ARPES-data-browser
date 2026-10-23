@@ -12,6 +12,17 @@ file is the record of how it got that way.
 
 ## Unreleased
 
+- **Core-level check: weak lines.** A strong core level hid the weak ones
+  twice over: on a linear axis they were a flat line, and the peak search
+  kept only peaks above 1 % of the strongest -- a 2000-count line standing
+  70 σ clear of the noise next to a 10^6-count Nb 3d was thrown away. The
+  1 % cut is now 0.2 % and a setting (*Min height*), the noise threshold
+  doing the real work; the count axis can be logarithmic (*Log counts*);
+  peaks can be added by hand (click the plot or type the energy; refined
+  by a local fit, marked ◆) and found ones removed; an added peak, the
+  selected one, and the cursor are each named with every tabulated level
+  within ±2 eV (`tools.corelevel.candidates_near`). Assignments typed by
+  hand now survive a re-analysis.
 - **Core-level check** (right-click a cut → *Core-level check...*). Some
   cuts are a wide core-level scan; this names the peaks of the cut's
   angle-integrated EDC. It asks for the sample's elements (symbols or a

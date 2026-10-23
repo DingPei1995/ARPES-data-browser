@@ -72,6 +72,14 @@ CONTAMINANT_EV = 1.0
 #: smoothed EDC must stand to count as a peak. Peak-to-valley, so noise
 #: alone reaches 5-6 over a long scan.
 SENSITIVITY = 8.0
+#: The smallest peak kept, as a fraction of the strongest one's prominence.
+#: Small, because the noise test above is what rejects noise: a 1 % cut
+#: threw away real weak lines next to a strong one (a 3d at 10^6 counts
+#: hid a 2000-count 4p standing 40 sigma clear).
+MIN_RELATIVE = 0.002
+#: How far either side of a position the hints for it look (eV): a peak
+#: added by hand, or the cursor, is named with every level this close.
+HINT_EV = 2.0
 #: The work function assumed when the file records none.
 DEFAULT_WORK_FUNCTION = 4.5
 
@@ -515,6 +523,14 @@ class EnergyReference:
             return energy - self.fermi_level
         return self.fermi_level - energy
 
+    def axis(self, binding):
+        """The inverse of :meth:`binding`: where a binding energy is on the
+        dataset's own axis."""
+        binding = np.asarray(binding, dtype=float)
+        if self.scale == "binding":
+            return binding + self.fermi_level
+        return self.fermi_level - binding
+
     @property
     def max_binding(self):
         """The deepest level first-order light can reach: hv - W."""
@@ -562,6 +578,8 @@ class Peak:
     error: float = float("nan")
     #: how many noise sigmas the peak stands above its surroundings
     significance: float = float("nan")
+    #: added by the user rather than found
+    manual: bool = False
 
 
 def _gaussian_line(x, amplitude, centre, sigma, offset, slope):
@@ -570,7 +588,7 @@ def _gaussian_line(x, amplitude, centre, sigma, offset, slope):
 
 
 def find_peaks(binding, intensity, *, sensitivity: float = SENSITIVITY,
-               min_relative: float = 0.01, smoothing: float = None) -> list:
+               min_relative: float = MIN_RELATIVE, smoothing: float = None) -> list:
     """The peaks of the EDC, deepest last.
 
     The curve is put on a uniform grid, smoothed (``smoothing`` eV, by
@@ -660,6 +678,102 @@ def find_peaks(binding, intensity, *, sensitivity: float = SENSITIVITY,
     return peaks
 
 
+def peak_at(binding, intensity, energy: float, *, half: float = 1.0) -> Peak:
+    """A peak the user put at ``energy`` (eV binding), marked ``manual``.
+
+    The position is refined by a Gaussian on a sloping background over
+    ``half`` eV either side when that fit settles near the click -- a
+    shoulder on a strong line usually does -- and kept as given when it
+    does not; the FWHM is then NaN. The significance is the Gaussian's
+    amplitude over the noise, as for a found peak.
+    """
+    from scipy.optimize import curve_fit
+
+    b = np.asarray(binding, dtype=float)
+    y = np.asarray(intensity, dtype=float)
+    keep = np.isfinite(b) & np.isfinite(y)
+    b, y = b[keep], y[keep]
+    order = np.argsort(b)
+    b, y = b[order], y[order]
+    energy = float(energy)
+    if b.size == 0:
+        return Peak(energy, float("nan"), float("nan"), float("nan"),
+                    manual=True)
+    height = float(np.interp(energy, b, y))
+    peak = Peak(energy, height, float("nan"), float("nan"), manual=True)
+    near = (b >= energy - half) & (b <= energy + half)
+    if near.sum() < 6:
+        return peak
+    x, v = b[near], y[near]
+    step = float(np.median(np.diff(x)))
+    base = float(np.min(v))
+    start = (max(height - base, 1e-12), energy, max(0.25 * half, step), base, 0.0)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            popt, pcov = curve_fit(_gaussian_line, x, v, p0=start, maxfev=4000)
+    except Exception:                                    # noqa: BLE001
+        return peak
+    amplitude, centre, sigma = float(popt[0]), float(popt[1]), abs(float(popt[2]))
+    if amplitude <= 0 or abs(centre - energy) > 0.5 * half or \
+            not step <= sigma <= 2 * half:
+        return peak
+    if _looks_like_counts(y):
+        noise = np.sqrt(max(float(np.interp(centre, b, y)), 1.0))
+    else:
+        noise = max(_noise(y), 1e-12)
+    return Peak(centre, float(np.interp(centre, b, y)), sigma * 2.3548,
+                amplitude, error=float(np.sqrt(abs(pcov[1, 1]))),
+                significance=amplitude / noise, manual=True)
+
+
+def candidates_near(energy: float, elements=(), *, within: float = HINT_EV,
+                    chemical_states: bool = True, limit: int = 8):
+    """What a feature at ``energy`` (eV binding) might be: ``(sample,
+    others)``, the levels of the sample's ``elements`` and of every other
+    element (radioactive ones and H, He aside) within ``within`` eV, each
+    nearest first, one entry per element and shell, at most ``limit``
+    of the others."""
+    energy = float(energy)
+    banned = RADIOACTIVE | NO_CORE_LEVEL
+
+    def near(symbols):
+        best = {}
+        for line in reference_lines(symbols, chemical_states=chemical_states):
+            delta = energy - line.energy
+            if abs(delta) > within:
+                continue
+            key = (line.element, line.shell)
+            if key not in best or abs(delta) < abs(best[key].delta):
+                best[key] = Match(line, float(delta),
+                                  note=LIKELY_CONTAMINANTS.get(line.element, ""))
+        return sorted(best.values(), key=lambda m: abs(m.delta))
+
+    sample = near([s for s in elements if s in SYMBOLS])
+    for match in sample:
+        match.note = ""
+    others = near([s for z, s in sorted(ELEMENTS.items())
+                   if s not in banned and s not in set(elements)])
+    return sample, others[:limit]
+
+
+def describe_candidates(energy: float, elements=(), **kwargs) -> str:
+    """:func:`candidates_near` as one line of text."""
+    sample, others = candidates_near(energy, elements, **kwargs)
+    within = kwargs.get("within", HINT_EV)
+
+    def short(m):
+        return f"{m.line.label} {m.line.energy:g} (Δ {m.delta:+.2f})"
+    parts = []
+    if sample:
+        parts.append("sample: " + ", ".join(short(m) for m in sample))
+    if others:
+        parts.append("other elements: " + ", ".join(short(m) for m in others))
+    if not parts:
+        return f"no tabulated level within ±{within:g} eV"
+    return "; ".join(parts)
+
+
 # --------------------------------------------------------------------------
 # Assignment
 # --------------------------------------------------------------------------
@@ -710,6 +824,8 @@ class Assignment:
     #: levels seen through second- or third-order light
     higher_order: list = field(default_factory=list)
     notes: list = field(default_factory=list)
+    #: for a peak added by hand: (sample, others) within HINT_EV of it
+    suggestions: tuple = ((), ())
 
     @property
     def label(self) -> str:
@@ -763,11 +879,16 @@ class CoreLevelReport:
         for n, a in enumerate(self.assignments, 1):
             p = a.peak
             rows.append(f"Peak {n}: {p.binding:.2f} eV (FWHM {p.fwhm:.2f}, "
-                        f"{p.significance:.0f}σ) — {STATUS_LABELS[a.status]}")
+                        f"{p.significance:.0f}σ) — {STATUS_LABELS[a.status]}"
+                        + (" [added by hand]" if p.manual else ""))
             for title, group in (("matches", a.matches),
                                  ("nearby (chemical shift?)", a.nearby),
                                  ("possible contamination", a.contaminants),
-                                 ("higher-order light", a.higher_order)):
+                                 ("higher-order light", a.higher_order),
+                                 (f"sample within ±{HINT_EV:g} eV",
+                                  a.suggestions[0]),
+                                 (f"other elements within ±{HINT_EV:g} eV",
+                                  a.suggestions[1])):
                 for match in group:
                     rows.append(f"    {title}: {match.describe()}")
             for note in a.notes:
@@ -930,8 +1051,11 @@ def assign(peaks, elements, reference: EnergyReference, *,
             notes.append("above E_F — check the energy reference")
         elif be < 3.0:
             notes.append("valence-band region: may be band structure")
+        suggestions = candidates_near(be, elements,
+                                      chemical_states=chemical_states) \
+            if peak.manual else ((), ())
         assignments.append(Assignment(peak, status, matches, nearby,
-                                      contaminants, higher, notes))
+                                      contaminants, higher, notes, suggestions))
 
     report = CoreLevelReport(list(elements), reference, tuple(window), peaks,
                              assignments, tolerance=tolerance)
@@ -1027,13 +1151,24 @@ def suggest_shift(peaks, elements, *, tolerance: float = TOLERANCE_EV,
 def check(binding, intensity, elements, reference: EnergyReference, *,
           sensitivity: float = SENSITIVITY, tolerance: float = TOLERANCE_EV,
           uncertain: float = UNCERTAIN_EV, chemical_states: bool = True,
-          min_relative: float = 0.01) -> CoreLevelReport:
-    """Steps 3 and 4 in one call: find the peaks and assign them."""
+          min_relative: float = MIN_RELATIVE, manual=(), ignored=(),
+          merge: float = 0.3) -> CoreLevelReport:
+    """Steps 3 and 4 in one call: find the peaks and assign them.
+
+    ``manual`` are binding energies the user put peaks at (see
+    :func:`peak_at`); ``ignored`` are found peaks the user removed. A
+    found peak within ``merge`` eV of either is dropped -- the user's
+    peak replaces it, or it is gone.
+    """
     b = np.asarray(binding, dtype=float)
     finite = b[np.isfinite(b)]
     window = (float(finite.min()), float(finite.max())) if finite.size else (0, 0)
     peaks = find_peaks(b, intensity, sensitivity=sensitivity,
                        min_relative=min_relative)
+    added = [peak_at(b, intensity, energy) for energy in manual]
+    drop = list(ignored) + [p.binding for p in added]
+    peaks = [p for p in peaks
+             if all(abs(p.binding - e) > merge for e in drop)] + added
     return assign(peaks, elements, reference, tolerance=tolerance,
                   uncertain=uncertain, chemical_states=chemical_states,
                   window=window)

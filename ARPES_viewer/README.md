@@ -385,9 +385,22 @@ the peaks are. Three steps, each correctable before the next:
      where each typically comes from, plus second- and third-order light
      and Auger lines.
 
-   The assignment column is editable; **Copy report** includes what was
-   changed by hand. **Add EDC to list** lists the integrated EDC on the
-   binding-energy scale.
+   The assignment column is editable (and kept through a re-analysis);
+   **Copy report** includes what was changed by hand. **Add EDC to list**
+   lists the integrated EDC on the binding-energy scale.
+
+   **Weak lines next to a strong one.** *Log counts* puts the count axis on
+   a log scale. *Min height* (default 0.2 % of the strongest peak) is the
+   only cut besides the noise threshold; it used to be a fixed 1 %, which
+   dropped real weak lines beside a strong one. A peak the search still
+   misses -- a shoulder with no maximum of its own -- can be added by hand:
+   press *Click to add peak* and click the plot (a double-click always
+   adds), or type its binding energy and press *Add*. Its position is
+   refined by a local Gaussian fit, it is marked ◆, assigned like any
+   other peak, and named with every level within ±2 eV -- the sample's
+   first, then all other elements. *Remove selected* drops a peak (a found
+   one stays out until *Reset peaks*). Moving the cursor over the plot
+   shows the levels within ±2 eV of where it is.
 
 The table is Table 1-1 of the X-ray Data Booklet (`Table_1-1.pdf` at the
 top of the repository), turned once into `tools/corelevel_table.py` by
