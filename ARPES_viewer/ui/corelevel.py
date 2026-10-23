@@ -17,8 +17,14 @@ Three steps, each the user can correct before the next one runs:
    is missing. The assignment column is the user's to overwrite. The count
    axis can be logarithmic, so weak lines next to a strong one show; a peak
    the search missed can be added by hand (click the plot, or type its
-   energy) and a false one removed, and every position -- an added peak,
-   or wherever the cursor is -- is named with the levels within ±2 eV.
+   energy) and a false one removed; an added peak is named with the levels
+   within ±2 eV. Two helpers open from it:
+
+   * :class:`PeakTableDialog` -- every tabulated level, filtered by element
+     and binding-energy range, to look a peak up by eye; a level picked
+     there is shown on the plot and can be added as a peak.
+   * :class:`ZoomWindow` -- a range of the EDC in a window of its own, with
+     a cursor, a local fit and the second derivative, to place a peak.
 
 The analysis itself is :mod:`tools.corelevel`, with no Qt in it.
 """
@@ -33,7 +39,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QGuiApplication
 from PyQt5.QtWidgets import (QDialog, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QFormLayout, QLabel, QLineEdit,
-                             QPushButton, QCheckBox, QComboBox,
+                             QPushButton, QCheckBox, QComboBox, QAbstractItemView,
                              QDialogButtonBox, QTableWidget, QTableWidgetItem,
                              QHeaderView, QSplitter, QPlainTextEdit,
                              QMessageBox, QGroupBox)
@@ -45,6 +51,9 @@ from ui.widgets import strip_stock_menu
 #: Plot symbol of a found peak and of one added by hand.
 FOUND_SYMBOL, MANUAL_SYMBOL = "o", "d"
 
+#: The level picked in the peak table, drawn on the plots.
+PREVIEW_COLOUR = "#b0228c"
+
 #: Marker colour of each status, on the plot and in the table.
 STATUS_COLOURS = {
     "sample": "#2f7a3f",
@@ -54,6 +63,20 @@ STATUS_COLOURS = {
 }
 
 LAST_USED_NAME = "corelevel.json"
+
+
+def plotted_counts(values, intensity, log: bool):
+    """Intensities as plotted: log10 on a log axis, where what is not
+    positive is put just below the smallest positive count of
+    ``intensity``."""
+    values = np.asarray(values, dtype=float)
+    if not log:
+        return values
+    intensity = np.asarray(intensity, dtype=float)
+    positive = intensity[np.isfinite(intensity) & (intensity > 0)]
+    floor = 0.5 * float(positive.min()) if positive.size else 1e-3
+    with np.errstate(invalid="ignore"):
+        return np.log10(np.where(values > floor, values, floor))
 
 
 def _last_used_path() -> str:
@@ -377,6 +400,10 @@ class CoreLevelWindow(QMainWindow):
 
     datasetsCreated = pyqtSignal(list)
     closed = pyqtSignal(object)
+    #: after every analysis, so the zoom windows follow
+    analysed = pyqtSignal()
+    #: (binding energy or None, label): the level picked in the peak table
+    previewChanged = pyqtSignal(object, str)
 
     COLUMNS = ("#", "E_B (eV)", "FWHM (eV)", "σ", "Status",
                "Assignment (editable)", "Candidates and notes")
@@ -402,6 +429,9 @@ class CoreLevelWindow(QMainWindow):
         #: data's own axis so they follow a change of the energy reference
         self.manual = []
         self.ignored = []
+        self.zooms = []
+        self.peak_table = None
+        self.preview_energy = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -456,7 +486,9 @@ class CoreLevelWindow(QMainWindow):
 
         # -- the peaks by hand ------------------------------------------------
         manual = QGroupBox("Peaks by hand")
-        row = QHBoxLayout(manual)
+        rows = QVBoxLayout(manual)
+        row = QHBoxLayout()
+        rows.addLayout(row)
         self.log_scale = QCheckBox("Log counts")
         self.log_scale.setChecked(bool(settings.get("log_scale", False)))
         self.log_scale.setToolTip(
@@ -471,6 +503,8 @@ class CoreLevelWindow(QMainWindow):
             "double-click always does). Its position is refined by a local "
             "fit, and it is named with the levels within "
             f"±{CL.HINT_EV:g} eV.")
+        self.click_add.toggled.connect(
+            lambda on: on and self.range_button.setChecked(False))
         row.addWidget(self.click_add)
         row.addWidget(QLabel("or at"))
         self.add_energy = spin(0.0, -100.0, 20000.0, 0.1, 2, " eV")
@@ -493,6 +527,30 @@ class CoreLevelWindow(QMainWindow):
         self.reset_button.clicked.connect(self.reset_peaks)
         row.addWidget(self.reset_button)
         row.addStretch(1)
+
+        row = QHBoxLayout()
+        rows.addLayout(row)
+        self.table_button = QPushButton("Peak table...")
+        self.table_button.setToolTip(
+            "Every tabulated level, filtered by element and binding-energy "
+            "range: look a peak up, show a level on the plot, add it.")
+        self.table_button.clicked.connect(lambda: self.open_peak_table())
+        row.addWidget(self.table_button)
+        row.addSpacing(12)
+        self.range_button = QPushButton("Select range")
+        self.range_button.setCheckable(True)
+        self.range_button.setToolTip(
+            "Show a band on the plot; drag it and its edges over the range "
+            "to look at, then open it in a zoom window.")
+        self.range_button.toggled.connect(self._range_toggled)
+        row.addWidget(self.range_button)
+        self.zoom_button = QPushButton("Zoom window...")
+        self.zoom_button.setToolTip(
+            "Open the selected range (or, with no range shown, what the "
+            "plot shows now) in a window of its own.")
+        self.zoom_button.clicked.connect(lambda: self.open_zoom())
+        row.addWidget(self.zoom_button)
+        row.addStretch(1)
         layout.addWidget(manual)
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
@@ -514,7 +572,14 @@ class CoreLevelWindow(QMainWindow):
                                                                 style=Qt.DotLine))
         self.highlight.setVisible(False)
         self.plot.addItem(self.highlight, ignoreBounds=True)
-        self.plot.scene().sigMouseMoved.connect(self._mouse_moved)
+        self.preview = pg.InfiniteLine(angle=90, pen=pg.mkPen(
+            PREVIEW_COLOUR, width=1.5, style=Qt.DashLine))
+        self.preview.setVisible(False)
+        self.plot.addItem(self.preview, ignoreBounds=True)
+        self.region = pg.LinearRegionItem(brush=pg.mkBrush(31, 111, 139, 40))
+        self.region.setZValue(-5)
+        self.region.setVisible(False)
+        self.plot.addItem(self.region, ignoreBounds=True)
         self.plot.scene().sigMouseClicked.connect(self._mouse_clicked)
         self.show_lines = QCheckBox("Show the sample's tabulated levels")
         self.show_lines.setChecked(True)
@@ -593,6 +658,7 @@ class CoreLevelWindow(QMainWindow):
             f"{counts['unexplained']} not the sample"
             + (f"; {by_hand} added by hand" if by_hand else "")
             + (f"; {len(self.ignored)} removed" if self.ignored else ""))
+        self.analysed.emit()
         return self.report
 
     def _own_assignments(self) -> dict:
@@ -623,8 +689,9 @@ class CoreLevelWindow(QMainWindow):
         for symbol, text in report.out_of_window.items():
             rows.append(f"{symbol}: {text}")
         rows += report.notes
-        rows.append(f"Peaks marked ◆ were added by hand. Hover over the plot "
-                    f"for the levels within ±{CL.HINT_EV:g} eV of the cursor.")
+        rows.append("Peaks marked ◆ were added by hand. Peak table... lists "
+                    "every tabulated level; Zoom window... looks at a range "
+                    "closely.")
         rows.append("Status: sample = within the tolerance of a level of the "
                     "sample; uncertain = within a chemical shift, check it; "
                     "not the sample = the candidates listed are common "
@@ -634,16 +701,7 @@ class CoreLevelWindow(QMainWindow):
         return "\n".join(rows)
 
     def _y(self, values):
-        """Intensities as plotted: log10 on the log axis, where what is not
-        positive is put just below the smallest positive count."""
-        values = np.asarray(values, dtype=float)
-        if not self.log_scale.isChecked():
-            return values
-        positive = self.intensity[np.isfinite(self.intensity)
-                                  & (self.intensity > 0)]
-        floor = 0.5 * float(positive.min()) if positive.size else 1e-3
-        with np.errstate(invalid="ignore"):
-            return np.log10(np.where(values > floor, values, floor))
+        return plotted_counts(values, self.intensity, self.log_scale.isChecked())
 
     def _draw(self):
         for item in self._items:
@@ -800,13 +858,6 @@ class CoreLevelWindow(QMainWindow):
             return None
         return float(box.mapSceneToView(scene_pos).x())
 
-    def _mouse_moved(self, scene_pos):
-        energy = self._view_x(scene_pos)
-        if energy is None:
-            return
-        self.hint.setText(f"Cursor at {energy:.2f} eV — " + CL.describe_candidates(
-            energy, self.elements, chemical_states=self.chemical.isChecked()))
-
     def _mouse_clicked(self, event):
         if event.button() != Qt.LeftButton:
             return
@@ -817,9 +868,10 @@ class CoreLevelWindow(QMainWindow):
             event.accept()
             self.add_peak(energy)
 
-    def add_peak(self, binding: float):
+    def add_peak(self, binding: float, label: str = None):
         """Put a peak at ``binding`` eV and analyse again; the new peak's
-        row is selected, so its hints show."""
+        row is selected, so its hints show. ``label`` (a level picked in
+        the peak table) is written in as its assignment."""
         binding = float(binding)
         b = self.binding()
         if not np.nanmin(b) <= binding <= np.nanmax(b):
@@ -838,6 +890,8 @@ class CoreLevelWindow(QMainWindow):
                 report.assignments[n].peak.binding - binding))
             self.table.selectRow(row)
             a = report.assignments[row]
+            if label:
+                self.table.item(row, 5).setText(label)
             self.hint.setText(f"Added peak {row + 1} at {a.peak.binding:.2f} eV "
                               "— " + CL.describe_candidates(
                                   a.peak.binding, self.elements,
@@ -866,6 +920,68 @@ class CoreLevelWindow(QMainWindow):
     def reset_peaks(self):
         self.manual, self.ignored = [], []
         return self.analyse()
+
+    # -- the peak table and the zoom windows ---------------------------------
+    def view_range(self):
+        """The binding-energy range the plot shows now, low to high."""
+        lo, hi = self.plot.getPlotItem().vb.viewRange()[0]
+        return min(lo, hi), max(lo, hi)
+
+    def selected_range(self):
+        """The band's range when it is shown, else what the plot shows."""
+        if self.region.isVisible():
+            lo, hi = self.region.getRegion()
+            return min(lo, hi), max(lo, hi)
+        return self.view_range()
+
+    def _range_toggled(self, on):
+        if on:
+            self.click_add.setChecked(False)
+            lo, hi = self.view_range()
+            middle, half = 0.5 * (lo + hi), 0.05 * (hi - lo)
+            self.region.setRegion((middle - half, middle + half))
+        self.region.setVisible(on)
+
+    def open_peak_table(self, window=None):
+        """The peak table, filtered to ``window`` (binding, lo-hi) when
+        given; one table per results window, raised if already open."""
+        if self.peak_table is None:
+            self.peak_table = PeakTableDialog(
+                self.elements, self, window=window or self.window_range(),
+                chemical_states=self.chemical.isChecked())
+            self.peak_table.addRequested.connect(self.add_peak)
+            self.peak_table.previewRequested.connect(self.show_preview)
+        elif window is not None:
+            self.peak_table.set_range(*window)
+        self.peak_table.show()
+        self.peak_table.raise_()
+        return self.peak_table
+
+    def window_range(self):
+        b = self.binding()
+        return float(np.nanmin(b)), float(np.nanmax(b))
+
+    def show_preview(self, energy, label: str = ""):
+        """Mark a tabulated level (from the peak table) on the plots."""
+        self.preview_energy = None if energy is None else float(energy)
+        if energy is None:
+            self.preview.setVisible(False)
+        else:
+            self.preview.setValue(float(energy))
+            self.preview.setToolTip(f"{label}: {energy:g} eV")
+            self.preview.setVisible(True)
+        self.previewChanged.emit(self.preview_energy, label)
+
+    def open_zoom(self, lo: float = None, hi: float = None):
+        """A zoom window on ``lo``-``hi`` eV binding, by default the
+        selected range."""
+        if lo is None or hi is None:
+            lo, hi = self.selected_range()
+        zoom = ZoomWindow(self, lo, hi)
+        self.zooms.append(zoom)
+        zoom.closed.connect(lambda z: z in self.zooms and self.zooms.remove(z))
+        zoom.show()
+        return zoom
 
     # -- the buttons --------------------------------------------------------
     def change_elements(self):
@@ -958,7 +1074,509 @@ class CoreLevelWindow(QMainWindow):
                 "log_scale": self.log_scale.isChecked()}
 
     def closeEvent(self, event):
+        for zoom in list(self.zooms):
+            zoom.close()
+        if self.peak_table is not None:
+            self.peak_table.close()
         save_last_used({**load_last_used(), **self._settings()})
+        self.closed.emit(self)
+        super().closeEvent(event)
+
+
+# --------------------------------------------------------------------------
+# The peak table
+# --------------------------------------------------------------------------
+class _NumberItem(QTableWidgetItem):
+    """A cell that sorts by its number, not its text."""
+
+    def __init__(self, value: float, text: str):
+        super().__init__(text)
+        self.value = float(value)
+
+    def __lt__(self, other):
+        if isinstance(other, _NumberItem):
+            return self.value < other.value
+        return super().__lt__(other)
+
+
+class PeakTableDialog(QDialog):
+    """Every tabulated level (Table 1-1 and the typical chemical states),
+    filtered by element and binding-energy range, for the user to look a
+    peak up by eye. Picking a row marks the level on the plots; *Add as
+    peak* (or a double-click) adds a peak there, refined by a local fit and
+    with the level written in as its assignment."""
+
+    #: (binding energy, label)
+    addRequested = pyqtSignal(float, str)
+    #: (binding energy or None, label)
+    previewRequested = pyqtSignal(object, str)
+
+    COLUMNS = ("Element", "Level", "E_B (eV)", "Source", "In sample")
+
+    def __init__(self, sample, parent=None, *, window=(0.0, 1500.0),
+                 chemical_states: bool = True):
+        super().__init__(parent)
+        self.setWindowTitle("Core-level table")
+        self.setModal(False)
+        self.sample = list(sample)
+        self.lines = []
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        row = QHBoxLayout()
+        self.elements_box = QLineEdit("")
+        self.elements_box.setPlaceholderText(
+            "all elements  —  or e.g. Nb S Cl, NbSCl")
+        self.elements_box.textChanged.connect(lambda *_: self.refresh())
+        row.addWidget(self.elements_box, stretch=1)
+        sample_button = QPushButton("Sample")
+        sample_button.setToolTip("Only the sample's elements.")
+        sample_button.clicked.connect(
+            lambda: self.elements_box.setText(" ".join(self.sample)))
+        row.addWidget(sample_button)
+        all_button = QPushButton("All")
+        all_button.clicked.connect(lambda: self.elements_box.setText(""))
+        row.addWidget(all_button)
+        form.addRow("Elements", row)
+
+        row = QHBoxLayout()
+        self.lo_box = spin(0.0, -100.0, 20000.0, 0.5, 2, " eV")
+        self.hi_box = spin(0.0, -100.0, 20000.0, 0.5, 2, " eV")
+        self.lo_box.valueChanged.connect(lambda *_: self.refresh())
+        self.hi_box.valueChanged.connect(lambda *_: self.refresh())
+        row.addWidget(self.lo_box)
+        row.addWidget(QLabel("to"))
+        row.addWidget(self.hi_box)
+        self._window = tuple(sorted(window))
+        whole = QPushButton("Whole window")
+        whole.setToolTip("The binding-energy range of the data.")
+        whole.clicked.connect(lambda: self.set_range(*self._window))
+        row.addWidget(whole)
+        if parent is not None and hasattr(parent, "view_range"):
+            shown = QPushButton("Plot view")
+            shown.setToolTip("What the results plot shows now (or its "
+                             "selected range).")
+            shown.clicked.connect(lambda: self.set_range(*parent.selected_range()))
+            row.addWidget(shown)
+        row.addStretch(1)
+        form.addRow("Binding energy", row)
+        self.chemical = QCheckBox("Typical chemical states too")
+        self.chemical.setChecked(chemical_states)
+        self.chemical.toggled.connect(lambda *_: self.refresh())
+        form.addRow("", self.chemical)
+        layout.addLayout(form)
+
+        self.count = QLabel("")
+        layout.addWidget(self.count)
+        self.table = QTableWidget(0, len(self.COLUMNS))
+        self.table.setHorizontalHeaderLabels(self.COLUMNS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        header = self.table.horizontalHeader()
+        for column in range(len(self.COLUMNS) - 2):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.itemSelectionChanged.connect(self._selected)
+        self.table.cellDoubleClicked.connect(lambda *_: self.add_selected())
+        layout.addWidget(self.table, stretch=1)
+
+        buttons = QHBoxLayout()
+        self.add_button = QPushButton("Add as peak")
+        self.add_button.setToolTip(
+            "Add a peak at the selected level (refined by a local fit) with "
+            "the level as its assignment. A double-click does the same.")
+        self.add_button.clicked.connect(self.add_selected)
+        buttons.addWidget(self.add_button)
+        buttons.addStretch(1)
+        close = QPushButton("Close")
+        close.clicked.connect(self.close)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        self.resize(560, 640)
+        self.set_range(*self._window)
+
+    def set_range(self, lo: float, hi: float):
+        lo, hi = sorted((float(lo), float(hi)))
+        for box, value in ((self.lo_box, lo), (self.hi_box, hi)):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self.refresh()
+
+    def refresh(self):
+        text = self.elements_box.text().strip()
+        if text:
+            elements, unknown = CL.parse_elements(text)
+        else:
+            elements = [s for z, s in sorted(CL.ELEMENTS.items())]
+            unknown = []
+        lo, hi = sorted((self.lo_box.value(), self.hi_box.value()))
+        self.lines = CL.reference_lines(elements,
+                                        chemical_states=self.chemical.isChecked(),
+                                        window=(lo, hi))
+        self.table.setSortingEnabled(False)
+        self.table.clearSelection()
+        self.table.setRowCount(len(self.lines))
+        bold = self.font()
+        bold.setBold(True)
+        for n, line in enumerate(self.lines):
+            mine = line.element in self.sample
+            cells = (QTableWidgetItem(line.element),
+                     QTableWidgetItem(line.orbital),
+                     _NumberItem(line.energy, f"{line.energy:g}"),
+                     QTableWidgetItem("Table 1-1" if line.source == "table"
+                                      else line.source),
+                     QTableWidgetItem("yes" if mine else ""))
+            cells[0].setData(Qt.UserRole, n)
+            for column, cell in enumerate(cells):
+                if mine:
+                    cell.setForeground(QColor(STATUS_COLOURS["sample"]))
+                    cell.setFont(bold)
+                self.table.setItem(n, column, cell)
+        self.table.setSortingEnabled(True)
+        self.table.sortItems(2, Qt.AscendingOrder)
+        message = f"{len(self.lines)} level(s) between {lo:g} and {hi:g} eV"
+        if unknown:
+            message += "  —  not an element: " + ", ".join(unknown)
+        self.count.setText(message)
+        self.add_button.setEnabled(False)
+        self.previewRequested.emit(None, "")
+
+    def selected_line(self):
+        rows = {index.row() for index in self.table.selectedIndexes()}
+        if len(rows) != 1:
+            return None
+        item = self.table.item(rows.pop(), 0)
+        return self.lines[item.data(Qt.UserRole)]
+
+    def select_line(self, line) -> bool:
+        """Select the row of ``line``; True if it is in the table."""
+        for row in range(self.table.rowCount()):
+            if self.lines[self.table.item(row, 0).data(Qt.UserRole)] == line:
+                self.table.selectRow(row)
+                return True
+        return False
+
+    def _selected(self):
+        line = self.selected_line()
+        self.add_button.setEnabled(line is not None)
+        if line is None:
+            self.previewRequested.emit(None, "")
+        else:
+            self.previewRequested.emit(line.energy, line.label)
+
+    def add_selected(self):
+        line = self.selected_line()
+        if line is None:
+            return None
+        self.addRequested.emit(line.energy, line.label)
+        return line
+
+    def closeEvent(self, event):
+        self.previewRequested.emit(None, "")
+        super().closeEvent(event)
+
+
+# --------------------------------------------------------------------------
+# A zoom window
+# --------------------------------------------------------------------------
+class ZoomWindow(QMainWindow):
+    """A range of the results window's EDC on its own, to place a peak by
+    eye: a movable cursor, the smoothed curve and its negative second
+    derivative (a shoulder with no maximum of its own is a maximum there),
+    a Gaussian fit at the cursor, and the peaks and sample levels of the
+    results window, which it follows."""
+
+    closed = pyqtSignal(object)
+
+    def __init__(self, owner: CoreLevelWindow, lo: float, hi: float):
+        super().__init__(owner)
+        self.owner = owner
+        self.setWindowTitle(f"Zoom — {owner.label}")
+        self._items = []
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("From"))
+        self.lo_box = spin(0.0, -100.0, 20000.0, 0.1, 2, " eV")
+        row.addWidget(self.lo_box)
+        row.addWidget(QLabel("to"))
+        self.hi_box = spin(0.0, -100.0, 20000.0, 0.1, 2, " eV")
+        row.addWidget(self.hi_box)
+        apply_button = QPushButton("Show")
+        apply_button.clicked.connect(lambda: self.set_range(
+            self.lo_box.value(), self.hi_box.value()))
+        row.addWidget(apply_button)
+        row.addSpacing(12)
+        self.log_scale = QCheckBox("Log counts")
+        self.log_scale.setChecked(owner.log_scale.isChecked())
+        self.log_scale.toggled.connect(lambda *_: self.redraw())
+        row.addWidget(self.log_scale)
+        row.addWidget(QLabel("Smoothing"))
+        self.smoothing = spin(0.1, 0.0, 5.0, 0.02, 2, " eV")
+        self.smoothing.setToolTip("Gaussian smoothing of the dark curve and "
+                                  "the second derivative; 0 = raw data.")
+        self.smoothing.valueChanged.connect(lambda *_: self.redraw())
+        row.addWidget(self.smoothing)
+        self.derivative = QCheckBox("−d²I/dE²")
+        self.derivative.setChecked(True)
+        self.derivative.setToolTip(
+            "The negative second derivative of the smoothed curve: every "
+            "peak, shoulders included, is a maximum of it.")
+        self.derivative.toggled.connect(lambda *_: self.redraw())
+        row.addWidget(self.derivative)
+        self.relative = QCheckBox("÷ I")
+        self.relative.setChecked(True)
+        self.relative.setToolTip(
+            "Divide the second derivative by the smoothed intensity, so a "
+            "weak peak shows as clearly as a strong one (for a Gaussian it "
+            "is 1/σ² at the centre whatever the height).")
+        self.relative.toggled.connect(lambda *_: self.redraw())
+        row.addWidget(self.relative)
+        table_button = QPushButton("Peak table...")
+        table_button.setToolTip("The tabulated levels in this range.")
+        table_button.clicked.connect(lambda: owner.open_peak_table(self.range()))
+        row.addWidget(table_button)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        self.plot = pg.PlotWidget()
+        self.plot.invertX(True)
+        self.plot.setLabel("left", "counts")
+        strip_stock_menu(self.plot.getPlotItem())
+        self.raw = self.plot.plot(pen=pg.mkPen("#9aa5b8", width=1))
+        self.smooth = self.plot.plot(pen=pg.mkPen("#33415c", width=1.5))
+        self.markers = pg.ScatterPlotItem(size=10)
+        self.plot.addItem(self.markers)
+        self.fit_curve = self.plot.plot(pen=pg.mkPen("#bd4921", width=1.5))
+        self.preview = pg.InfiniteLine(angle=90, pen=pg.mkPen(
+            PREVIEW_COLOUR, width=1.5, style=Qt.DashLine))
+        self.preview.setVisible(False)
+        self.plot.addItem(self.preview, ignoreBounds=True)
+        self.cursor = pg.InfiniteLine(
+            angle=90, movable=True, pen=pg.mkPen("#1f6f8b", width=2),
+            label="{value:.2f} eV", labelOpts={"position": 0.95,
+                                              "color": "#1f6f8b"})
+        self.cursor.setToolTip("Drag it onto a peak; a click on the plot "
+                               "puts it there, a double-click adds a peak.")
+        self.plot.addItem(self.cursor, ignoreBounds=True)
+        self.cursor.sigPositionChanged.connect(self._cursor_moved)
+        self.plot.scene().sigMouseClicked.connect(self._mouse_clicked)
+
+        self.d2_plot = pg.PlotWidget()
+        self.d2_plot.invertX(True)
+        self.d2_plot.setLabel("left", "−d²I/dE²")
+        self.d2_plot.setLabel("bottom", "Binding energy (eV)")
+        self.d2_plot.setXLink(self.plot)
+        self.d2_plot.setMaximumHeight(170)
+        strip_stock_menu(self.d2_plot.getPlotItem())
+        self.d2_curve = self.d2_plot.plot(pen=pg.mkPen("#2f7a3f", width=1.3))
+        self.d2_plot.addItem(pg.InfiniteLine(0, angle=0, pen=pg.mkPen(
+            "#bbbbbb")), ignoreBounds=True)
+        self.d2_cursor = pg.InfiniteLine(angle=90, pen=pg.mkPen(
+            "#1f6f8b", width=1, style=Qt.DotLine))
+        self.d2_plot.addItem(self.d2_cursor, ignoreBounds=True)
+        splitter = QSplitter(Qt.Vertical)
+        splitter.addWidget(self.plot)
+        splitter.addWidget(self.d2_plot)
+        splitter.setSizes([480, 160])
+        layout.addWidget(splitter, stretch=1)
+
+        row = QHBoxLayout()
+        self.readout = QLabel("")
+        self.readout.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        row.addWidget(self.readout, stretch=1)
+        fit_button = QPushButton("Fit at cursor")
+        fit_button.setToolTip("A Gaussian on a sloping background over 1 eV "
+                              "either side of the cursor.")
+        fit_button.clicked.connect(self.fit_at_cursor)
+        row.addWidget(fit_button)
+        add_button = QPushButton("Add peak at cursor")
+        add_button.clicked.connect(self.add_at_cursor)
+        row.addWidget(add_button)
+        layout.addLayout(row)
+
+        owner.analysed.connect(self.redraw)
+        owner.previewChanged.connect(self._preview)
+        self.resize(900, 700)
+        self.set_range(lo, hi)
+        self._preview(owner.preview_energy, "")
+
+    # -- data ----------------------------------------------------------------
+    def range(self):
+        return self._range
+
+    def _data(self):
+        """Binding energy and counts inside the range, ascending."""
+        b = self.owner.binding()
+        y = self.owner.intensity
+        lo, hi = self._range
+        inside = np.isfinite(b) & np.isfinite(y) & (b >= lo) & (b <= hi)
+        order = np.argsort(b[inside])
+        return b[inside][order], y[inside][order]
+
+    def smoothed(self):
+        """``(grid, smoothed, -d2)`` of the range on a uniform grid."""
+        from scipy.ndimage import gaussian_filter1d
+
+        b, y = self._data()
+        if b.size < 5:
+            return b, y, np.zeros_like(y)
+        step = float(np.median(np.diff(b)))
+        grid = np.arange(b[0], b[-1] + 0.5 * step, step)
+        raw = np.interp(grid, b, y)
+        sigma = max(self.smoothing.value() / step, 1.0)
+        smooth = gaussian_filter1d(raw, sigma, mode="nearest") \
+            if self.smoothing.value() > 0 else raw
+        d2 = -gaussian_filter1d(raw, sigma, order=2, mode="nearest") / step ** 2
+        if self.relative.isChecked():
+            level = gaussian_filter1d(raw, sigma, mode="nearest")
+            positive = level[level > 0]
+            floor = 0.01 * float(np.median(positive)) if positive.size else 1.0
+            d2 = d2 / np.maximum(level, floor)
+        return grid, smooth, d2
+
+    # -- drawing -------------------------------------------------------------
+    def set_range(self, lo: float, hi: float):
+        lo, hi = sorted((float(lo), float(hi)))
+        if hi - lo < 1e-3:
+            hi = lo + 1.0
+        self._range = (lo, hi)
+        for box, value in ((self.lo_box, lo), (self.hi_box, hi)):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self.setWindowTitle(f"Zoom {lo:.1f}–{hi:.1f} eV — {self.owner.label}")
+        self.fit_curve.setData([], [])
+        self.redraw()
+        self.cursor.setValue(0.5 * (lo + hi))
+        self._cursor_moved()
+
+    def redraw(self):
+        for item in self._items:
+            self.plot.removeItem(item)
+        self._items = []
+        log = self.log_scale.isChecked()
+        intensity = self.owner.intensity
+
+        def y(values):
+            return plotted_counts(values, intensity, log)
+        self.plot.getAxis("left").setLogMode(log)
+        self.plot.setLabel("left", "counts (log scale)" if log else "counts")
+        b, counts = self._data()
+        self.raw.setData(b, y(counts))
+        grid, smooth, d2 = self.smoothed()
+        self.smooth.setData(grid, y(smooth))
+        self.d2_plot.setVisible(self.derivative.isChecked())
+        self.relative.setEnabled(self.derivative.isChecked())
+        self.d2_plot.setLabel("left", "−d²I/dE² ÷ I" if self.relative.isChecked()
+                              else "−d²I/dE²")
+        self.d2_curve.setData(grid, d2)
+        lo, hi = self._range
+        spots = []
+        report = self.owner.report
+        for n, a in enumerate(report.assignments if report else [], 1):
+            if not lo <= a.peak.binding <= hi:
+                continue
+            colour = STATUS_COLOURS[a.status]
+            h = float(y(a.peak.height))
+            spots.append({"pos": (a.peak.binding, h), "brush": pg.mkBrush(colour),
+                          "pen": pg.mkPen("w"), "size": 12 if a.peak.manual else 10,
+                          "symbol": MANUAL_SYMBOL if a.peak.manual
+                          else FOUND_SYMBOL})
+            text = pg.TextItem(f"{n}: {a.label}", color=colour, anchor=(0.5, 1.2))
+            text.setPos(a.peak.binding, h)
+            self.plot.addItem(text, ignoreBounds=True)
+            self._items.append(text)
+        self.markers.setData(spots)
+        for line in CL.reference_lines(self.owner.elements, chemical_states=False,
+                                       window=(lo, hi)):
+            item = pg.InfiniteLine(line.energy, angle=90, pen=pg.mkPen(
+                "#9aa5b8", width=1, style=Qt.DashLine),
+                label=line.name, labelOpts={"position": 0.85, "rotateAxis": (1, 0),
+                                            "color": "#77809a"})
+            item.setZValue(-10)
+            self.plot.addItem(item, ignoreBounds=True)
+            self._items.append(item)
+        self.plot.setXRange(lo, hi, padding=0.01)
+        finite = y(counts)
+        if finite.size:
+            bottom, top = float(np.nanmin(finite)), float(np.nanmax(finite))
+            self.plot.setYRange(bottom, top + 0.15 * (top - bottom), padding=0.02)
+        if d2.size:
+            self.d2_plot.setYRange(float(np.nanmin(d2)), float(np.nanmax(d2)),
+                                   padding=0.05)
+
+    def _preview(self, energy, label):
+        if energy is None:
+            self.preview.setVisible(False)
+        else:
+            self.preview.setValue(float(energy))
+            self.preview.setToolTip(f"{label}: {energy:g} eV")
+            self.preview.setVisible(True)
+
+    # -- the cursor ------------------------------------------------------------
+    def cursor_energy(self) -> float:
+        return float(self.cursor.value())
+
+    def _cursor_moved(self, *_):
+        energy = self.cursor_energy()
+        self.d2_cursor.setValue(energy)
+        b, counts = self._data()
+        text = f"Cursor {energy:.2f} eV"
+        if b.size:
+            text += f", {np.interp(energy, b, counts):.0f} counts"
+        self.readout.setText(text)
+
+    def _mouse_clicked(self, event):
+        if event.button() != Qt.LeftButton:
+            return
+        box = self.plot.getPlotItem().vb
+        if not box.sceneBoundingRect().contains(event.scenePos()):
+            return
+        energy = float(box.mapSceneToView(event.scenePos()).x())
+        event.accept()
+        self.cursor.setValue(energy)
+        if event.double():
+            self.add_at_cursor()
+
+    def fit_at_cursor(self):
+        """Fit a Gaussian at the cursor, draw it and move the cursor to its
+        centre; the peak, or None when the fit did not settle."""
+        b, counts = self._data()
+        peak = CL.peak_at(b, counts, self.cursor_energy())
+        if not np.isfinite(peak.fwhm):
+            self.fit_curve.setData([], [])
+            self.readout.setText(f"No peak fits at {self.cursor_energy():.2f} eV.")
+            return None
+        self.cursor.setValue(peak.binding)
+        sigma = peak.fwhm / 2.3548
+        near = (b >= peak.binding - 3 * sigma) & (b <= peak.binding + 3 * sigma)
+        x = b[near]
+        base = peak.height - peak.prominence
+        model = base + peak.prominence * np.exp(-0.5 * ((x - peak.binding)
+                                                        / sigma) ** 2)
+        self.fit_curve.setData(x, plotted_counts(model, self.owner.intensity,
+                                                 self.log_scale.isChecked()))
+        self.readout.setText(
+            f"Fit: {peak.binding:.2f} ± {peak.error:.2f} eV, FWHM "
+            f"{peak.fwhm:.2f} eV, {peak.significance:.0f}σ")
+        return peak
+
+    def add_at_cursor(self):
+        return self.owner.add_peak(self.cursor_energy())
+
+    def closeEvent(self, event):
+        try:
+            self.owner.analysed.disconnect(self.redraw)
+            self.owner.previewChanged.disconnect(self._preview)
+        except TypeError:
+            pass
         self.closed.emit(self)
         super().closeEvent(event)
 

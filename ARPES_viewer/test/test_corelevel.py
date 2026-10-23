@@ -408,6 +408,89 @@ def test_the_window_draws_log_counts_and_takes_peaks_by_hand(app):
     window.close()
 
 
+def _strong_and_weak_window():
+    from ui import corelevel as UC
+
+    be, counts = _strong_and_weak()
+    return UC.CoreLevelWindow(
+        be, counts, "Binding energy (eV)", ["Nb", "S"],
+        UC.CL.EnergyReference("binding", 0.0, HV, W), "strong and weak",
+        settings={"min_relative": 0.002})
+
+
+def test_the_peak_table_filters_previews_and_adds(app):
+    window = _strong_and_weak_window()
+    table = window.open_peak_table()
+    assert window.open_peak_table() is table            # one per window
+    lo, hi = window.window_range()
+    assert all(lo <= line.energy <= hi for line in table.lines)
+    assert table.table.rowCount() == len(table.lines) > 50
+
+    # by element: a formula works, and a non-element is reported
+    table.elements_box.setText("NbS")
+    assert {line.element for line in table.lines} == {"Nb", "S"}
+    table.elements_box.setText("Nb Qq")
+    assert "not an element" in table.count.text()
+    # by range
+    table.elements_box.setText("")
+    table.set_range(160, 165)
+    assert table.lines and all(160 <= l.energy <= 165 for l in table.lines)
+    energies = [float(table.table.item(r, 2).text())
+                for r in range(table.table.rowCount())]
+    assert energies == sorted(energies)
+
+    # picking a level marks it on the plot; adding it makes a peak there
+    s2p = next(l for l in table.lines
+               if l.name == "S 2p3/2" and l.source == "table")
+    assert table.select_line(s2p)
+    assert window.preview.isVisible() and window.preview.value() == s2p.energy
+    removed = window.report.assignments
+    window.table.selectRow(next(n for n, a in enumerate(removed)
+                                if abs(a.peak.binding - 162.5) < 0.2))
+    window.remove_selected()                    # so the table's peak is new
+    assert table.add_selected() == s2p
+    added = [a for a in window.report.assignments if a.peak.manual]
+    assert len(added) == 1 and abs(added[0].peak.binding - 162.5) < 0.1
+    row = window.report.assignments.index(added[0])
+    assert window.table.item(row, 5).text() == s2p.label
+    table.close()
+    assert not window.preview.isVisible()
+    window.close()
+
+
+def test_a_zoom_window_places_a_shoulder(app):
+    window = _strong_and_weak_window()
+    window.range_button.setChecked(True)
+    assert window.region.isVisible()
+    window.region.setRegion((200.0, 211.0))
+    zoom = window.open_zoom()
+    assert zoom.range() == (200.0, 211.0) and zoom in window.zooms
+    b, _ = zoom._data()
+    assert b.min() >= 200.0 and b.max() <= 211.0
+
+    # the shoulder at 207.6 eV is a maximum of -d2I/dE2 ...
+    grid, smooth, d2 = zoom.smoothed()
+    near = (grid > 206.8) & (grid < 208.4)
+    assert abs(grid[near][np.argmax(d2[near])] - 207.6) < 0.2
+    # ... and a fit at the cursor finds it and moves the cursor there
+    zoom.cursor.setValue(207.3)
+    peak = zoom.fit_at_cursor()
+    assert abs(peak.binding - 207.6) < 0.1
+    assert abs(zoom.cursor_energy() - peak.binding) < 1e-9
+    assert "FWHM" in zoom.readout.text()
+
+    # adding from the zoom reaches the results window, and the zoom follows
+    window.add_peak(zoom.cursor_energy())
+    assert any(a.peak.manual for a in window.report.assignments)
+    assert len(zoom.markers.data) == 3                  # 3d5/2, 3d3/2, ◆
+    zoom.log_scale.setChecked(True)
+    assert np.nanmax(zoom.raw.getData()[1]) < 7
+    zoom.set_range(150, 170)
+    assert zoom.lo_box.value() == 150 and len(zoom.markers.data) == 1
+    window.close()
+    assert not window.zooms
+
+
 def test_the_list_menu_offers_the_check_for_one_cut():
     from ui.list_actions import availability
     assert availability("corelevel", [("c", "Cut")])[0]

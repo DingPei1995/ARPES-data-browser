@@ -399,8 +399,27 @@ the peaks are. Three steps, each correctable before the next:
    refined by a local Gaussian fit, it is marked ◆, assigned like any
    other peak, and named with every level within ±2 eV -- the sample's
    first, then all other elements. *Remove selected* drops a peak (a found
-   one stays out until *Reset peaks*). Moving the cursor over the plot
-   shows the levels within ±2 eV of where it is.
+   one stays out until *Reset peaks*).
+
+   **Peak table...** lists every tabulated level (Table 1-1, plus the
+   typical chemical states), filtered by element (symbols or a formula;
+   *Sample* / *All*) and by binding-energy range (*Whole window*, *Plot
+   view*, or typed), sortable by any column, the sample's levels in bold.
+   Picking a row marks that level on the plots (magenta dashed line);
+   *Add as peak* or a double-click adds a peak there -- refined by the
+   local fit -- with the level written in as its assignment.
+
+   **Select range** shows a band on the plot to drag over a range;
+   **Zoom window...** opens that range (or, with no band, what the plot
+   shows) in a window of its own: from/to editable, its own log axis, a
+   smoothed curve over the data, and below it the negative second
+   derivative (divided by the intensity, *÷ I*, so a weak peak shows as
+   clearly as a strong one) -- every peak, a shoulder with no maximum of
+   its own included, is a maximum there. A cursor (drag it, or click)
+   reads out its energy; *Fit at cursor* fits a Gaussian there and moves
+   the cursor to its centre; *Add peak at cursor* (or a double-click) adds
+   it to the results. The zoom window follows the results window's peaks
+   and the level picked in the peak table.
 
 The table is Table 1-1 of the X-ray Data Booklet (`Table_1-1.pdf` at the
 top of the repository), turned once into `tools/corelevel_table.py` by
