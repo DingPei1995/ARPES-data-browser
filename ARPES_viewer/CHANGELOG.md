@@ -12,6 +12,14 @@ file is the record of how it got that way.
 
 ## Unreleased
 
+- **Level min/max hold while the slice moves.** Dragging a position bar --
+  the energy of a constant-E contour, the angle of a cut, the cursor of a
+  spatial map -- used to reset the level bar to the new frame's full range,
+  throwing away the colour window just set. A min/max the user sets now
+  applies at every position (the bar widens when the window reaches past a
+  frame's values); dragging the handles back to both ends, or 0%–100%,
+  goes back to following each frame's own range. New data still opens at
+  its full range.
 - **Core-level check: peak table and zoom window.** The cursor hint from
   the last round is gone -- naming every element within ±2 eV of wherever
   the mouse was buried the plot in candidates. Instead **Peak table...**

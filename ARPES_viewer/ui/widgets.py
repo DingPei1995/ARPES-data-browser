@@ -3199,7 +3199,12 @@ class LevelBar(QWidget):
         self.histogram.setData(x=centres, y=0.9 * height / top)
 
     def clip_percentiles(self, low: float, high: float):
-        """Move the handles to a percentile pair of the image's values."""
+        """Move the handles to a percentile pair of the image's values.
+        0%–100% is no clipping at all: the whole bar, which lets the window
+        follow each new image's range again."""
+        if low <= 0.0 and high >= 100.0:
+            self.region.setRegion((self._lo, self._hi))
+            return
         sample = getattr(self, "_sample", None)
         if sample is None or sample.size < 2:
             return
@@ -3220,6 +3225,18 @@ class LevelBar(QWidget):
     def levels(self):
         lo, hi = self.region.getRegion()
         return float(lo), float(hi)
+
+    def set_levels(self, lo: float, hi: float):
+        """Put the handles at (lo, hi) without emitting levelsChanged."""
+        self.region.blockSignals(True)
+        self.region.setRegion((float(lo), float(hi)))
+        self.region.blockSignals(False)
+        self._update_labels()
+
+    def spans_full_range(self, lo: float, hi: float) -> bool:
+        """Whether (lo, hi) is the bar's whole range, i.e. no clipping."""
+        tol = 1e-6 * (self._hi - self._lo)
+        return lo <= self._lo + tol and hi >= self._hi - tol
 
     def _on_region_changed(self):
         self._update_labels()
@@ -3792,6 +3809,10 @@ class ImagePanel(QWidget):
         layout.addWidget(scroll_strip(self.level_bar))
         self.level_bar.levelsChanged.connect(self._on_levels_changed)
         self.level_bar.gammaChanged.connect(self.view.set_gamma)
+        #: the min/max the user set, kept while the slice position moves
+        #: (energy bar, cursor, ...); None follows each image's full range
+        self._user_levels = None
+        self._syncing_levels = False
 
         # -- image, with the EDC to its right and the MDC underneath --
         # A grid, not nested boxes: the curves have to share a cell edge with
@@ -4025,12 +4046,27 @@ class ImagePanel(QWidget):
 
     # -- levels ----------------------------------------------------------
     def _on_levels_changed(self, lo: float, hi: float):
+        if not self._syncing_levels:
+            # Handles dragged back to both ends mean "no clipping": follow
+            # each image's own range again.
+            self._user_levels = (None if self.level_bar.spans_full_range(lo, hi)
+                                 else (lo, hi))
         self.view.set_level_window(lo, hi)
+
+    def reset_levels(self):
+        """Forget the user's min/max and go back to each image's range."""
+        self._user_levels = None
+        self.sync_level_range()
 
     def sync_level_range(self):
         """Point the level bar at the current image's value range. Called
         after new data lands, when setImage's autoLevels has just reset the
-        image's own levels to the full range."""
+        image's own levels to the full range.
+
+        A min/max the user has set is kept: moving the slice position (the
+        energy of a constant-E contour, the cursor of a map, ...) shows the
+        new image in the same colour window, and the bar widens to hold it
+        where it reaches past this image's values."""
         frame = getattr(self.view, "last_frame", None)
         if frame is None:
             frame = getattr(self.view, "_image2d", None)
@@ -4040,7 +4076,18 @@ class ImagePanel(QWidget):
         finite = finite[np.isfinite(finite)]
         if finite.size == 0:
             return
-        self.level_bar.set_data_range(float(finite.min()), float(finite.max()))
+        lo, hi = float(finite.min()), float(finite.max())
+        user = self._user_levels
+        self._syncing_levels = True
+        try:
+            if user is None:
+                self.level_bar.set_data_range(lo, hi)
+            else:
+                self.level_bar.set_data_range(min(lo, user[0]), max(hi, user[1]),
+                                              keep_levels=True)
+                self.level_bar.set_levels(*user)
+        finally:
+            self._syncing_levels = False
         self.level_bar.set_histogram(finite)
         # New data means a new window; tell the view, so gamma keeps being
         # applied inside the levels actually on screen.
@@ -4110,10 +4157,11 @@ class ImagePanel(QWidget):
     def apply_display_options(self):
         """Re-assert smoothing and aspect after new data is loaded (a fresh
         setImage with autoRange resets the view's aspect state), and re-point
-        the EDC/MDC curves at the new frame."""
+        the EDC/MDC curves at the new frame. New data starts from its own
+        full range, not the previous data's min/max."""
         self._on_smooth_changed()
         self._on_ratio_changed()
-        self.sync_level_range()
+        self.reset_levels()
         if self.curves is not None and self.curves.edc_plot.isVisibleTo(self):
             self.sync_curve_source()
 
