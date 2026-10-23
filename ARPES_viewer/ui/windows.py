@@ -237,6 +237,22 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
             return None
         return panels[names.index(choice)]
 
+    def _display_levels(self, array) -> dict:
+        """The colour window (user-set min/max, or None) and gamma of the
+        panel showing ``array``, for a snapshot of it to open with."""
+        panels = tuple(self.image_panels())
+        for panel in panels:
+            shown = getattr(panel.view, "last_frame", None)
+            if shown is None:
+                shown = getattr(panel.view, "_image2d", None)
+            if shown is not None and np.may_share_memory(shown, array):
+                break
+        else:
+            if len(panels) != 1:
+                return {}
+            panel = panels[0]
+        return {"levels": panel.user_levels(), "gamma": panel.level_bar.gamma()}
+
     def _slice_name(self, suffix: str) -> str:
         label = self.slice_label()
         stem = f"{self.filename} [{suffix}]"
@@ -285,7 +301,8 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
                              np.asarray(xaxis, dtype=float),
                              np.asarray(yaxis, dtype=float),
                              x_label=xlabel, y_label=ylabel,
-                             colormap=self.colormap, flip=self.flip)
+                             colormap=self.colormap, flip=self.flip,
+                             **self._display_levels(array))
         self._arm_figure_source(window)
         window.closed.connect(lambda w: self.popout_windows.remove(w)
                               if w in self.popout_windows else None)
@@ -997,7 +1014,8 @@ class SpatialScanWindow(ViewerWindow):
                              frame, x_axis, scan.z,
                              x_label=self.frame_view.x_label,
                              y_label=self.frame_view.y_label,
-                             colormap=self.colormap, flip=self.flip)
+                             colormap=self.colormap, flip=self.flip,
+                             **self._display_levels(frame))
         self._arm_figure_source(window)
         window.closed.connect(lambda w: self.popout_windows.remove(w)
                               if w in self.popout_windows else None)

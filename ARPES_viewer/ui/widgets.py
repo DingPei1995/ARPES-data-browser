@@ -4053,6 +4053,16 @@ class ImagePanel(QWidget):
                                  else (lo, hi))
         self.view.set_level_window(lo, hi)
 
+    def user_levels(self):
+        """The min/max the user set, or None while following the data."""
+        return self._user_levels
+
+    def set_user_levels(self, lo: float, hi: float):
+        """Hold the colour window at (lo, hi) for every image shown."""
+        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+            self._user_levels = (float(lo), float(hi))
+            self.sync_level_range()
+
     def reset_levels(self):
         """Forget the user's min/max and go back to each image's range."""
         self._user_levels = None
@@ -4420,7 +4430,8 @@ class FrameWindow(QWidget):
     closed = pyqtSignal(object)
 
     def __init__(self, title: str, frame, x_axis, y_axis,
-                 x_label=None, y_label=None, colormap=None, flip=False):
+                 x_label=None, y_label=None, colormap=None, flip=False,
+                 levels=None, gamma=1.0):
         super().__init__()
         self.setWindowTitle(title)
         self.resize(560, 620)
@@ -4484,6 +4495,11 @@ class FrameWindow(QWidget):
         if colormap:
             apply_colormap(self.view, colormap, flip)
         self.panel.apply_display_options()
+        # The live panel's colour window and gamma come along, so snapshots
+        # of different positions compare on one colour scale.
+        if levels is not None:
+            self.panel.set_user_levels(*levels)
+        self.panel.level_bar.gamma_box.setValue(float(gamma))
         self.view_bar.bind([self.panel])
 
     def set_colormap(self, name: str, flip: bool = False):

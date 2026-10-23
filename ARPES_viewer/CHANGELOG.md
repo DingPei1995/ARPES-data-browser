@@ -20,6 +20,10 @@ file is the record of how it got that way.
   frame's values); dragging the handles back to both ends, or 0%–100%,
   goes back to following each frame's own range. New data still opens at
   its full range.
+- **Snapshots keep the colour scale.** *Pop out* and *Open this position
+  in a new window* opened at the full range with gamma 1, so two positions
+  side by side were not on one colour scale; they now take the panel's
+  min/max and gamma with them.
 - **Core-level check: peak table and zoom window.** The cursor hint from
   the last round is gone -- naming every element within ±2 eV of wherever
   the mouse was buried the plot in candidates. Instead **Peak table...**

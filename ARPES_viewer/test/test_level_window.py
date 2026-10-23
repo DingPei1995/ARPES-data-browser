@@ -2,7 +2,8 @@
 
 Dragging the energy bar of a constant-E contour used to reset the level
 bar to each new frame's full range. Now the window the user chose stays
-for every position; dragging the handles back to both ends (or 0%–100%)
+for every position, and a pop-out snapshot opens on the same colour scale;
+dragging the handles back to both ends (or 0%–100%)
 goes back to following each frame's range.
 
 Needs Qt; run headless with QT_QPA_PLATFORM=offscreen.
@@ -57,4 +58,16 @@ def test_full_range_follows_each_slice(app):
     window.e_control.set_index(60)
     frame = window.view.last_frame
     assert bar.levels() == pytest.approx((float(frame.min()), float(frame.max())))
+    window.close()
+
+
+def test_pop_out_keeps_the_colour_scale(app):
+    window = _contour()
+    window.panel.level_bar.region.setRegion((3.0, 7.0))
+    window.panel.level_bar.gamma_box.setValue(0.5)
+    snapshot = window.pop_out_slice()
+    assert snapshot.panel.level_bar.levels() == pytest.approx((3.0, 7.0))
+    assert snapshot.view._levels == pytest.approx((3.0, 7.0))
+    assert snapshot.view._gamma == pytest.approx(0.5)
+    snapshot.close()
     window.close()
