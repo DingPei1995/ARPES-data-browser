@@ -2,6 +2,8 @@
 
 *[English version / 英文版](USER_GUIDE_en.md) · [Version française / 法文版](USER_GUIDE_fr.md)*
 
+*最后更新：2026 年 10 月 24 日*
+
 本指南按照日常使用的顺序，配合截图介绍程序的主要功能：载入数据、浏览数据、
 转换到动量空间、分析，以及制作论文图。每一步背后的技术细节（公式、测试结果、
 设计取舍）见 [README](../README.md) 和 [CHANGELOG](../CHANGELOG.md)。
@@ -106,6 +108,27 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
 **Clear list** 会先确认；如果本次会话中有计算得到但尚未保存的数据，会提示保存。
 磁盘上的文件永远不会被删除。
 
+### 把多张 cut 合并成一个 map
+
+温度序列、门电压序列，或每个光子能量一张的 cut，都可以叠成一个数据立方体，然后
+像普通 map 一样查看——在固定能量处切片，或沿新轴切片。
+
+1. 在列表中选中这些 cut（Ctrl/Shift 多选），点列表下方的 **Combine data...**，
+   或右键 → **Combine N cuts into a map...**。这些 cut 的坐标轴必须逐点一致
+   （点数、数值、单位都相同）；否则程序会指出第一张不一致的 cut 及原因。
+2. 程序会询问是否**按列表中的顺序**合并。选 *Yes* 保持该顺序；选 *No* 则可自行
+   调整顺序。
+3. 在对话框中设置新轴：**Axis is**（温度、门电压、光子能量、延迟、位置、其他——
+   会自动填入 *Name* 和 *Unit*，均可修改）、**Start**（起始值）和 **Step**（间隔）。
+   每张 cut 旁边会显示它对应的数值。如果选择了调整顺序，可**拖动**各行（或用
+   **Move up** / **Move down** / **Reverse**）。点 **Combine**。
+
+![合并 cut](images/combine_cuts_dialog.png)
+
+结果作为新的一行加入列表。由角度 cut 组成的光子能量序列会成为 `kz map`，可直接
+使用 *kz map processing* 和 *kz → momentum*（见[第 13 节](#13-光子能量扫描kz)）；
+其他轴得到的是 `map`，其第一个轴被标记为非角度，因此不会提供 k 转换。
+
 ---
 
 ## 4. 载入数据
@@ -127,7 +150,13 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
 
 **CASSIOPEE 文件夹**：选中编号序列（`name_1_ROI1_.txt`、`name_2_ROI1_.txt`……）
 中的任意一个文件，整个文件夹会作为一个拼好的数据立方体列出一次。它是角度 map
-还是 kz map，由谱旁边的 `_i` 参数文件自动判断。
+还是 kz map，由谱旁边的 `_i` 参数文件自动判断。列表中的名称带有从这些文件读出的
+光子能量和偏振——如 `FineMap 117eV LH`，光子能量扫描则为 `KzScan 40-120eV LH`——
+因此同一扫描在不同能量或偏振下的重复测量可以区分开。
+
+**ANTARES 光子能量（PhD）文件**：PhD `.nxs` 文件（每个光子能量一个 `Phd_NNNN`
+条目）作为一个 `kz map` 列出：各帧按光子能量排序，每帧的动能轴用其自身的 hν
+换算到 E_F（功函数取 4.5 eV，k_z 转换也会用到）。每一帧仍可单独作为 cut 打开。
 
 ### 数据类型
 
@@ -153,7 +182,9 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
   及 **Flip**（反转），以及视图控制——坐标范围、**Auto**、**Inv**（反向）、
   **Reset**、**Grid**。
 - **图像上方**：**Levels** 色阶条（拖动两个滑块，或输入 **Min%/Max%** 百分位，
-  **Clip** 应用）以及 **Gamma**。
+  **Clip** 应用）以及 **Gamma**。您设置的最小/最大值在移动切片位置时（contour 的
+  能量、cut 的角度、空间 map 的光标）会保持不变，使各位置处于同一色标；把滑块拖回
+  两端，或设为 0%–100%，即恢复为跟随每一帧自身的范围。
 - **图像下方**：**Smooth**（仅影响显示，不改变数据）和 **Lock x/y**（锁定纵横比）。
 - **读数光标**——在图像上右键 → *Readout cursor*。它显示光标处的数值；在 cut 上
   还会画出经过该点的 **EDC**（右侧）和 **MDC**（下方）。**EDC ±** / **MDC ±**
@@ -164,7 +195,8 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
 - **图像右键 → Export** 导出该面板当前显示的内容——数据（`.nxs`）、图片，或
   矢量坐标轴（`.eps`），见[第 17 节](#17-作图与导出)。
 - **Functions → Slice → Save slice to the main list / Open slice in a new
-  panel** 保存当前切片的副本。
+  panel** 保存当前切片的副本。新面板（以及空间 map 上的 *Open this position in
+  a new window*）会沿用原面板的最小/最大值和 gamma，便于直接对比。
 
 **Functions** 菜单按类别分组：
 
@@ -281,6 +313,18 @@ cut**），此时等能面窗口保持隐藏，需要时用 *Functions → Show 
    点击表格某行可查看全部候选；在 *Assignment* 列可填写您自己的判读。
 
    ![芯能级检查](images/core_level_check.png)
+
+**弱峰与手动添加峰**：勾选 **Log counts** 可在强峰旁看清弱峰；**Min height**
+（默认为最强峰的 0.2%）设定可被找到的峰的最小高度。要添加搜索遗漏的峰，按下
+**Click to add peak** 后在图上点击（双击始终有效），或在 *or at* 后输入结合能并点
+**Add**：其位置由局部拟合精修，标记为 ◆，并列出 ±2 eV 内所有表列能级。
+**Remove selected** 删除选中的峰；**Reset peaks** 恢复自动找到的峰并清除手动添加的
+峰。您手动填写的判读在 **Re-analyse** 后仍会保留。
+
+**Peak table...** 列出所有表列能级，可按元素和结合能范围筛选：查找某个峰、在图上
+显示某能级，或以该能级为判读将其添加为峰。**Select range** 在图上显示一个可拖动的
+区间；**Zoom window...** 把该区间（或当前视图）在独立窗口中打开，窗口带光标、光标处
+的高斯拟合，以及除以强度的负二阶导数——强峰旁的肩峰或弱峰也能和强峰一样清楚。
 
 若所有峰整体偏移相同的量，备注中会给出提示，**Apply suggested shift**
 可一键修正（样品荷电或 E_F 有误）。**Add EDC to list** 将结合能标度下的 EDC
@@ -628,5 +672,6 @@ Illustrator 中放入图片。
   worth knowing about*（SOLEIL 文件的轴顺序）。
 - **在大 map 上拖动光标卡顿**——从文件惰性读取的 map 每个窗口重新切片约需 0.1 s，
   因此其他窗口会等鼠标停下再更新；map 读入内存后即可实时跟随。
+- **输入数字**——无论系统语言如何，所有数字框都使用小数点（`0.05`），不接受逗号。
 - **系统开始使用交换内存**——留意 Memory 进度条（超过内存三分之一变为琥珀色，
   超过一半变为红色），使用 **Free memory** 或 **Close all viewers**。

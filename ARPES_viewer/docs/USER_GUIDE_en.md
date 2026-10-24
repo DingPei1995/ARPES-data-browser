@@ -2,6 +2,8 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
+*Last updated: 24 October 2026*
+
 This guide walks through the program's main features with screenshots, in
 the order you would normally use them: loading data, looking at it,
 converting it to momentum, analysing it, and making figures. The technical
@@ -113,6 +115,32 @@ of its own, with a filter box and **Export metadata (.csv)**:
 **Clear list** asks first, and offers to save anything computed in this
 session that has not been saved yet. Files on disk are never deleted.
 
+### Combining cuts into a map
+
+A temperature series, a gate-voltage series, or one cut per photon energy
+can be stacked into one cube and then looked at like any map — sliced at
+constant energy, or along the new axis.
+
+1. Select the cuts in the list (Ctrl/Shift-click) and press **Combine
+   data...** under the list, or right-click → **Combine N cuts into a
+   map...**. The cuts must have the same axes point for point (same number
+   of points, same values, same units); otherwise the program names the
+   first cut that differs and how.
+2. It asks whether to combine them **in the list's order**. *Yes* keeps that
+   order; *No* lets you choose it.
+3. In the dialog, set the new axis: **Axis is** (temperature, gate voltage,
+   photon energy, delay, position, other — this fills in *Name* and *Unit*,
+   which you can change), **Start** and **Step**. Each cut is listed with the
+   value it gets. If you chose to reorder, **drag** the rows (or use **Move
+   up** / **Move down** / **Reverse**). Press **Combine**.
+
+![Combining cuts](images/combine_cuts_dialog.png)
+
+The result is a new row in the list. A photon-energy series of angle cuts
+becomes a `kz map`, so *kz map processing* and *kz → momentum* take it (see
+[§13](#13-photon-energy-scans-kz)); any other axis gives a `map` whose first
+axis is marked as not an angle, so no k conversion is offered for it.
+
 ---
 
 ## 4. Loading data
@@ -139,7 +167,17 @@ chosen files with everything detected automatically.
 **CASSIOPEE folders.** Select any file of a numbered series
 (`name_1_ROI1_.txt`, `name_2_ROI1_.txt`, …) and the whole folder is listed
 once, as one assembled cube. Whether it becomes an angle map or a kz map is
-read from the `_i` parameter files next to the spectra.
+read from the `_i` parameter files next to the spectra. The row is named
+with the photon energy and polarisation read from those files —
+`FineMap 117eV LH`, or `KzScan 40-120eV LH` for a photon-energy scan — so
+repeats of the same scan at another energy or polarisation can be told
+apart.
+
+**ANTARES photon-energy (PhD) files.** A PhD `.nxs` file (one `Phd_NNNN`
+entry per photon energy) is listed as one `kz map`: the frames are sorted by
+photon energy and each kinetic-energy axis is referred to E_F with its own
+hν (work function 4.5 eV, which the k_z conversion then uses). Each frame
+still opens on its own as a cut.
 
 ### Data kinds
 
@@ -166,7 +204,11 @@ another file side by side.
   colormap (per window) with **Flip**, and the view controls — axis ranges,
   **Auto**, **Inv** (invert), **Reset**, **Grid**.
 - **Above each image**: the **Levels** bar (drag the two handles, or type
-  **Min%/Max%** percentiles; **Clip** applies them) and **Gamma**.
+  **Min%/Max%** percentiles; **Clip** applies them) and **Gamma**. A min/max
+  you set is kept while you move the slice (the energy of a contour, the
+  angle of a cut, the cursor of a spatial map), so every position is on the
+  same colour scale; drag the handles back to both ends, or set 0%–100%, to
+  follow each frame's own range again.
 - **Under each image**: **Smooth** (display only, does not change the data)
   and **Lock x/y** (aspect ratio).
 - **Readout cursor** — right-click the image → *Readout cursor*. It reports
@@ -179,7 +221,9 @@ another file side by side.
 - **Right-click the image → Export** saves what the panel shows — data
   (`.nxs`), an image, or vector axes (`.eps`); see [§17](#17-figures-and-export).
 - **Functions → Slice → Save slice to the main list / Open slice in a new
-  panel** keeps a copy of the slice on screen.
+  panel** keeps a copy of the slice on screen. A new panel (and *Open this
+  position in a new window* on a spatial map) opens with the panel's
+  min/max and gamma, so the two can be compared directly.
 
 The **Functions** menu is organised in sections:
 
@@ -313,6 +357,24 @@ main list → **Core-level check...** to find out what its peaks are.
    candidates. Type your own assignment in the *Assignment* column.
 
    ![Core-level check](images/core_level_check.png)
+
+**Weak lines and peaks by hand.** Tick **Log counts** to see weak lines next
+to a strong one; **Min height** (default 0.2 % of the strongest) sets how
+small a found peak may be. To add a peak the search missed, press **Click to
+add peak** and click the plot (a double-click always works), or type its
+binding energy after *or at* and press **Add**: its position is refined by a
+local fit, it is marked ◆, and it is named with every tabulated level within
+±2 eV. **Remove selected** drops peaks; **Reset peaks** brings back the found
+ones and forgets those added by hand. Assignments you typed survive a
+**Re-analyse**.
+
+**Peak table...** lists every tabulated level, filtered by element and
+binding-energy range: look a peak up, show a level on the plot, or add it as
+a peak with that level as its assignment. **Select range** shows a band you
+drag over a region; **Zoom window...** opens it (or the current view) in a
+window of its own with a cursor, a Gaussian fit at the cursor, and the
+negative second derivative divided by the intensity — which shows a shoulder
+or a weak line beside a strong one as clearly as the strong one.
 
 If every peak is off by the same amount, the notes say so and **Apply
 suggested shift** corrects it (a charged sample, or a wrong E_F). **Add EDC
@@ -710,5 +772,7 @@ your own; several selected rows go into one file.
 - **Dragging the cursor on a big map is sluggish** — a map read lazily from
   its file re-slices in about 0.1 s per window, so the other windows wait for
   the mouse to pause. Once the map has been read into memory it follows live.
+- **Typing numbers** — every number box takes a decimal point (`0.05`),
+  whatever the system language; a comma is not accepted.
 - **The machine is paging** — watch the Memory bar (amber past a third of the
   RAM, red past a half); use **Free memory** or **Close all viewers**.

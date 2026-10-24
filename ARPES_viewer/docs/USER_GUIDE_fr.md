@@ -2,6 +2,8 @@
 
 *[English version](USER_GUIDE_en.md) · [中文版](USER_GUIDE_zh.md)*
 
+*Dernière mise à jour : 24 octobre 2026*
+
 Ce guide présente les principales fonctions du programme, captures d'écran à
 l'appui, dans l'ordre où on les utilise d'habitude : charger les données, les
 visualiser, les convertir en impulsion, les analyser et préparer des figures.
@@ -122,6 +124,34 @@ dans une fenêtre à part, avec un champ de filtre et **Export metadata
 calculé pendant la session sans avoir encore été sauvegardé. Les fichiers sur
 le disque ne sont jamais supprimés.
 
+### Combiner des coupes en une carte
+
+Une série en température, en tension de grille, ou une coupe par énergie de
+photon peut être empilée en un seul cube, puis examinée comme n'importe quelle
+carte — tranchée à énergie constante, ou le long du nouvel axe.
+
+1. Sélectionnez les coupes dans la liste (Ctrl/Maj-clic) et cliquez sur
+   **Combine data...** sous la liste, ou clic droit → **Combine N cuts into a
+   map...**. Les coupes doivent avoir les mêmes axes point par point (même
+   nombre de points, mêmes valeurs, mêmes unités) ; sinon le programme nomme
+   la première coupe qui diffère, et en quoi.
+2. Il demande s'il faut les combiner **dans l'ordre de la liste**. *Yes* garde
+   cet ordre ; *No* permet de le choisir.
+3. Dans la boîte de dialogue, définissez le nouvel axe : **Axis is**
+   (température, tension de grille, énergie de photon, délai, position, autre —
+   ce choix remplit *Name* et *Unit*, modifiables), **Start** et **Step** (le
+   pas). Chaque coupe est affichée avec la valeur qu'elle reçoit. Si vous avez
+   choisi de réordonner, **faites glisser** les lignes (ou utilisez **Move
+   up** / **Move down** / **Reverse**). Cliquez sur **Combine**.
+
+![Combiner des coupes](images/combine_cuts_dialog.png)
+
+Le résultat est une nouvelle ligne de la liste. Une série en énergie de photon
+de coupes en angle devient une `kz map`, que *kz map processing* et
+*kz → momentum* acceptent (voir [§13](#13-balayages-en-énergie-de-photon-kz)) ;
+tout autre axe donne une `map` dont le premier axe est marqué comme n'étant
+pas un angle, si bien qu'aucune conversion en k n'est proposée.
+
 ---
 
 ## 4. Charger des données
@@ -151,7 +181,17 @@ ajoute les fichiers choisis avec la détection automatique.
 numérotée (`nom_1_ROI1_.txt`, `nom_2_ROI1_.txt`, …) : tout le dossier est
 listé une seule fois, comme un cube assemblé. Qu'il devienne une carte en
 angle ou une carte kz est déterminé à partir des fichiers de paramètres `_i`
-placés à côté des spectres.
+placés à côté des spectres. La ligne porte l'énergie de photon et la
+polarisation lues dans ces fichiers — `FineMap 117eV LH`, ou
+`KzScan 40-120eV LH` pour un balayage en énergie de photon — pour distinguer
+les répétitions d'un même balayage à une autre énergie ou polarisation.
+
+**Fichiers ANTARES en énergie de photon (PhD).** Un fichier `.nxs` PhD (une
+entrée `Phd_NNNN` par énergie de photon) est listé comme une seule `kz map` :
+les images sont triées par énergie de photon et chaque axe en énergie
+cinétique est rapporté à E_F avec son propre hν (travail de sortie 4,5 eV,
+que la conversion k_z utilise ensuite). Chaque image s'ouvre encore seule
+comme une coupe.
 
 ### Types de données
 
@@ -180,7 +220,11 @@ côte une carte, ses coupes et un autre fichier.
   **Reset**, **Grid**.
 - **Au-dessus de chaque image** : la barre **Levels** (faire glisser les deux
   poignées, ou saisir des centiles **Min%/Max%** ; **Clip** les applique) et
-  **Gamma**.
+  **Gamma**. Un min/max que vous fixez est conservé quand la tranche se
+  déplace (l'énergie d'un contour, l'angle d'une coupe, le curseur d'une
+  carte spatiale), si bien que toutes les positions partagent la même échelle
+  de couleurs ; ramenez les poignées aux deux extrémités, ou réglez 0 %–100 %,
+  pour suivre de nouveau la plage propre à chaque image.
 - **Sous chaque image** : **Smooth** (affichage seulement, les données ne
   changent pas) et **Lock x/y** (rapport d'aspect).
 - **Curseur de lecture** — clic droit sur l'image → *Readout cursor*. Il
@@ -196,7 +240,9 @@ côte une carte, ses coupes et un autre fichier.
   données (`.nxs`), image, ou axes vectoriels (`.eps`) ; voir
   [§17](#17-figures-et-exportation).
 - **Functions → Slice → Save slice to the main list / Open slice in a new
-  panel** conserve une copie de la tranche affichée.
+  panel** conserve une copie de la tranche affichée. Un nouveau panneau (et
+  *Open this position in a new window* sur une carte spatiale) s'ouvre avec le
+  min/max et le gamma du panneau, pour une comparaison directe.
 
 Le menu **Functions** est organisé en sections :
 
@@ -341,6 +387,26 @@ savoir d'où viennent ses pics.
    accepte votre propre attribution.
 
    ![Vérification des niveaux de cœur](images/core_level_check.png)
+
+**Raies faibles et pics à la main.** Cochez **Log counts** pour voir les raies
+faibles à côté d'une raie forte ; **Min height** (0,2 % de la plus forte par
+défaut) fixe la hauteur minimale d'un pic trouvé. Pour ajouter un pic que la
+recherche a manqué, appuyez sur **Click to add peak** puis cliquez sur le
+graphe (un double-clic fonctionne toujours), ou saisissez son énergie de
+liaison après *or at* et cliquez sur **Add** : sa position est affinée par un
+ajustement local, il est marqué ◆ et nommé avec tous les niveaux tabulés à
+±2 eV. **Remove selected** retire des pics ; **Reset peaks** rétablit les pics
+trouvés et oublie ceux ajoutés à la main. Les attributions saisies survivent
+à **Re-analyse**.
+
+**Peak table...** liste tous les niveaux tabulés, filtrés par élément et par
+plage d'énergie de liaison : chercher un pic, afficher un niveau sur le
+graphe, ou l'ajouter comme pic avec ce niveau pour attribution. **Select
+range** affiche une bande à faire glisser sur une région ; **Zoom window...**
+l'ouvre (ou la vue courante) dans une fenêtre à part, avec un curseur, un
+ajustement gaussien au curseur et la dérivée seconde négative divisée par
+l'intensité — un épaulement ou une raie faible à côté d'une raie forte y est
+aussi visible que la raie forte.
 
 Si tous les pics sont décalés de la même quantité, les notes le disent et
 **Apply suggested shift** corrige (échantillon chargé, ou E_F faux).
@@ -779,6 +845,9 @@ dans un même fichier.
   dans son fichier se recoupe en environ 0,1 s par fenêtre, si bien que les
   autres fenêtres attendent que la souris s'arrête. Une fois la carte lue en
   mémoire, elle suit en direct.
+- **Saisie des nombres** — toutes les cases numériques prennent un point
+  décimal (`0.05`), quelle que soit la langue du système ; la virgule n'est
+  pas acceptée.
 - **La machine utilise la mémoire d'échange** — surveillez la barre Memory
   (ambre au-delà d'un tiers de la RAM, rouge au-delà de la moitié) ; utilisez
   **Free memory** ou **Close all viewers**.

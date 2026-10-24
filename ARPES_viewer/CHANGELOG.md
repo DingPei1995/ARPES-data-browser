@@ -25,6 +25,13 @@ file is the record of how it got that way.
   shown beside it. A photon-energy series of angle cuts becomes a *kz map*,
   so the k_z tools take it; any other axis gives a *Map* marked as not an
   angle, so nothing offers to convert it to momentum.
+- **User guides brought up to date** (en, zh, fr, and their PDFs), each
+  with a *last updated* date under its title: combining cuts, the level
+  min/max that holds while the slice moves and carries into pop-outs, the
+  core-level check's weak-line tools (log counts, min height, peaks by hand,
+  peak table, zoom window), CASSIOPEE row names, ANTARES PhD files as kz
+  maps, and the decimal point in number boxes. The main-window screenshots
+  show the *Combine data...* button.
 - **Level min/max hold while the slice moves.** Dragging a position bar --
   the energy of a constant-E contour, the angle of a cut, the cursor of a
   spatial map -- used to reset the level bar to the new frame's full range,
