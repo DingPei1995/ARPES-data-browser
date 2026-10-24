@@ -100,7 +100,8 @@ mesures, chacune sur sa propre ligne). Le type est indiqué après le nom :
 
 | Action | Comment |
 |---|---|
-| Ouvrir un jeu de données dans sa propre fenêtre | **double-clic** sur la ligne, ou **Open selected** |
+| Ouvrir un jeu de données dans sa propre fenêtre | **double-clic** sur la ligne (ou clic droit → **Open**) |
+| Empiler plusieurs coupes en une carte (température, tension de grille, énergie de photon → kz map ...) | sélectionner les coupes → **Combine data...** (ou clic droit → **Combine N cuts into a map...**) |
 | Tout ce qui agit sur des jeux de données | **clic droit** sur la ligne (ou sur une sélection de lignes) |
 | Lire les axes : première/dernière valeur, nombre de points, pas | clic droit → **Show information** (remplit *Data Information*) |
 | Tronquer / normaliser / compresser plusieurs jeux à la fois | **Data operations...** |

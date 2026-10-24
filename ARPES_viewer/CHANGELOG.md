@@ -12,6 +12,19 @@ file is the record of how it got that way.
 
 ## Unreleased
 
+- **Combine cuts into a map.** Several cuts measured with the same
+  settings -- a temperature series, a gate-voltage series, one cut per
+  photon energy -- can be stacked into one (scanned, angle, energy) cube:
+  select them and press **Combine data...** under the list (which replaces
+  *Open selected*; double-click or right-click → *Open* still open a row),
+  or right-click → *Combine N cuts into a map...*. The cuts must have the
+  same axes point for point, and the first that does not is named. The
+  program asks whether to keep the list's order; if not, the cuts can be
+  dragged (or moved up/down, reversed) into the order wanted. The new axis
+  gets a role, a name, a unit, a start and a step, and each cut's value is
+  shown beside it. A photon-energy series of angle cuts becomes a *kz map*,
+  so the k_z tools take it; any other axis gives a *Map* marked as not an
+  angle, so nothing offers to convert it to momentum.
 - **Level min/max hold while the slice moves.** Dragging a position bar --
   the energy of a constant-E contour, the angle of a cut, the cursor of a
   spatial map -- used to reset the level bar to the new frame's full range,

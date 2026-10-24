@@ -93,7 +93,8 @@ kind is written after the name: `[Cut]`, `[Map]`, `[kz map]`, `[k-map]`,
 
 | Action | How |
 |---|---|
-| Open a dataset in its own window | **double-click** the row, or **Open selected** |
+| Open a dataset in its own window | **double-click** the row (or right-click → **Open**) |
+| Stack several cuts into one map (temperature, gate voltage, photon energy → kz map ...) | select the cuts → **Combine data...** (or right-click → **Combine N cuts into a map...**) |
 | Everything else that works on datasets | **right-click** the row (or a selection of rows) |
 | Read the axes: first/last value, points, step | right-click → **Show information** (fills *Data Information*) |
 | Truncate / normalise / compress several datasets at once | **Data operations...** |

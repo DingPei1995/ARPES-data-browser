@@ -87,7 +87,8 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
 
 | 操作 | 方法 |
 |---|---|
-| 在独立窗口中打开数据集 | **双击**该行，或点 **Open selected** |
+| 在独立窗口中打开数据集 | **双击**该行（或右键 → **Open**） |
+| 把多张 cut 合并成一个 map（温度、门电压、光子能量 → kz map 等） | 选中这些 cut → **Combine data...**（或右键 → **Combine N cuts into a map...**） |
 | 其余所有针对数据集的操作 | **右键**该行（或选中的多行） |
 | 查看各轴的首末值、点数、步长 | 右键 → **Show information**（填入 *Data Information* 表） |
 | 同时对多个数据集截取 / 自归一 / 压缩 | **Data operations...** |

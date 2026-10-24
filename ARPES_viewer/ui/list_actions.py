@@ -27,7 +27,7 @@ CUBES = frozenset({"map", "k_map", "kz_map", "kz_map_k"})
 CURVES = frozenset({"edc", "mdc", "spin_edc"})
 KNOWN = frozenset(LABEL_KINDS.values())
 
-#: action -> (how many rows: "one", "two" or "any", the kinds it takes
+#: action -> (how many rows: "one", "two", "many" (two or more) or "any", the kinds it takes
 #: (None = every known kind), what to call those kinds in a tooltip)
 RULES = {
     "open": ("one", None, "a dataset"),
@@ -41,6 +41,7 @@ RULES = {
     "corelevel": ("one", frozenset({"cut"}), "a cut"),
     "view3d": ("one", CUBES, "a map"),
     "arithmetic": ("two", frozenset({"cut"}), "two cuts"),
+    "combine": ("many", frozenset({"cut"}), "two or more cuts"),
     "save": ("any", None, "datasets"),
     "remove": ("any", "all", "datasets"),
     "log": ("none", "all", ""),
@@ -70,6 +71,8 @@ def availability(action: str, rows):
         return False, f"Works on {wanted}: select one row only."
     if count == "two" and n != 2:
         return False, f"Works on {wanted}: select exactly two rows."
+    if count == "many" and n < 2:
+        return False, f"Works on {wanted}: select at least two rows."
     if kinds == "all":
         return True, ""
     allowed = KNOWN if kinds is None else kinds

@@ -98,8 +98,15 @@ class Ui_MainWindow:
         menu_layout.addWidget(self.FilePathListWidget, stretch=1)
 
         button_row = QtWidgets.QHBoxLayout()
-        self.OpenSelectedButton = QtWidgets.QPushButton("Open selected", self.centralwidget)
-        self.OpenSelectedButton.setToolTip("Same as double-clicking the highlighted file.")
+        # Opening is a double-click (or right-click -> Open); the button
+        # slot goes to combining several cuts into one map, which has no
+        # gesture of its own.
+        self.CombineDataButton = QtWidgets.QPushButton("Combine data...", self.centralwidget)
+        self.CombineDataButton.setToolTip(
+            "Stack the selected cuts (same axes) into one map along an axis "
+            "of your own -- temperature, gate voltage, photon energy (kz "
+            "map)... -- in the list's order or one you choose. The same as "
+            "right-click -> Combine cuts into a map.")
         self.DataOpsButton = QtWidgets.QPushButton("Data operations...", self.centralwidget)
         self.DataOpsButton.setToolTip(
             "Truncate, self-normalise or compress the selected datasets. Several at "
@@ -109,7 +116,7 @@ class Ui_MainWindow:
             "Smooth, differentiate, take the curvature, symmetrise, subtract a "
             "background, normalise or fit peaks. Every result is added to this "
             "list as a new dataset carrying the steps that made it.")
-        button_row.addWidget(self.OpenSelectedButton, stretch=1)
+        button_row.addWidget(self.CombineDataButton, stretch=1)
         button_row.addWidget(self.DataOpsButton, stretch=1)
         button_row.addWidget(self.ProcessButton, stretch=1)
         menu_layout.addLayout(button_row)
