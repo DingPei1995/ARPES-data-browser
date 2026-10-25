@@ -684,6 +684,42 @@ def _stepped_axis(thetas, photon_energies, count):
             "index")
 
 
+def _common_energy_length(frames, energies, members, series, notes):
+    """Cut every member to the shortest energy axis of the series.
+
+    A swept-mode hv scan at CASSIOPEE is not one acquisition: the analyser
+    is called once per photon energy, each time with a start and end
+    kinetic energy that is only approximately the window asked for. The
+    number of energy channels therefore wanders by a point or two from
+    member to member -- 341 here, 339 there -- while the data are fine.
+    The members are cut at the end of their energy axis to the shortest of
+    them, so every one still starts where its file says (which is what
+    ``cassiopee.member_kinetic_start_eV`` records) and nothing is
+    interpolated.
+
+    Only a photon-energy series is forgiven this. A fixed-mode hv scan has
+    no such wander, and a polar or repeated series is taken over one
+    window, so a length mismatch there means the files do not belong
+    together and is refused.
+    """
+    lengths = [frame.shape[1] for frame in frames]
+    shortest = min(lengths)
+    if shortest == max(lengths):
+        return frames, energies
+    if series != "hv":
+        odd = next(index for index, length in enumerate(lengths)
+                   if length != lengths[0])
+        raise ValueError(
+            f"{os.path.basename(members[odd][1])} is {frames[odd].shape}, "
+            f"but the first spectrum of the series is {frames[0].shape}; "
+            f"they cannot be one map")
+    notes["cassiopee.energy_points_kept"] = shortest
+    notes["cassiopee.energy_points_trimmed"] = \
+        f"0 to {max(lengths) - shortest} per member, at the end of the axis"
+    return ([frame[:, :shortest] for frame in frames],
+            [np.asarray(energy)[:shortest] for energy in energies])
+
+
 def load_series(path: str, median_filter: bool = False, progress=None,
                 energy_reference: str = "common") -> NxsScan:
     """Assemble the numbered series ``path`` belongs to into one map.
@@ -709,7 +745,7 @@ def load_series(path: str, median_filter: bool = False, progress=None,
         region, parameters = _member_scan(member, median_filter)
         if first is None:
             first = (region, parameters)
-        elif region.values.shape != first[0].values.shape:
+        elif region.values.shape[0] != first[0].values.shape[0]:
             raise ValueError(
                 f"{os.path.basename(member)} is {region.values.shape}, but "
                 f"the first spectrum of the series is "
@@ -723,13 +759,16 @@ def load_series(path: str, median_filter: bool = False, progress=None,
     region, parameters = first
     stepped, role, label, series = _stepped_axis(thetas, photon_energies,
                                                  len(members))
+    notes = {}
+    frames, energies = _common_energy_length(
+        frames, energies, members, series, notes)
     cube = np.stack(frames, axis=0)              # (step, angle, energy)
     energy_label = region.energy_label
-    notes = {}
 
     if series == "hv":
-        cube, energy_axis, energy_label, notes = _refer_to_fermi_level(
+        cube, energy_axis, energy_label, referred = _refer_to_fermi_level(
             cube, energies, photon_energies, energy_reference)
+        notes.update(referred)
         kind = "kz_map"
     else:
         energy_axis = region.energy

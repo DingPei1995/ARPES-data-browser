@@ -14,6 +14,25 @@ file is the record of how it got that way.
 
 (nothing yet)
 
+## 1.0.1 — 2026-10-25
+
+- **Swept-mode kz maps from CASSIOPEE open.** The beamline takes an hv scan
+  by calling the Scienta analyser once per photon energy, each time with a
+  start and end kinetic energy that is only approximately the window asked
+  for, so the members' energy axes differ by a point or two (341 channels
+  in one, 339 in another). The loader refused any series whose spectra were
+  not the same size. A photon-energy series is now cut at the end of the
+  energy axis to its shortest member. Nothing is interpolated, every member
+  keeps its own start energy, and the info panel says how many points were
+  kept (`cassiopee.energy_points_kept`) and trimmed. Fixed-mode hv scans
+  have no such wander and are unchanged. A polar or repeated series of
+  unequal spectra, and any series whose angle channels differ, is still
+  refused.
+- **The real reason is shown when a text file fails to load.** A loader
+  error on a `.txt` file was handed to the NeXus reader as a fallback, and
+  the user saw only "Not an HDF5/NeXus file". The fallback now applies to
+  HDF5 files alone.
+
 ## 1.0.0 — 2026-10-25
 
 The first numbered version. Updates come often, and without a number a user

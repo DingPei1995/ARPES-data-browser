@@ -676,6 +676,12 @@ class NxsData:
         except ValueError:
             if options is not None and getattr(options, "loader", None):
                 raise
+            # Only an HDF5 file can be rescued by the SOLEIL reader. For a
+            # text spectrum it would only replace the loader's real reason
+            # with "Not an HDF5/NeXus file".
+            if not nxs_path.lower().endswith(
+                    (".nxs", ".h5", ".hdf5", ".hdf", ".nx5")):
+                raise
             self.scan = load_soleil_nxs(nxs_path, entry=entry)
         self.kind = self.scan.kind
         self._overview = None

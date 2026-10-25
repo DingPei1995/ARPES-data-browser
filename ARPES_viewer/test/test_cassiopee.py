@@ -417,6 +417,59 @@ def test_an_hv_scan_is_stacked_as_measured(tmp_path):
         assert np.all(scan.value[index] == float(index + 1))
 
 
+def _shorten_member(path, points):
+    """Rewrite one member with ``points`` fewer energy channels, the way a
+    swept-mode hv scan at the beamline comes out: the analyser is called
+    once per photon energy with an approximate window, so the channel count
+    wanders by a point or two."""
+    region = cassiopee.parse_scienta(path, regularise=False)[0]
+    write_spectrum(path, region.energy[:-points], region.angle,
+                   region.values[:, :-points],
+                   excitation_energy=region.info.get("photon_energy_eV",
+                                                     150.0))
+
+
+@pytest.mark.parametrize("mode", cassiopee.ENERGY_REFERENCES)
+def test_a_swept_hv_scan_is_cut_to_its_shortest_member(tmp_path, mode):
+    paths = make_series(str(tmp_path), count=3, shape=(5, 8),
+                        photon_energies=[80.0, 90.0, 100.0], track_hv=True)
+    _shorten_member(paths[2], 2)
+    _shorten_member(paths[1], 1)
+    scan = cassiopee.load_series(paths[0], energy_reference=mode)
+    assert scan.value.shape == (3, 5, 6)
+    assert scan.z.size == 6
+    assert np.all(np.isfinite(scan.value))
+    assert scan.info["cassiopee.energy_points_kept"] == 6
+    if mode != "per_member":
+        # Cut, not resampled: the counts are still exactly what was written.
+        for index in range(3):
+            assert np.all(scan.value[index] == float(index + 1))
+    if mode == "common":
+        # Each member still starts where its file said.
+        assert np.allclose(scan.info["cassiopee.member_kinetic_start_eV"],
+                           [115.6, 125.6, 135.6])
+
+
+def test_a_polar_series_of_unequal_spectra_is_still_refused(tmp_path):
+    """Only an hv scan calls the analyser afresh for every member; a polar
+    map of mismatched spectra is files that do not belong together."""
+    paths = make_series(str(tmp_path), count=3, shape=(5, 8),
+                        thetas=[-1.0, 0.0, 1.0])
+    _shorten_member(paths[2], 2)
+    with pytest.raises(ValueError, match="cannot be one map"):
+        cassiopee.load_series(paths[0])
+
+
+def test_an_hv_series_with_a_different_angle_count_is_refused(tmp_path):
+    paths = make_series(str(tmp_path), count=2,
+                        photon_energies=[80.0, 90.0])
+    region = cassiopee.parse_scienta(paths[1], regularise=False)[0]
+    write_spectrum(paths[1], region.energy, region.angle[:-1],
+                   region.values[:-1], excitation_energy=90.0)
+    with pytest.raises(ValueError, match="cannot be one map"):
+        cassiopee.load_series(paths[0])
+
+
 def test_members_whose_windows_cannot_overlap_are_refused_not_guessed(tmp_path):
     """With per-member referencing, three spectra measured over the same
     kinetic window at 80, 90 and 100 eV sit 20 eV apart in binding energy
