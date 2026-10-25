@@ -139,6 +139,11 @@ class CombineCutsDialog(QDialog):
         labels = self.pieces[0][1] if self.pieces else []
         for index, label in enumerate(labels):
             self.join_combo.addItem(label or f"axis {index + 1}", index)
+        if self.pieces:
+            # Start on the axis the pieces actually differ along, so a cut
+            # taken in two energy windows is not offered "join along angle".
+            self.join_combo.setCurrentIndex(self.join_combo.findData(
+                C.guess_join_axis([axes for axes, _ in self.pieces])))
         self.join_combo.setToolTip(
             "The axis the pieces were split along: a map's scanned "
             "(deflector) axis, a kz map's photon energy, or a cut's energy "

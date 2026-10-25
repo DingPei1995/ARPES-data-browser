@@ -939,17 +939,17 @@ class VolumeProcessDialog(QDialog):
         form.addRow("Work on", self._watch(self.plane_normal))
 
         self.plane_operation = QComboBox()
-        self.plane_operation.addItems([
-            "Gaussian smooth", "Savitzky-Golay smooth", "Remove spikes",
-            "Second derivative (first axis)", "Second derivative (second axis)",
-            "Curvature 2D", "Curvature 1D (first axis)",
-            "Curvature 1D (second axis)", "Normalise each line"])
+        # Named after the plane's real axes (filled in by _plane_changed),
+        # not "first axis"/"second axis", which left the user to work out
+        # which of the plane's two axes the program counts first.
+        self.plane_operation.addItems([""] * len(self.PLANE_OPERATIONS))
         form.addRow("Operation", self._watch(self.plane_operation))
 
         self.plane_width_u = spin(0.0, 0.0, 1e4, 0.001, 5)
         self.plane_width_v = spin(0.0, 0.0, 1e4, 0.001, 5)
-        form.addRow("Width, first axis", self._watch(self.plane_width_u))
-        form.addRow("Width, second axis", self._watch(self.plane_width_v))
+        form.addRow("Width along u", self._watch(self.plane_width_u))
+        form.addRow("Width along v", self._watch(self.plane_width_v))
+        self._plane_form = form
         self.plane_a0 = QDoubleSpinBox()
         self.plane_a0.setDecimals(6)
         self.plane_a0.setRange(1e-6, 1e6)
@@ -958,12 +958,40 @@ class VolumeProcessDialog(QDialog):
         self.plane_norm_mode = QComboBox()
         self.plane_norm_mode.addItems(["area", "max", "mean"])
         form.addRow("Normalise to", self._watch(self.plane_norm_mode))
+        self.plane_normal.currentIndexChanged.connect(self._plane_changed)
+        self._plane_changed()
         note = QLabel("<i>Applied plane by plane, so a curvature of "
                       "constant-energy maps and a curvature of dispersions "
                       "are separate choices rather than the same button.</i>")
         note.setWordWrap(True)
         form.addRow("", note)
         return page
+
+    #: The plane-wise operations, in menu order; ``{u}``/``{v}`` are the
+    #: plane's two axes.
+    PLANE_OPERATIONS = (
+        "Gaussian smooth", "Savitzky-Golay smooth", "Remove spikes",
+        "Second derivative along {u}", "Second derivative along {v}",
+        "Curvature 2D", "Curvature 1D along {u}", "Curvature 1D along {v}",
+        "Normalise each line along {u}", "Normalise each line along {v}")
+
+    def _plane_changed(self, *_):
+        """Relabel the operations and widths with the new plane's axes, and
+        start the widths at 1/100 of each axis -- the 2-D panel's default --
+        so that a smooth applied straight away does something."""
+        dim = self.plane_normal.currentData()
+        u, v = [self.labels[d].split(" (")[0] for d in range(3) if d != dim]
+        for index, text in enumerate(self.PLANE_OPERATIONS):
+            self.plane_operation.setItemText(index, text.format(u=u, v=v))
+        for box, name, axis in ((self.plane_width_u, u, self._plane_axes(dim)[0]),
+                                (self.plane_width_v, v, self._plane_axes(dim)[1])):
+            self._plane_form.labelForField(box).setText(f"Width along {name}")
+            span = float(abs(axis[-1] - axis[0])) if axis.size > 1 else 1.0
+            box.blockSignals(True)
+            box.setMaximum(max(span, 1e-6))
+            box.setSingleStep(max(span / 200, 1e-5))
+            box.setValue(span / 100)
+            box.blockSignals(False)
 
     def _symmetry_tab(self):
         page = QWidget()
@@ -1035,17 +1063,17 @@ class VolumeProcessDialog(QDialog):
                 return P.curvature(plane, axes, mode="x", a0=a0)
             if choice == 7:
                 return P.curvature(plane, axes, mode="y", a0=a0)
-            return P.normalise(plane, axes, 0, mode=mode)
+            return P.normalise(plane, axes, 0 if choice == 8 else 1, mode=mode)
 
         if choice in (0, 1):
             params.update({"width_u": widths[0], "width_v": widths[1]})
         if choice in (5, 6, 7):
             params["a0"] = a0
-        if choice == 8:
+        if choice in (8, 9):
             params["mode"] = mode
         key = {0: "smooth", 1: "smooth", 2: "despike", 3: "derivative",
                4: "derivative", 5: "curvature", 6: "curvature",
-               7: "curvature", 8: "normalise"}[choice]
+               7: "curvature", 8: "normalise", 9: "normalise"}[choice]
         return key, params, dim, run
 
     def _mirror_angles(self):

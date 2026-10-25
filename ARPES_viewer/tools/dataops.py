@@ -109,8 +109,44 @@ def truncate(values, axes, bounds, by_index: bool = False):
 # --------------------------------------------------------------------------
 # Self-normalisation
 # --------------------------------------------------------------------------
+#: The usual ways to self-normalise each kind, as ``(name, dims)`` with the
+#: conventional one first -- that one is what the dialog starts on. ``dims``
+#: are array dimensions (see ``ARRAY_AXES``). A cut is normalised spectrum by
+#: spectrum; a cube is normalised cut by cut, i.e. every (slit, energy)
+#: plane at one deflector angle / photon energy by its own total, which is
+#: what takes a flux or beam-current drift along the scan out of it.
+NORMALISE_PRESETS = {
+    "cut": (("each EDC (spectrum at one angle)", (1,)),
+            ("each MDC (one energy)", (0,)),
+            ("the whole cut", (0, 1))),
+    "spem_1d": (("each cut (angle × energy at one position)", (1, 2)),
+                ("each EDC", (2,))),
+    "spem_4d": (("each cut (at one pixel)", (2, 3)),
+                ("each EDC", (3,)),
+                ("each image (at one k, E)", (0, 1))),
+    "edc": (("each channel", (0,)),),
+    "mdc": (("each channel", (0,)),),
+    "spin_edc": (("each channel", (0,)),),
+}
+for _kind in ("map", "k_map", "kz_map", "kz_map_k"):
+    NORMALISE_PRESETS[_kind] = (
+        ("each cut (slit × energy at one scan step)", (1, 2)),
+        ("each EDC", (2,)),
+        ("each MDC (along the slit)", (1,)),
+        ("each constant-energy map", (0, 1)))
+del _kind
+
+
+def normalise_presets(kind: str, ndim: int):
+    """The :data:`NORMALISE_PRESETS` for ``kind``, or -- for a kind not in
+    the table -- line by line along the last axis, which is the energy for
+    every kind the program reads."""
+    return NORMALISE_PRESETS.get(kind, (("each line along the last axis",
+                                         (ndim - 1,)),))
+
+
 def self_normalize(values, axes, dims, *, window=None, by_index: bool = False,
-                   to_peak: bool = False):
+                   to_peak: bool = False, window_dim=None):
     """Divide the data by its own intensity, line by line or plane by plane.
 
     ``dims`` names the directions the normalisation runs *along*: one axis
@@ -119,8 +155,9 @@ def self_normalize(values, axes, dims, *, window=None, by_index: bool = False,
     plane by the plane's total. This is what takes a beam-current drift, or
     a detector whose sensitivity falls off along the slit, out of a scan.
 
-    ``window`` is an optional ``(lo, hi)`` on the *first* named axis
-    restricting which points are summed (energies inside a core level, say);
+    ``window`` is an optional ``(lo, hi)`` restricting which points are
+    summed (energies inside a core level, say), on ``window_dim`` -- one of
+    ``dims``, the first of them if not given;
     ``to_peak`` divides by the maximum instead of the sum. NaNs are excluded
     from the sums and put back afterwards, so a missing point neither
     poisons its line nor is invented.
@@ -135,11 +172,14 @@ def self_normalize(values, axes, dims, *, window=None, by_index: bool = False,
     finite = np.isfinite(values)
     filled = np.where(finite, values, 0.0)
 
-    if window is not None and window != (None, None):
-        axis = axes[dims[0]]
-        sl = resolve_bounds(axis, window[0], window[1], by_index)
+    if window is not None and tuple(window) != (None, None):
+        on = dims[0] if window_dim is None else int(window_dim) % values.ndim
+        if on not in dims:
+            raise ValueError("the window must be on one of the directions "
+                             "normalised along")
+        sl = resolve_bounds(axes[on], window[0], window[1], by_index)
         index = [slice(None)] * values.ndim
-        index[dims[0]] = sl
+        index[on] = sl
         region = filled[tuple(index)]
     else:
         region = filled

@@ -48,7 +48,7 @@ from tools.fermi import (PARAMETERS, PARAMETER_LABELS, K_B, initial_guess,
                        fermi_edge_model, fit_fermi_edge, fit_channels,
                        divide_fermi)
 from tools.dataops import (truncate, self_normalize, compress, ARRAY_AXES,
-                        CONSTRUCTOR_AXES)
+                        CONSTRUCTOR_AXES, normalise_presets)
 from loader.cubecache import CubeCache
 from loader.nxs_file import CUBE_KINDS, CURVE_KINDS, MOMENTUM_KINDS, energy_slot
 
@@ -1450,8 +1450,11 @@ class KConversionDialog(QDialog):
         self.azimuth_box = self._angle_box(
             "Sample rotation about the surface normal. Leave at 0 unless the "
             "sample's axes are rotated against the analyser's.")
-        form.addRow("Theta offset (deg)", self.theta_box)
-        form.addRow("Phi offset (deg)", self.phi_box)
+        # Called by what they are -- where Gamma sits on each angle axis --
+        # and named as in the cut conversion, which asks for the same two
+        # numbers. (They were "theta/phi offset", after the MATLAB dialog.)
+        form.addRow("Γ deflector angle (deg)", self.theta_box)
+        form.addRow("Γ slit angle (deg)", self.phi_box)
         form.addRow("Sample rotation (deg)", self.azimuth_box)
 
         self.rotation_button = QPushButton("Set rotation from contour...")
@@ -1497,7 +1500,7 @@ class KConversionDialog(QDialog):
         # two is always disabled, so there is never a pair of numbers
         # disagreeing about the same axis.
         n_e = len(contour.E)
-        self.by_count = QRadioButton("by element number")
+        self.by_count = QRadioButton("by number of points")
         self.by_resolution = QRadioButton("by resolution")
         self.by_count.setChecked(True)
         mode_row = QWidget()
@@ -1508,14 +1511,22 @@ class KConversionDialog(QDialog):
         mode_box.addStretch(1)
         form.addRow("Output grid", mode_row)
 
-        self.nkx_box = self._count_box(100, "Number of kx points in the output.")
-        self.nky_box = self._count_box(100, "Number of ky points in the output.")
+        # As many points as were measured along each angle, as the cut
+        # conversion does: a fixed 100 threw away most of a slit's channels.
+        n_defl = max(len(contour.angle_defl), 2)
+        n_slit = max(len(contour.angle_slit), 2)
+        self.nkx_box = self._count_box(
+            n_defl, f"Number of kx points. Defaults to the measured {n_defl} "
+                    f"deflector angles.")
+        self.nky_box = self._count_box(
+            n_slit, f"Number of ky points. Defaults to the measured {n_slit} "
+                    f"slit angles.")
         self.ne_box = self._count_box(
             n_e, f"Number of energy points. Defaults to the measured {n_e}; "
                  f"lower it to shrink the result.")
-        form.addRow("kx element no.", self.nkx_box)
-        form.addRow("ky element no.", self.nky_box)
-        form.addRow("E element no.", self.ne_box)
+        form.addRow("kx points", self.nkx_box)
+        form.addRow("ky points", self.nky_box)
+        form.addRow("E points", self.ne_box)
 
         self.dkx_box = self._resolution_box(0.01, 4, "\u00c5\u207b\u00b9",
                                             "Spacing between kx points.")
@@ -1756,7 +1767,7 @@ class KConversionDialog(QDialog):
             box.setValue(float(value))
             box.blockSignals(False)
         self.note.setText(f"Origin taken from the cursor: "
-                          f"theta {theta:.4g} deg, phi {phi:.4g} deg.")
+                          f"deflector {theta:.4g} deg, slit {phi:.4g} deg.")
         if mark:
             self._user_edited = True
 
@@ -4788,11 +4799,11 @@ class CutKConversionDialog(QDialog):
         gamma.addRow("", self.map_button)
 
         self.gamma_defl = self._angle_box(
-            "Deflector angle at which Γ was observed. This is the Map "
-            "conversion's \"theta offset\".")
+            "Deflector angle at which Γ was observed -- the same number "
+            "as the Map conversion's.")
         self.gamma_slit = self._angle_box(
-            "Angle along the slit at which Γ was observed. This is the "
-            "Map conversion's \"phi offset\".")
+            "Angle along the slit at which Γ was observed -- the same "
+            "number as the Map conversion's.")
         self.azimuth_box = self._angle_box(
             "Sample rotation about the surface normal, as in the Map "
             "conversion.")
@@ -4842,7 +4853,7 @@ class CutKConversionDialog(QDialog):
         self.name_box = QLineEdit(self._default_name())
         out.addRow("Name", self.name_box)
 
-        self.by_count = QRadioButton("by element number")
+        self.by_count = QRadioButton("by number of points")
         self.by_resolution = QRadioButton("by resolution")
         self.by_count.setChecked(True)
         mode_row = QWidget()
@@ -4860,8 +4871,8 @@ class CutKConversionDialog(QDialog):
             f"angles.")
         self.ne_box = self._count_box(
             n_e, f"Number of energy points. Defaults to the measured {n_e}.")
-        out.addRow("k element no.", self.nk_box)
-        out.addRow("E element no.", self.ne_box)
+        out.addRow("k points", self.nk_box)
+        out.addRow("E points", self.ne_box)
 
         self.dk_box = self._resolution_box(0.01, 4, "Å⁻¹",
                                            "Spacing between k points.")
@@ -5805,31 +5816,59 @@ class DataOperationsDialog(QDialog):
         return page
 
     def _normalise_tab(self) -> QWidget:
+        """Choose what is divided by its own intensity.
+
+        The preset says it in ARPES terms (each EDC, each cut...) and ticks
+        the axes for it; the ticks stay editable for anything else. The
+        sentence under them spells out what the current ticks do, because
+        "along" alone was read as "the axis that is kept" and the opposite
+        normalisation was applied without anyone noticing.
+        """
         page = QWidget()
         form = QFormLayout(page)
+        self.norm_presets = normalise_presets(self.kind, len(self.axes))
+        self.norm_preset = QComboBox()
+        for text, dims in self.norm_presets:
+            self.norm_preset.addItem(text)
+        self.norm_preset.addItem("custom (tick the axes below)")
+        self.norm_preset.setToolTip(
+            "What is divided by its own total. The first entry is the usual "
+            "choice for this kind of data: each EDC for a cut, each cut "
+            "(slit × energy) for a map or kz map.")
+        form.addRow("Normalise", self.norm_preset)
+
         self.norm_checks = []
         directions = QWidget()
         box = QHBoxLayout(directions)
         box.setContentsMargins(0, 0, 0, 0)
         for i, label in enumerate(self.axis_labels):
-            check = QCheckBox(label.split(" (")[0])
+            check = QCheckBox(self._short_label(i))
             check.setToolTip(
-                "Tick one axis to divide every line along it by that line's own "
-                "total; tick two to divide every plane by the plane's total.")
+                "The axes summed over. Tick one axis to divide every line "
+                "along it by that line's own total; tick two to divide every "
+                "plane by the plane's total.")
+            check.toggled.connect(self._norm_checks_changed)
             box.addWidget(check)
             self.norm_checks.append(check)
         box.addStretch(1)
-        form.addRow("Along", directions)
+        form.addRow("Summed over", directions)
+        self.norm_explain = QLabel("")
+        self.norm_explain.setWordWrap(True)
+        form.addRow("", self.norm_explain)
 
         window = QWidget()
         wbox = QHBoxLayout(window)
         wbox.setContentsMargins(0, 0, 0, 0)
+        self.norm_window_axis = QComboBox()
+        self.norm_window_axis.setToolTip(
+            "The axis the window below is on: one of the axes summed over.")
+        wbox.addWidget(self.norm_window_axis)
         self.norm_from, self.norm_to = QLineEdit(), QLineEdit()
         for edit, which in ((self.norm_from, "from"), (self.norm_to, "to")):
             edit.setPlaceholderText(which)
             edit.setMaximumWidth(90)
             edit.setToolTip(
-                "Optional: only these points of the first ticked axis are summed "
+                "Optional: only these points of the chosen axis are summed "
                 "to make the normalisation. Blank means all of them.")
             wbox.addWidget(edit)
         self.norm_by_value = QRadioButton("by value")
@@ -5838,11 +5877,68 @@ class DataOperationsDialog(QDialog):
         wbox.addWidget(self.norm_by_value)
         wbox.addWidget(self.norm_by_index)
         wbox.addStretch(1)
-        form.addRow("Window", window)
+        form.addRow("Sum only over", window)
 
         self.norm_to_peak = QCheckBox("normalise to the peak instead of the sum")
+        self.norm_to_peak.toggled.connect(self._norm_checks_changed)
         form.addRow("", self.norm_to_peak)
+
+        self.norm_preset.currentIndexChanged.connect(self._norm_preset_changed)
+        self._norm_preset_changed()
         return page
+
+    def _short_label(self, index: int) -> str:
+        return self.axis_labels[index].split(" (")[0]
+
+    def _norm_dims(self):
+        return [i for i, check in enumerate(self.norm_checks) if check.isChecked()]
+
+    def _norm_preset_changed(self, *_):
+        index = self.norm_preset.currentIndex()
+        if not 0 <= index < len(self.norm_presets):
+            return                                  # custom: keep the ticks
+        dims = self.norm_presets[index][1]
+        for i, check in enumerate(self.norm_checks):
+            check.blockSignals(True)
+            check.setChecked(i in dims)
+            check.blockSignals(False)
+        self._norm_checks_changed()
+
+    def _norm_checks_changed(self, *_):
+        dims = self._norm_dims()
+        # Ticks that match a preset show it; anything else is "custom".
+        match = next((i for i, (_, preset) in enumerate(self.norm_presets)
+                      if tuple(preset) == tuple(dims)), len(self.norm_presets))
+        self.norm_preset.blockSignals(True)
+        self.norm_preset.setCurrentIndex(match)
+        self.norm_preset.blockSignals(False)
+
+        previous = self.norm_window_axis.currentData()
+        self.norm_window_axis.clear()
+        for d in dims:
+            self.norm_window_axis.addItem(self._short_label(d), d)
+        # The window is nearly always an energy range, and energy is the last
+        # array axis of every kind, so prefer it when it is ticked.
+        keep = self.norm_window_axis.findData(previous)
+        self.norm_window_axis.setCurrentIndex(
+            keep if keep >= 0 else self.norm_window_axis.count() - 1)
+
+        what = "maximum" if self.norm_to_peak.isChecked() else "total"
+        if not dims:
+            text = "Tick the axes to sum over, or pick a preset above."
+        elif len(dims) > 2:
+            text = "Sum over one axis (lines) or two (planes), not three."
+        elif len(dims) == len(self.norm_checks):
+            text = f"The whole dataset is divided by its own {what}."
+        else:
+            kept = [self._short_label(i) for i in range(len(self.norm_checks))
+                    if i not in dims]
+            shape = "line" if len(dims) == 1 else "plane"
+            text = (f"Each {shape} over "
+                    f"{' × '.join(self._short_label(d) for d in dims)} is divided "
+                    f"by its own {what} — one factor for every "
+                    f"{' and '.join(kept)}.")
+        self.norm_explain.setText(f"<i>{text}</i>")
 
     def _compress_tab(self) -> QWidget:
         page = QWidget()
@@ -5970,22 +6066,28 @@ class DataOperationsDialog(QDialog):
         return truncate(values, axes, bounds, by_index=by_index)
 
     def _apply_normalise(self, payload, probe: bool = False):
-        dims = [i for i, check in enumerate(self.norm_checks) if check.isChecked()]
+        dims = self._norm_dims()
         window = (self._number(self.norm_from), self._number(self.norm_to))
+        window_dim = self.norm_window_axis.currentData()
         by_index = self.norm_by_index.isChecked()
         to_peak = self.norm_to_peak.isChecked()
         if probe:
             if not dims:
-                raise ValueError("Tick the axis (or two axes) to normalise along.")
+                raise ValueError("Tick the axis (or two axes) to sum over.")
             if len(dims) > 2:
-                raise ValueError("Normalise along one axis (lines) or two (planes), "
-                                 "not three -- that would divide the data by itself.")
-            return {"along": [self.axis_names[d] for d in dims],
-                    "window": list(window), "by": "index" if by_index else "value",
-                    "to_peak": bool(to_peak)}
+                raise ValueError("Sum over one axis (lines) or two (planes), "
+                                 "not three.")
+            settings = {"along": [self.axis_names[d] for d in dims],
+                        "window": list(window),
+                        "by": "index" if by_index else "value",
+                        "to_peak": bool(to_peak)}
+            if window != (None, None) and window_dim is not None:
+                settings["window_on"] = self.axis_names[window_dim]
+            return settings
         values, axes = payload
         return (self_normalize(values, axes, dims, window=window,
-                               by_index=by_index, to_peak=to_peak), axes)
+                               by_index=by_index, to_peak=to_peak,
+                               window_dim=window_dim), axes)
 
     def _apply_compress(self, payload, probe: bool = False):
         factors = [spin.value() for spin in self.compress_boxes]

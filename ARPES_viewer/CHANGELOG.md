@@ -14,6 +14,55 @@ file is the record of how it got that way.
 
 (nothing yet)
 
+## 1.0.2 — 2026-10-25
+
+Every tool now opens on the conventional setting, and settings say what
+they do.
+
+- **Self-normalisation starts on the usual choice, and says what it does.**
+  *Crop / bin / normalise → Normalise* opened with no axis ticked, and its
+  "Along" was easy to read as "the axis that is kept". Ticking only the
+  energy of a map therefore normalised each EDC when each cut (slit ×
+  energy) was meant, and nothing warned about it. Results made that way
+  should be redone. A **Normalise** menu now picks the piece in ARPES
+  terms. It starts on *each EDC* for a cut and on *each cut (slit × energy
+  at one scan step)* for a map, k-map or kz map. Each kind also offers its
+  other sensible choices, and *custom* for anything else. The ticks are now
+  called **Summed over** and can still be changed by hand. A sentence under
+  them says what the current ticks do. The energy window (**Sum only
+  over**) used to apply silently to the first ticked axis; it now names its
+  axis and starts on the energy.
+- **The 3-D panel's smoothing does something when applied straight away.**
+  Its widths started at 0, which left the data unchanged. They now start at
+  1/100 of each axis, like the 2-D panel's. *First axis* and *second axis*
+  are replaced by the plane's real axis names (*Second derivative along
+  Kinetic energy*). *Normalise each line* now says which way the lines run,
+  and offers both directions.
+- **Symmetrise mirrors k, not energy.** The 2-D mirror line started at 0°,
+  which flips a cut top to bottom in energy. It now starts at 90° through
+  angle (or k) = 0, i.e. k → −k.
+- **The Fermi cut-off starts at an E_F on the axis.** It started at 0 eV,
+  which is wrong for a kinetic-energy cut. It now uses the E_F, temperature
+  and resolution the file records, as the MDC/EDC fit panel does. When no
+  E_F is recorded, it uses the steepest fall of the angle-integrated EDC.
+- **The map k conversion keeps the measured resolution.** kx and ky
+  defaulted to 100 points each, which threw away most of a slit's channels.
+  They now start at the measured numbers of deflector and slit angles, as
+  the cut conversion already did. *Theta offset / Phi offset* are renamed
+  **Γ deflector angle / Γ slit angle**, the names the cut conversion uses
+  for the same two numbers. *k element no.* is now **k points**, and *by
+  element number* is now **by number of points**.
+- **Joining starts on the axis the pieces differ along**
+  (`tools.combine.guess_join_axis`). Cuts taken in two energy windows used
+  to be offered "join along angle".
+
+Tests: `test/test_defaults.py`. `test/conftest.py` now keeps the first
+QApplication for the whole session. Each GUI module's own `app` fixture
+used to let it be destroyed and re-made between modules. A widget still
+alive at that point (here the processing dialogs, held by a queued
+`QTimer.singleShot`) made a later module crash with a segmentation fault.
+The program itself only ever has one QApplication.
+
 ## 1.0.1 — 2026-10-25
 
 - **Swept-mode kz maps from CASSIOPEE open.** The beamline takes an hv scan

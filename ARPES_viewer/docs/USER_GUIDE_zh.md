@@ -2,7 +2,7 @@
 
 *[English version / 英文版](USER_GUIDE_en.md) · [Version française / 法文版](USER_GUIDE_fr.md)*
 
-*最后更新：2026 年 10 月 25 日——对应 ARPES viewer v1.0.0*
+*最后更新：2026 年 10 月 25 日——对应 ARPES viewer v1.0.2*
 
 程序的版本号和更新日期显示在主窗口标题栏和主窗口最下方。报告 bug、提问或获取最新版本：
 <https://github.com/DingPei1995/ARPES-data-browser>（报告 bug 时请注明版本号）。
@@ -171,8 +171,8 @@ map)* 和 *Convert to momentum (kz, k∥)*（见[第 13 节](#13-光子能量扫
 
 1. 选中各段（全是 map，或全是 kz map，或全是 cut……），点 **Combine datasets...**。
    map 和 kz map 直接进入 *Join*。
-2. **Join along**：测量被分段的那个轴——map 默认是扫描（偏转角）轴，kz map 默认是
-   光子能量；对 cut 可选择角度轴或能量轴。
+2. **Join along**：测量被分段的那个轴。默认选中各段之间范围不同的那个轴——map 的
+   偏转角轴、kz map 的光子能量，或分两个能量窗口采集的 cut 的能量轴——通常无需改动。
 3. **Where pieces overlap**（重叠部分）：*Average them*（取平均），或按下方列表的
    顺序保留较早 / 较晚的一段（拖动各行可改变顺序）。
 4. 对话框列出每一段的范围，并给出 **Result**（拼接后的范围和点数），以及处理过程中
@@ -435,9 +435,13 @@ cut**），此时等能面窗口保持隐藏，需要时用 *Functions → Show 
 
 ![Map k 转换](images/map_k_dialog.png)
 
+- **Γ deflector angle / Γ slit angle**：将成为 k = (0, 0) 的那一点的两个角度，
+  由读数光标自动填入。（原名 *Theta offset* / *Phi offset*；与 cut 转换中要求的是
+  同样两个数。）
 - **Sample rotation** 绕表面法线旋转 map；**Set rotation from contour...** 通过在
   等能面上点击一个方向（例如沿镜面线的两点）读出旋转角。
-- **Output grid**：按点数或按分辨率（Å⁻¹、meV）设置输出网格。
+- **Output grid**：按点数或按分辨率（Å⁻¹、meV）设置输出网格。点数默认等于实测
+  点数——kx 点数 = 偏转角数，ky 点数 = 狭缝角数，E 点数 = 能量点数。
 - **Energy offset** 在转换前加到能量轴上，用于能量轴不是真实动能的情况
   （对 E − E_F 的 map 会自动填好）。
 
@@ -511,16 +515,33 @@ segment** 可让每一段分别成为一个数据集。
   *Equal axes*（两轴单位长度相同——适合角度-角度或 k-k 图，两轴单位相同时自动
   选用）、*Fill the box*（填满窗口）。
 - **Live preview** 在修改参数时实时重算；**Apply** 把结果加入列表。
+- 初始值：**Symmetrise** 默认以过角度（或 k）= 0 的竖直线为镜面，即 k → −k；
+  *Background* 中的 **Fermi cut-off** 的 E_F 取文件记录的值，若没有则取角积分 EDC
+  下降最陡处，温度和分辨率也从文件读取。
 
 对 map，处理按平面进行，并首先询问**作用于哪组平面**——等能面还是色散切面，
 因为等能面的曲率与 cut 的曲率是不同的物理量。**Preview at** 选择预览的平面；
-**Apply to the whole cube** 对所有平面执行。
+**Apply to the whole cube** 对所有平面执行。各操作和宽度以所选平面的真实轴名标注
+（如 *Second derivative along Kinetic energy*、*Normalise each line along Angle,
+slit*），平滑宽度默认取各轴范围的 1/100。
 
 ![三维处理](images/volume_process_dialog.png)
 
 主窗口的 **Crop / bin / normalise...** 可同时改变一个或多个数据集的网格或标度——
 前提是它们类型相同，且各轴点数一致。各页：**Crop (truncate)** 裁剪到某一范围、
 **Normalise** 每张谱自归一、**Bin (compress)** 合并像素。
+
+**Normalise** 把数据的每一部分除以它自身的总强度（或峰值）：
+
+- **Normalise** 下拉框用 ARPES 的说法选择“每一部分”是什么，并默认选常规做法：
+  cut 默认 *each EDC*（每条 EDC），map、k-map、kz map 默认 *each cut (slit ×
+  energy at one scan step)*（每张 cut 各自归一，可去除扫描过程中光通量或束流的
+  漂移）。其他选项：每条 MDC、map 的每条 EDC、每张等能面，或 *custom*（自定义）。
+- **Summed over** 显示求和所沿的轴，可以手动勾选；下方的一句话说明当前勾选的
+  效果（例如 “Each plane over Angle, slit × Kinetic energy is divided by its own
+  total — one factor for every Angle, deflector”）。
+- **Sum only over** 把求和限制在某个求和轴上的一个窗口内——默认是能量轴——例如
+  只用某个芯能级的能量范围。
 
 ![裁剪 / 合并 / 归一](images/data_operations.png)
 

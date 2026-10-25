@@ -2,7 +2,7 @@
 
 *[English version](USER_GUIDE_en.md) · [中文版](USER_GUIDE_zh.md)*
 
-*Dernière mise à jour : 25 octobre 2026 — pour ARPES viewer v1.0.0*
+*Dernière mise à jour : 25 octobre 2026 — pour ARPES viewer v1.0.2*
 
 La version et sa date figurent dans la barre de titre et en bas de la fenêtre
 principale. Signaler un bogue, poser une question, obtenir la dernière version :
@@ -202,9 +202,10 @@ qu'aucune conversion en k n'est proposée.
 1. Sélectionnez les morceaux (toutes des cartes, ou toutes des cartes kz, ou
    toutes des coupes …) et cliquez sur **Combine datasets...**. Les cartes et
    cartes kz passent directement à *Join*.
-2. **Join along** : l'axe selon lequel la mesure a été découpée — par défaut
-   l'axe balayé (déflecteur) d'une carte ou l'énergie de photon d'une carte
-   kz ; pour des coupes, choisissez l'axe angulaire ou l'axe d'énergie.
+2. **Join along** : l'axe selon lequel la mesure a été découpée. Il part de
+   l'axe dont l'étendue diffère d'un morceau à l'autre — l'axe déflecteur
+   d'une carte, l'énergie de photon d'une carte kz, ou l'énergie de coupes
+   prises en deux fenêtres d'énergie — et il est donc en général déjà juste.
 3. **Where pieces overlap** : *Average them* (moyenne), ou garder le morceau
    le plus tôt / le plus tard dans l'ordre affiché (faites glisser les lignes
    pour le changer).
@@ -543,11 +544,17 @@ fenêtre le suit — puis **Convert**. Le résultat est une nouvelle ligne
 
 ![Conversion en k d'une carte](images/map_k_dialog.png)
 
+- **Γ deflector angle / Γ slit angle** : les angles du point qui devient
+  k = (0, 0), remplis depuis le curseur. (Ils s'appelaient *Theta offset* et
+  *Phi offset* ; ce sont les deux mêmes nombres que demande la conversion
+  d'une coupe.)
 - **Sample rotation** fait tourner la carte autour de la normale à la
   surface ; **Set rotation from contour...** la déduit d'une direction
   cliquée sur le contour (deux points le long d'une ligne de symétrie, par
   exemple).
-- **Output grid** : nombre de points, ou résolution (Å⁻¹, meV).
+- **Output grid** : nombre de points, ou résolution (Å⁻¹, meV). Les nombres
+  de points partent de ceux de la mesure — autant de points kx que d'angles
+  déflecteur, de points ky que d'angles de fente, de points E que d'énergies.
 - **Energy offset** est ajouté à l'axe en énergie avant la conversion, pour
   un axe qui n'est pas une vraie énergie cinétique (rempli automatiquement
   pour une carte en E − E_F).
@@ -635,12 +642,19 @@ trace des étapes qui l'ont produit.
   automatiquement quand les deux axes ont la même unité), ou *Fill the box*.
 - **Live preview** recalcule à chaque changement de valeur ; **Apply** ajoute
   le résultat à la liste.
+- Valeurs de départ : **Symmetrise** fait un miroir par rapport à une droite
+  verticale passant par angle (ou k) = 0, c.-à-d. k → −k ; la **Fermi
+  cut-off** de *Background* part de l'E_F enregistré dans le fichier, sinon
+  de la chute la plus raide de l'EDC intégrée en angle, avec la température
+  et la résolution du fichier.
 
 Pour une carte, le panneau travaille plan par plan et demande d'abord **sur
 quels plans** — contours à énergie constante ou dispersions — car la courbure
 d'un contour et celle d'une coupe sont des grandeurs différentes. **Preview
 at** choisit le plan affiché ; **Apply to the whole cube** traite tous les
-plans.
+plans. Les opérations et les largeurs portent le nom des axes du plan choisi
+(*Second derivative along Kinetic energy*, *Normalise each line along
+Angle, slit*…), et les largeurs de lissage partent de 1/100 de chaque axe.
 
 ![Traitement 3D](images/volume_process_dialog.png)
 
@@ -649,6 +663,23 @@ l'échelle d'un ou plusieurs jeux de données à la fois — à condition qu'ils
 soient du même type et aient le même nombre de points sur chaque axe.
 Onglets : **Crop (truncate)** rogne à un intervalle, **Normalise** normalise
 chaque spectre sur lui-même, **Bin (compress)** regroupe des points.
+
+**Normalise** divise chaque morceau des données par son propre total (ou
+son maximum) :
+
+- **Normalise** choisit le morceau en termes d'ARPES et part du choix
+  habituel : *each EDC* pour une coupe, *each cut (slit × energy at one scan
+  step)* pour une carte, une carte k ou une carte kz — ce qui retire une
+  dérive du flux ou du courant faisceau le long du balayage. Autres choix :
+  chaque MDC, chaque EDC d'une carte, chaque carte à énergie constante, ou
+  *custom*.
+- **Summed over** montre les axes sur lesquels on somme ; les cases peuvent
+  être changées à la main, et la phrase en dessous dit ce qu'elles font
+  (« Each plane over Angle, slit × Kinetic energy is divided by its own
+  total — one factor for every Angle, deflector »).
+- **Sum only over** restreint la somme à une fenêtre sur l'un des axes
+  sommés — l'énergie par défaut — par exemple les énergies d'un niveau de
+  cœur.
 
 ![Rogner / regrouper / normaliser](images/data_operations.png)
 

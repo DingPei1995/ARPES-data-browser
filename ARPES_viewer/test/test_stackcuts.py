@@ -186,7 +186,7 @@ def test_launcher_joins_cuts_split_in_energy(app, monkeypatch):
 
     def run(dialog):
         dialog.set_mode("join")
-        dialog.join_combo.setCurrentIndex(1)            # the energy axis
+        assert dialog.join_axis() == 1                  # guessed: energy
         assert "Result" in dialog.join_summary.text()
         return True
 

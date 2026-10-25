@@ -715,9 +715,10 @@ class ProcessDialog(QDialog):
 
         group = QGroupBox("Fermi cut-off")
         fd = QFormLayout(group)
-        self.fd_ef = spin(0.0, -1e4, 1e4, 0.01, 4, " eV")
-        self.fd_temp = spin(30.0, 0.1, 1000.0, 5.0, 1, " K")
-        self.fd_res = spin(0.015, 0.0, 1.0, 0.005, 4, " eV")
+        ef, temperature, resolution = self._fermi_start()
+        self.fd_ef = spin(ef, -1e4, 1e4, 0.01, 4, " eV")
+        self.fd_temp = spin(temperature, 0.1, 1000.0, 5.0, 1, " K")
+        self.fd_res = spin(resolution, 0.0, 1.0, 0.005, 4, " eV")
         self.fd_cut = spin(4.0, 1.0, 12.0, 0.5, 1, " kT")
         fd.addRow("E_F", self._watch(self.fd_ef))
         fd.addRow("Temperature", self._watch(self.fd_temp))
@@ -728,6 +729,27 @@ class ProcessDialog(QDialog):
                              "noise.</i>"))
         form.addRow(group)
         return page
+
+    def _fermi_start(self):
+        """``(E_F, T, resolution)`` to start the Fermi cut-off from.
+
+        What the file says, as the MDC/EDC fit panel reads it; and when that
+        leaves E_F off the energy axis altogether -- a kinetic-energy cut
+        with no recorded E_F, where the old fixed 0 eV was simply wrong --
+        the steepest fall of the angle-integrated EDC instead.
+        """
+        from ui.fit import fermi_defaults
+        from tools.fermi import initial_guess
+        ef, temperature, resolution = fermi_defaults(self.datasets[0][1])
+        energy = self.axes[1]
+        if energy.size and not (np.nanmin(energy) <= ef <= np.nanmax(energy)):
+            try:
+                with np.errstate(all="ignore"):
+                    edc = np.nanmean(self.values, axis=0)
+                ef = float(initial_guess(energy, edc, temperature)["ef"])
+            except (ValueError, IndexError):
+                pass
+        return ef, temperature, resolution if resolution > 0 else 0.015
 
     def _symmetry_tab(self):
         """Mirror the data about one line.
@@ -744,15 +766,23 @@ class ProcessDialog(QDialog):
         page = QWidget()
         form = QFormLayout(page)
 
-        self.sym_angle = spin(0.0, -180.0, 180.0, 15.0, 2, "°")
+        # 90°: a vertical line, i.e. k -> -k on a cut. The old 0° mirrored
+        # the energy axis, which is not a symmetry of anything.
+        self.sym_angle = spin(90.0, -180.0, 180.0, 15.0, 2, "°")
         self.sym_angle.setToolTip(
             "Direction of the mirror line, measured from the x axis. "
             "0° mirrors top to bottom about a horizontal line; 90° mirrors "
             "left to right.")
         form.addRow("Mirror line", self._watch(self.sym_angle))
 
-        self.sym_cx = spin(0.0, -1e4, 1e4, 0.01, 5)
-        self.sym_cy = spin(0.0, -1e4, 1e4, 0.01, 5)
+        # Through zero angle / momentum if the cut has it (normal emission,
+        # or Gamma after a conversion), and halfway up the energy axis so the
+        # guide line is drawn on the picture.
+        x_axis, y_axis = self.axes
+        x0 = 0.0 if np.nanmin(x_axis) <= 0.0 <= np.nanmax(x_axis) \
+            else float(np.nanmean(x_axis))
+        self.sym_cx = spin(x0, -1e4, 1e4, 0.01, 5)
+        self.sym_cy = spin(float(np.nanmean(y_axis)), -1e4, 1e4, 0.01, 5)
         row = QWidget()
         box = QHBoxLayout(row)
         box.setContentsMargins(0, 0, 0, 0)

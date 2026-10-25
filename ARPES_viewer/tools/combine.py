@@ -106,6 +106,34 @@ def _common_axis(axes, index: int):
     return np.clip(common, lo, hi), True
 
 
+def guess_join_axis(axes) -> int:
+    """The axis pieces with these ``axes`` were most likely split along.
+
+    The one whose range differs most between pieces, measured in steps: a
+    deflector range scanned in two parts differs only along the deflector,
+    a cut taken in two energy windows only along the energy. When every
+    axis agrees -- nothing to tell them apart -- the first, which is the
+    scanned axis of a map or kz map.
+    """
+    if not axes:
+        return 0
+    best, best_shift = 0, 0.0
+    for index in range(len(axes[0])):
+        first = np.asarray(axes[0][index], dtype=float)
+        step = _step(first) or 1.0
+        shift = 0.0
+        for piece in axes[1:]:
+            other = np.asarray(piece[index], dtype=float)
+            if _same_axis(first, other) or not (first.size and other.size):
+                continue
+            shift = max(shift,
+                        abs(float(np.min(other)) - float(np.min(first))) / step,
+                        abs(float(np.max(other)) - float(np.max(first))) / step)
+        if shift > best_shift:
+            best, best_shift = index, shift
+    return best
+
+
 def plan(axes, axis: int, names=None) -> dict:
     """What joining pieces with these ``axes`` along ``axis`` gives.
 

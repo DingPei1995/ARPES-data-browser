@@ -2,7 +2,7 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-*Last updated: 25 October 2026 — for ARPES viewer v1.0.0*
+*Last updated: 25 October 2026 — for ARPES viewer v1.0.2*
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
@@ -189,9 +189,10 @@ axis is marked as not an angle, so no k conversion is offered for it.
 
 1. Select the pieces (all maps, or all kz maps, or all cuts …) and press
    **Combine datasets...**. Maps and kz maps go straight to *Join*.
-2. **Join along**: the axis the measurement was split along — by default a
-   map's scanned (deflector) axis or a kz map's photon energy; for cuts,
-   choose the angle or the energy axis.
+2. **Join along**: the axis the measurement was split along. It starts on
+   the axis whose range differs between the pieces — a map's deflector
+   axis, a kz map's photon energy, or the energy of cuts taken in two
+   energy windows — so it is usually right already.
 3. **Where pieces overlap**: *Average them*, or keep the earlier / later
    piece in the order shown (drag the rows to change it).
 4. The dialog lists each piece's range and shows the **Result** — the joined
@@ -502,10 +503,16 @@ it — then **Convert**. The result is a new `k-map` row in the list.
 
 ![Map k conversion](images/map_k_dialog.png)
 
+- **Γ deflector angle / Γ slit angle**: the angles of the point that becomes
+  k = (0, 0), filled in from the cursor. (These were called *Theta offset*
+  and *Phi offset*; they are the same two numbers the cut conversion asks
+  for.)
 - **Sample rotation** turns the map about the surface normal; **Set rotation
   from contour...** reads it off a direction you click on the contour (two
   points along a mirror line, say).
-- **Output grid**: number of points, or resolution (Å⁻¹, meV).
+- **Output grid**: number of points, or resolution (Å⁻¹, meV). The
+  numbers of points start at the measured ones — as many kx points as
+  deflector angles, ky points as slit angles, E points as energies.
 - **Energy offset** is added to the energy axis before converting, for an
   axis that is not a true kinetic energy (filled in automatically for a map on
   E − E_F).
@@ -587,11 +594,18 @@ Every result is a new dataset carrying the steps that made it.
   axes have the same unit), or *Fill the box*.
 - **Live preview** re-computes as you change a value; **Apply** lists the
   result.
+- Starting values: **Symmetrise** mirrors about a vertical line through
+  angle (or k) = 0, i.e. k → −k; the **Fermi cut-off** under *Background*
+  starts at the E_F the file records, or else at the steepest fall of the
+  angle-integrated EDC, with the file's temperature and resolution.
 
 For a map the panel works plane by plane, and asks **which planes** first —
 constant-energy maps or dispersions — since the curvature of a contour and
 the curvature of a cut are different quantities. **Preview at** picks the
-plane shown; **Apply to the whole cube** runs it on every plane.
+plane shown; **Apply to the whole cube** runs it on every plane. The
+operations and widths are named after the chosen plane's own axes
+(*Second derivative along Kinetic energy*, *Normalise each line along
+Angle, slit*…), and the smoothing widths start at 1/100 of each axis.
 
 ![3-D processing](images/volume_process_dialog.png)
 
@@ -600,6 +614,20 @@ of one or several datasets at once — as long as they have the same kind and
 the same number of points on every axis. Tabs: **Crop (truncate)** to a
 range, **Normalise** each spectrum to itself, **Bin (compress)** points
 together.
+
+**Normalise** divides each piece of the data by its own total (or peak):
+
+- **Normalise** picks the piece in ARPES terms, and starts on the usual
+  one: *each EDC* for a cut, *each cut (slit × energy at one scan step)*
+  for a map, k-map or kz map — this takes a flux or beam-current drift
+  along the scan out. Other choices: each MDC, each EDC of a map, each
+  constant-energy map, or *custom*.
+- **Summed over** shows the axes this sums over; the ticks can be changed by
+  hand, and the sentence under them says what the current ticks do ("Each
+  plane over Angle, slit × Kinetic energy is divided by its own total — one
+  factor for every Angle, deflector").
+- **Sum only over** restricts the sum to a window on one of the summed axes
+  — the energy by default — for example the energies of a core level.
 
 ![Crop / bin / normalise](images/data_operations.png)
 
