@@ -179,14 +179,21 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
             "Put the slice on screen in the launcher's list as a dataset of its "
             "own, to reopen, compare or save to a file later.", section="Slice")
         self.popout_action = self.add_function(
-            "Open slice in a new panel", self.pop_out_slice,
-            "Open the slice on screen in its own frozen panel, for comparing "
-            "two positions side by side.", section="Slice")
+            "Freeze slice in a new window", self.pop_out_slice,
+            "Open the slice on screen in a window of its own that stays put "
+            "while this one moves on -- to compare two positions side by "
+            "side, or to make a figure of it (Figure composer).",
+            section="Slice")
 
         bar.addWidget(self.make_functions_button())
         self.functions_button.setToolTip(
             "Everything this window can do: analysis, conversions, figures, "
-            "and saving or popping out the slice on screen.")
+            "and saving or freezing the slice on screen.")
+        # Drawing on the plot in front of you -- guide lines, labels -- is
+        # used while looking, so it is a button rather than a menu entry.
+        from ui.plot_tools import plot_tools_button
+        self.plot_tools_button = plot_tools_button(self)
+        bar.addWidget(self.plot_tools_button)
         bar.addWidget(separator())
 
         bar.addWidget(section_label("Colormap"))
@@ -1095,7 +1102,7 @@ class CutWindow(ViewerWindow):
             "coordinates and value under it and draws the EDC and MDC through "
             "that point.")
         self.fermi_action = self.add_function(
-            "Fermi level...", self.open_fermi_fit,
+            "Fermi edge fit...", self.open_fermi_fit,
             "Fit the Fermi edge of this cut: E_F, the resolution, and -- in its "
             "Advanced corner -- dividing the cut-off out and fitting E_F channel "
             "by channel.", section="Analysis")
@@ -1116,11 +1123,11 @@ class CutWindow(ViewerWindow):
             self.fit_action.setToolTip(
                 f"Not available here: {reason.split(chr(10))[0]}")
         self.fs_action = self.add_function(
-            "FS correction...", self.open_fs_correction,
+            "Straighten bands (FS correction)...", self.open_fs_correction,
             "Straighten a curved feature: click along it, fit a polynomial, and "
             "shift every angle column in energy so it comes out flat.")
         self.kconv_action = self.add_function(
-            "Cut k conversion...", self.open_cut_k_conversion,
+            "Convert to momentum (k)...", self.open_cut_k_conversion,
             "Convert this cut from degrees to \u00c5\u207b\u00b9. Needs to be "
             "told where \u0393 is, since a cut is a line that generally misses "
             "it -- inherit that from a converted map, or type the angles.")
@@ -1135,7 +1142,7 @@ class CutWindow(ViewerWindow):
             "(A \u2212 B)/(A + B). After choosing it, click the other cut in "
             "the main list.")
         self.degrid_action = self.add_function(
-            "De-grid...", self.open_degrid,
+            "Remove detector grid...", self.open_degrid,
             "Remove the detector's grid from this cut -- with a grid found on "
             "a map taken with the same settings if one is in the list, by "
             "notching the cut's own grid peaks otherwise.")
@@ -1417,7 +1424,7 @@ class KConversionDialog(QDialog):
     def __init__(self, contour: "ContourWindow"):
         super().__init__(contour)
         self.contour = contour
-        self.setWindowTitle("Map k conversion")
+        self.setWindowTitle("Convert map to momentum (k)")
         self._user_edited = False
 
         layout = QVBoxLayout(self)
@@ -3447,7 +3454,7 @@ class ContourWindow(ViewerWindow):
         # (The refusal in open_k_conversion() is still there as the backstop,
         # and explains why; this just stops the entry being offered.)
         self.kconv_action = self.add_function(
-            "Map k conversion...", self.open_k_conversion,
+            "Convert to momentum (k)...", self.open_k_conversion,
             "Convert this map from angle space to momentum space (A^-1). "
             "Pick the point on the contour that should become k = (0, 0).",
             visible=data.kind not in MOMENTUM_KINDS and data.kind != "kz_map")
@@ -3455,7 +3462,7 @@ class ContourWindow(ViewerWindow):
         # members were each measured against a different reference. Once
         # converted it is a kz_map_k and both are done with.
         self.kz_action = self.add_function(
-            "kz map processing...", self.open_kz_processing,
+            "Align Fermi levels (kz map)...", self.open_kz_processing,
             "Fit the Fermi edge of every spectrum in this photon-energy "
             "scan, shift each one to put its own edge at zero, and crop to "
             "the energy range they all still cover.\n\n"
@@ -3464,7 +3471,7 @@ class ContourWindow(ViewerWindow):
             "it from the spectra themselves.",
             visible=data.kind == "kz_map")
         self.kzconv_action = self.add_function(
-            "kz -> momentum...", self.open_kz_conversion,
+            "Convert to momentum (kz, k\u2225)...", self.open_kz_conversion,
             "Convert this photon-energy scan to (k_z, k_par) in A^-1, "
             "choosing the inner potential.\n\n"
             "Flatten the Fermi surface first: the conversion reads the "
@@ -3475,7 +3482,7 @@ class ContourWindow(ViewerWindow):
         # Only while the data are still on the detector's pixels; a map in
         # momentum has been resampled and has no pattern left to find.
         self.degrid_action = self.add_function(
-            "De-grid map...", self.open_degrid,
+            "Remove detector grid...", self.open_degrid,
             "Remove the detector's grid from the whole map, using the map "
             "itself as the reference: the grid stays on the same pixels while "
             "the photoemission moves. Do this first -- before the k or kz "
@@ -3492,7 +3499,7 @@ class ContourWindow(ViewerWindow):
             "(k_z, k_par).",
             section="Visualization", visible=data.kind in MOMENTUM_KINDS)
         self.slices_action = self.add_function(
-            "Slice figure...", self.open_slice_figure,
+            "Multi-slice figure...", self.open_slice_figure,
             "A page of slices through this cube as one figure for a paper -- "
             "a row of constant-energy contours, or a row of cuts -- with a "
             "shared colour scale and labels only on the outer edges.",
@@ -4092,11 +4099,11 @@ class MapCutWindow(ViewerWindow):
         # different axis entirely, so the button is only offered here.
         if which == "slit":
             self.fs_action = self.add_function(
-                "FS correction...", self.open_fs_correction,
+                "Straighten bands (FS correction)...", self.open_fs_correction,
                 "Straighten a curved feature along the slit and apply the same "
                 "shift to the whole cube, giving a corrected map in the file list.")
             self.degrid_action = self.add_function(
-                "De-grid map...", lambda: self.contour.open_degrid(),
+                "Remove detector grid...", lambda: self.contour.open_degrid(),
                 "Remove the detector's grid from the whole map this cut belongs "
                 "to -- every slit cut of it at once.",
                 visible=contour.data.kind in ("map", "kz_map"))
@@ -4741,7 +4748,7 @@ class CutKConversionDialog(QDialog):
     def __init__(self, window: "CutWindow"):
         super().__init__(window)
         self.window_ = window
-        self.setWindowTitle("Cut k conversion")
+        self.setWindowTitle("Convert cut to momentum (k)")
         self.setModal(False)
         scan = window.data.scan
         self.slit = np.asarray(scan.x, dtype=float)
@@ -4976,7 +4983,7 @@ class CutKConversionDialog(QDialog):
             QMessageBox.information(
                 self, "Cut k conversion",
                 "No converted map is in the list yet. Convert a map of this "
-                "sample first ('Map k conversion'), then come back — or "
+                "sample first ('Convert to momentum (k)' in the map viewer), then come back — or "
                 "type Γ's angles below.")
             return None
         labels = [label for label, _ in candidates]
@@ -5725,7 +5732,7 @@ class DataOperationsDialog(QDialog):
     def __init__(self, datasets, parent=None):
         super().__init__(parent)
         self.datasets = list(datasets)          # [(name, data), ...]
-        self.setWindowTitle("Data operations")
+        self.setWindowTitle("Crop / bin / normalise")
         self.setModal(False)
 
         kind = self.datasets[0][1].kind
@@ -5747,9 +5754,9 @@ class DataOperationsDialog(QDialog):
         layout.addWidget(header)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._truncate_tab(), "Truncate")
-        self.tabs.addTab(self._normalise_tab(), "Self-normalise")
-        self.tabs.addTab(self._compress_tab(), "Compress")
+        self.tabs.addTab(self._truncate_tab(), "Crop (truncate)")
+        self.tabs.addTab(self._normalise_tab(), "Normalise")
+        self.tabs.addTab(self._compress_tab(), "Bin (compress)")
         layout.addWidget(self.tabs)
 
         self.note = QLabel("")
@@ -5897,7 +5904,7 @@ class DataOperationsDialog(QDialog):
                 operation, suffix, prefix = self._apply_compress, "_comb", "compress"
             settings = operation(None, probe=True)
         except ValueError as exc:
-            QMessageBox.warning(self, "Data operations", str(exc))
+            QMessageBox.warning(self, "Crop / bin / normalise", str(exc))
             return
 
         if not self._confirm_size():
@@ -5912,7 +5919,7 @@ class DataOperationsDialog(QDialog):
                     new_values, new_axes = operation((values, axes))
                 except Exception as exc:
                     QApplication.restoreOverrideCursor()
-                    QMessageBox.warning(self, "Data operations",
+                    QMessageBox.warning(self, "Crop / bin / normalise",
                                         f"{name}: {exc}")
                     return
                 by_name = dict(zip(self.axis_names, new_axes))
@@ -5945,7 +5952,7 @@ class DataOperationsDialog(QDialog):
         if gigabytes < 2.0:
             return True
         answer = QMessageBox.question(
-            self, "Data operations",
+            self, "Crop / bin / normalise",
             f"This reads about {gigabytes:.1f} GB of cube into memory "
             f"({len(self.datasets)} spatial scan(s)). Continue?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)

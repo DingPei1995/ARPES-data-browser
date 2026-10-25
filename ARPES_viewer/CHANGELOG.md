@@ -12,6 +12,64 @@ file is the record of how it got that way.
 
 ## Unreleased
 
+(nothing yet)
+
+## 1.0.0 — 2026-10-25
+
+The first numbered version. Updates come often, and without a number a user
+could not tell which build they had or whether a fix had reached them.
+
+- **Version and where to get help, in the main window.** The title bar reads
+  *ARPES viewer v1.0.0 (updated 2026-10-25)*, and the foot of the main
+  window repeats it with a link to
+  <https://github.com/DingPei1995/ARPES-data-browser> for bug reports
+  (Issues) and the latest version. The number lives in `version.py`; bump
+  it, and its date, with every change that reaches users, and head the
+  changelog entry with it.
+- **Names that say what they do.** The main window's *Data operations...*
+  and *Process...* could not be told apart by name. They are now
+  **Crop / bin / normalise...** (tabs *Crop (truncate)*, *Normalise*,
+  *Bin (compress)*) and **Smooth / derivative...**, beside **Combine
+  datasets...**, in a box titled *With the selected datasets*. The viewers'
+  Functions section *Data operations* is **Transform**, and entries were
+  renamed: *Fermi level* → **Fermi edge fit**, *Cut / Map k conversion* →
+  **Convert to momentum (k)**, *kz map processing* → **Align Fermi levels
+  (kz map)**, *kz -> momentum* → **Convert to momentum (kz, k∥)**, *FS
+  correction* → **Straighten bands (FS correction)**, *De-grid* / *De-grid
+  map* → **Remove detector grid**, *Slice figure* → **Multi-slice figure**,
+  *Open slice in a new panel* → **Freeze slice in a new window**, the list's
+  *Plot as a figure* → **Open in figure composer...**, the curve viewer's
+  *As a figure* → **Figure composer...**. The guides carry an old → new
+  table.
+- **Plot tools on every viewer.** A **Plot tools** button on the top row of
+  every viewer (and of frozen slices and the curve viewer) draws on the live
+  plot: vertical, horizontal and angled guide lines and text labels, each
+  with its own colour (nine one-click colours or any other), width, line
+  style, label and size; placed by typing or by clicking, dragged on the
+  plot, edited or removed from a list. Guides stay while the slice moves and
+  are drawn into the panel's image export (*Include the Plot tools guides*).
+- **"Plot tools" no longer names two different things.** A frozen slice's
+  button that opened the figure composer was called *Plot tools*, and so was
+  the composer's own button for its settings dialog. They are now
+  **Figure composer...** and **Figure tools...**, and *Plot tools* is the
+  new live-plot tool above.
+- **Combine datasets: stack or join, any structure.** *Combine* took only
+  cuts with identical axes. It now also **joins** pieces of one measurement
+  end to end along one of their own axes -- a map whose deflector range was
+  scanned in parts, a kz map whose photon-energy range was split over runs,
+  a cut whose energy window was taken in halves; cuts, maps, kz maps and
+  k-maps, one kind at a time (`tools/combine.py`). Pieces on one grid are
+  copied as measured; a different step or a half-step offset is
+  interpolated onto the first piece's step; other axes that differ are
+  resampled onto the range all pieces cover; overlaps are averaged or the
+  earlier / later piece kept; gaps are left at zero. The dialog lists each
+  piece's range and the result before anything is computed. Cuts that
+  cannot be stacked are now offered *Join* instead of being refused.
+- **User guides** (en, zh, fr, and PDFs) and screenshots updated for all of
+  the above.
+
+## Before 1.0.0
+
 - **Combine cuts into a map.** Several cuts measured with the same
   settings -- a temperature series, a gate-voltage series, one cut per
   photon energy -- can be stacked into one (scanned, angle, energy) cube:

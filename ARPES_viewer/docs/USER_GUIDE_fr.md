@@ -2,7 +2,12 @@
 
 *[English version](USER_GUIDE_en.md) · [中文版](USER_GUIDE_zh.md)*
 
-*Dernière mise à jour : 24 octobre 2026*
+*Dernière mise à jour : 25 octobre 2026 — pour ARPES viewer v1.0.0*
+
+La version et sa date figurent dans la barre de titre et en bas de la fenêtre
+principale. Signaler un bogue, poser une question, obtenir la dernière version :
+<https://github.com/DingPei1995/ARPES-data-browser> (merci d'indiquer le numéro
+de version en signalant un bogue).
 
 Ce guide présente les principales fonctions du programme, captures d'écran à
 l'appui, dans l'ordre où on les utilise d'habitude : charger les données, les
@@ -103,12 +108,40 @@ mesures, chacune sur sa propre ligne). Le type est indiqué après le nom :
 | Action | Comment |
 |---|---|
 | Ouvrir un jeu de données dans sa propre fenêtre | **double-clic** sur la ligne (ou clic droit → **Open**) |
-| Empiler plusieurs coupes en une carte (température, tension de grille, énergie de photon → kz map ...) | sélectionner les coupes → **Combine data...** (ou clic droit → **Combine N cuts into a map...**) |
+| Empiler plusieurs coupes en une carte (température, tension de grille, énergie de photon → kz map ...), ou raccorder une carte / carte kz mesurée en plusieurs morceaux | les sélectionner → **Combine datasets...** (ou clic droit → **Combine N datasets...**) |
 | Tout ce qui agit sur des jeux de données | **clic droit** sur la ligne (ou sur une sélection de lignes) |
 | Lire les axes : première/dernière valeur, nombre de points, pas | clic droit → **Show information** (remplit *Data Information*) |
-| Tronquer / normaliser / compresser plusieurs jeux à la fois | **Data operations...** |
-| Lisser, dériver, courbure, fonds, symétriser | **Process...** |
+| Changer la grille ou l'échelle — rogner à un intervalle, regrouper des points, normaliser chaque spectre sur lui-même — pour plusieurs jeux à la fois | **Crop / bin / normalise...** |
+| Faire ressortir les bandes — lisser, dérivée seconde, courbure, soustraction de fond, symétriser | **Smooth / derivative...** |
 | Voir et libérer la mémoire | le cadre **Memory** en bas |
+| Voir quelle version est utilisée, signaler un bogue, obtenir la dernière version | la barre de titre et la dernière ligne de la fenêtre (lien GitHub) |
+
+Les trois boutons sous la liste sont dans un cadre **With the selected
+datasets** : chacun agit sur les lignes sélectionnées au-dessus et crée de
+nouvelles lignes — les originaux ne sont jamais modifiés.
+
+### Quel nom fait quoi
+
+Plusieurs boutons ont été renommés (v1.0.0) pour que le nom dise ce qui se
+passe. Correspondance avec les anciens noms :
+
+| Maintenant | Avant | Ce que cela fait |
+|---|---|---|
+| **Combine datasets...** | Combine data... | empiler des coupes en carte, ou raccorder les morceaux d'une mesure |
+| **Crop / bin / normalise...** | Data operations... | change la grille ou l'échelle : rogner (truncate), regrouper (compress), auto-normaliser |
+| **Smooth / derivative...** | Process... | filtres qui font ressortir les bandes : lissage, dérivée, courbure, fond, symétrisation |
+| Section **Transform** du menu Functions | Data operations | conversions et corrections dans une fenêtre |
+| **Fermi edge fit...** | Fermi level... | ajuster E_F (et la résolution) sur une coupe |
+| **Convert to momentum (k)...** | Cut / Map k conversion... | angle → k∥ |
+| **Align Fermi levels (kz map)...** | kz map processing... | ajuster et aligner E_F pour chaque énergie de photon |
+| **Convert to momentum (kz, k∥)...** | kz -> momentum... | balayage en énergie de photon → (k_z, k∥) |
+| **Straighten bands (FS correction)...** | FS correction... | redresser un front de Fermi ou une structure courbée |
+| **Remove detector grid...** | De-grid... / De-grid map... | supprimer le motif du MCP / de la grille |
+| **Multi-slice figure...** | Slice figure... | une page de tranches d'une carte |
+| **Freeze slice in a new window** | Open slice in a new panel | une copie figée de la tranche affichée |
+| **Plot tools** (ligne du haut d'une fenêtre) | — (nouveau) | lignes guides et étiquettes sur le graphique affiché |
+| **Figure composer...** (tranche figée), **Open in figure composer...** (liste) | Plot tools, Plot as a figure... | faire une figure pour un article |
+| **Figure tools...** (dans le composeur de figures) | Plot tools | taille, polices, graduations, barres de couleurs, annotations de cette figure |
 
 Le menu contextuel ne propose que ce qui convient à la sélection. Une entrée
 grisée explique pourquoi au survol — par exemple *Cut arithmetic* demande
@@ -124,33 +157,79 @@ dans une fenêtre à part, avec un champ de filtre et **Export metadata
 calculé pendant la session sans avoir encore été sauvegardé. Les fichiers sur
 le disque ne sont jamais supprimés.
 
-### Combiner des coupes en une carte
+### Combiner des jeux de données : empiler et raccorder
 
-Une série en température, en tension de grille, ou une coupe par énergie de
-photon peut être empilée en un seul cube, puis examinée comme n'importe quelle
-carte — tranchée à énergie constante, ou le long du nouvel axe.
+**Combine datasets...** (sous la liste, ou clic droit → **Combine N
+datasets...**) fait deux choses différentes, et demande laquelle :
+
+- **Stack (empiler)** — *coupes seulement*. Chaque coupe devient une tranche
+  d'une nouvelle carte, le long d'un axe que vous nommez : série en
+  température, en tension de grille, une coupe par énergie de photon. Le
+  résultat s'examine comme n'importe quelle carte.
+- **Join (raccorder)** — *coupes, cartes, cartes kz ou cartes k, toutes du
+  même type*. Les morceaux d'une mesure prise en plusieurs fois sont remis
+  bout à bout le long de l'un de leurs propres axes : une carte dont la plage
+  du déflecteur a été balayée en deux parties, une carte kz dont la plage
+  d'énergie de photon a été répartie sur plusieurs acquisitions, une coupe
+  dont la fenêtre d'énergie a été prise en deux moitiés.
+
+**Empiler des coupes**
 
 1. Sélectionnez les coupes dans la liste (Ctrl/Maj-clic) et cliquez sur
-   **Combine data...** sous la liste, ou clic droit → **Combine N cuts into a
-   map...**. Les coupes doivent avoir les mêmes axes point par point (même
-   nombre de points, mêmes valeurs, mêmes unités) ; sinon le programme nomme
-   la première coupe qui diffère, et en quoi.
+   **Combine datasets...**. L'empilement exige les mêmes axes point par point
+   (même nombre de points, mêmes valeurs, mêmes unités) ; sinon *Stack* est
+   grisé avec la première différence, et *Join* est proposé à la place.
 2. Il demande s'il faut les combiner **dans l'ordre de la liste**. *Yes* garde
    cet ordre ; *No* permet de le choisir.
-3. Dans la boîte de dialogue, définissez le nouvel axe : **Axis is**
-   (température, tension de grille, énergie de photon, délai, position, autre —
-   ce choix remplit *Name* et *Unit*, modifiables), **Start** et **Step** (le
-   pas). Chaque coupe est affichée avec la valeur qu'elle reçoit. Si vous avez
-   choisi de réordonner, **faites glisser** les lignes (ou utilisez **Move
-   up** / **Move down** / **Reverse**). Cliquez sur **Combine**.
+3. Choisissez **Stack**, puis définissez le nouvel axe : **New axis is**
+   (température, tension de grille, énergie de photon, délai, position,
+   autre — ce choix remplit *Name* et *Unit*, modifiables), **Start** et
+   **Step** (le pas). Chaque coupe est affichée avec la valeur qu'elle reçoit.
+   Si vous avez choisi de réordonner, **faites glisser** les lignes (ou
+   utilisez **Move up** / **Move down** / **Reverse**). Cliquez sur
+   **Combine**.
 
 ![Combiner des coupes](images/combine_cuts_dialog.png)
 
-Le résultat est une nouvelle ligne de la liste. Une série en énergie de photon
-de coupes en angle devient une `kz map`, que *kz map processing* et
-*kz → momentum* acceptent (voir [§13](#13-balayages-en-énergie-de-photon-kz)) ;
-tout autre axe donne une `map` dont le premier axe est marqué comme n'étant
-pas un angle, si bien qu'aucune conversion en k n'est proposée.
+Une série en énergie de photon de coupes en angle devient une `kz map`, que
+*Align Fermi levels (kz map)* et *Convert to momentum (kz, k∥)* acceptent
+(voir [§13](#13-balayages-en-énergie-de-photon-kz)) ; tout autre axe donne une
+`map` dont le premier axe est marqué comme n'étant pas un angle, si bien
+qu'aucune conversion en k n'est proposée.
+
+**Raccorder les morceaux d'une mesure**
+
+1. Sélectionnez les morceaux (toutes des cartes, ou toutes des cartes kz, ou
+   toutes des coupes …) et cliquez sur **Combine datasets...**. Les cartes et
+   cartes kz passent directement à *Join*.
+2. **Join along** : l'axe selon lequel la mesure a été découpée — par défaut
+   l'axe balayé (déflecteur) d'une carte ou l'énergie de photon d'une carte
+   kz ; pour des coupes, choisissez l'axe angulaire ou l'axe d'énergie.
+3. **Where pieces overlap** : *Average them* (moyenne), ou garder le morceau
+   le plus tôt / le plus tard dans l'ordre affiché (faites glisser les lignes
+   pour le changer).
+4. La boîte de dialogue donne l'intervalle de chaque morceau et le
+   **Result** — l'intervalle raccordé et le nombre de points — avec des notes
+   sur ce qu'il a fallu faire. Cliquez sur **Combine**.
+
+![Raccorder une carte mesurée en deux parties](images/combine_dialog.png)
+
+Traitement des axes :
+
+- Des morceaux sur une même grille (même pas, intervalles qui se touchent ou
+  se recouvrent d'un nombre entier de points — le cas habituel) sont
+  **copiés tels quels**, sans interpolation.
+- Un morceau de pas différent ou décalé d'un demi-pas est **interpolé** sur
+  l'axe commun (au pas du premier morceau), et la boîte de dialogue le dit.
+- Si les **autres axes** diffèrent — une fenêtre en énergie décalée de
+  quelques meV entre deux acquisitions, un nombre différent de canaux de
+  fente — tous les morceaux sont rééchantillonnés sur l'intervalle que
+  **tous** couvrent, et la boîte de dialogue le dit.
+- Un intervalle couvert par aucun morceau est un **trou**, laissé à zéro et
+  signalé.
+- Une carte kz raccordée reste une `kz map` : lancez *Align Fermi levels (kz
+  map)* sur le résultat plutôt que sur les morceaux (les ajustements par
+  énergie de photon des morceaux ne sont pas repris).
 
 ---
 
@@ -215,7 +294,8 @@ côte une carte, ses coupes et un autre fichier.
 ![Une fenêtre de coupe avec le curseur de lecture](images/cut_viewer.png)
 
 - **La ligne du haut** : le menu **Functions** (tout ce que la fenêtre sait
-  faire), la palette de couleurs (propre à chaque fenêtre) avec **Flip**, et
+  faire), **Plot tools** (lignes guides et étiquettes sur ce graphique — voir
+  plus bas), la palette de couleurs (propre à chaque fenêtre) avec **Flip**, et
   les réglages de vue — étendue des axes, **Auto**, **Inv** (inverser),
   **Reset**, **Grid**.
 - **Au-dessus de chaque image** : la barre **Levels** (faire glisser les deux
@@ -239,22 +319,58 @@ côte une carte, ses coupes et un autre fichier.
 - **Clic droit sur l'image → Export** enregistre ce que montre le panneau —
   données (`.nxs`), image, ou axes vectoriels (`.eps`) ; voir
   [§17](#17-figures-et-exportation).
-- **Functions → Slice → Save slice to the main list / Open slice in a new
-  panel** conserve une copie de la tranche affichée. Un nouveau panneau (et
+- **Functions → Slice → Save slice to the main list / Freeze slice in a new
+  window** conserve une copie de la tranche affichée. La fenêtre figée (et
   *Open this position in a new window* sur une carte spatiale) s'ouvre avec le
-  min/max et le gamma du panneau, pour une comparaison directe.
+  min/max et le gamma du panneau, pour une comparaison directe. Elle a ses
+  propres **Plot tools**, et un bouton **Figure composer...** pour en faire
+  une figure ([§17](#17-figures-et-exportation)).
 
 Le menu **Functions** est organisé en sections :
 
-| Fenêtre | Analysis | Data operations | Visualization |
+| Fenêtre | Analysis | Transform | Visualization |
 |---|---|---|---|
-| carte / carte kz / carte k | | Arbitrary cut, Map k conversion, kz map processing, kz → momentum, De-grid map | Brillouin zone (cartes k), Slice figure |
-| coupe | Fermi level, MDC / EDC fit | FS correction, Cut k conversion, Cut arithmetic, De-grid | |
-| courbe | Curve fit, Spin analysis | Crop, Bin, Normalise, Background, Shift axis, Add √N errors | As a figure |
+| carte / carte kz / carte k | | Arbitrary cut, Convert to momentum (k), Align Fermi levels (kz map), Convert to momentum (kz, k∥), Remove detector grid | Brillouin zone (cartes k), Multi-slice figure |
+| coupe | Fermi edge fit, MDC / EDC fit | Straighten bands (FS correction), Convert to momentum (k), Cut arithmetic, Remove detector grid | |
+| courbe | Curve fit, Spin analysis | Crop, Bin, Normalise, Background, Shift axis, Add √N errors | Figure composer |
 
 Une entrée qui ne s'applique pas n'est pas affichée ; une entrée qui
 s'applique mais ne peut pas encore être lancée est grisée, et son infobulle
 en donne la raison.
+
+### Plot tools : lignes guides et étiquettes sur le graphique
+
+**Plot tools**, sur la ligne du haut de chaque fenêtre (coupes, cartes,
+balayages spatiaux, courbes, tranches figées), ouvre une petite fenêtre qui
+dessine **sur le graphique affiché** :
+
+![Lignes guides sur une coupe](images/plot_tools_viewer.png)
+
+| ![Plot tools](images/plot_tools.png) | |
+|---|---|
+
+- **Type** : *Vertical line*, *Horizontal line*, *Line at an angle* (passant
+  par un point ; l'angle est dans les unités du graphique, c.-à-d. la pente
+  vaut tan(angle) unités y par unité x), ou *Text label*.
+- **Position** (x, y), **Angle**, une **Label** facultative (affichée sur la
+  ligne, p. ex. `E_F`, `Γ`), une **Colour** (neuf couleurs en un clic, ou
+  **More...**), **Width**, **Style** (plein, tirets, pointillés, tiret-point)
+  et **Text size**.
+- **Add** la dessine à la position saisie (**Centre of view** la remplit) ;
+  **Place by clicking** en dessine une là où vous cliquez sur le graphique.
+- **Faites glisser** une ligne sur le graphique pour la déplacer ; la fenêtre
+  suit. Sélectionnez un guide dans la liste pour le **modifier** — chaque
+  changement s'affiche aussitôt — ou le supprimer (**Remove**) ; **New
+  guide** arrête l'édition ; **Remove all** efface tout.
+- Avec deux panneaux (balayage spatial), **Draw on** choisit lequel.
+- Les guides restent quand la tranche se déplace (une ligne E_F reste à E_F
+  en parcourant une carte) et quand la fenêtre Plot tools est fermée.
+  **Export → Image** du panneau les dessine aussi (*Include the Plot tools
+  guides*).
+
+Les *Plot tools* servent à regarder les données. Pour une figure d'article,
+utilisez le **composeur de figures** et ses **Figure tools**
+([§17](#17-figures-et-exportation)).
 
 ---
 
@@ -287,12 +403,12 @@ caché jusqu'à ce qu'on le demande (*Functions → Show the map*).
 
 ## 7. Les coupes : du spectre brut aux paramètres de bande
 
-L'ordre habituel pour une coupe est : **niveau de Fermi → décaler l'axe en
-énergie → conversion en k → ajustement MDC/EDC**.
+L'ordre habituel pour une coupe est : **ajustement du front de Fermi → décaler
+l'axe en énergie → conversion en impulsion → ajustement MDC/EDC**.
 
-### 7.1 Niveau de Fermi
+### 7.1 Ajustement du front de Fermi
 
-*Functions → Fermi level...* ajuste un front de Fermi (Fermi–Dirac × densité
+*Functions → Fermi edge fit...* ajuste un front de Fermi (Fermi–Dirac × densité
 d'états linéaire, convoluée par une résolution gaussienne) sur l'EDC sommée
 dans un cadre.
 
@@ -316,7 +432,7 @@ Le coin *Advanced* divise par la coupure de Fermi (pour les gaps et les
 
 ### 7.2 Conversion en k d'une coupe
 
-*Functions → Cut k conversion...* convertit l'axe angulaire en k∥ (Å⁻¹). Une
+*Functions → Convert to momentum (k)...* convertit l'axe angulaire en k∥ (Å⁻¹). Une
 coupe est une droite du plan (kx, ky) qui, en général, ne passe pas par Γ :
 la fenêtre demande donc où se trouve Γ. Saisissez les angles, ou utilisez
 **From a converted map...** pour les reprendre d'une carte déjà convertie.
@@ -420,7 +536,7 @@ supérieur se déplacent.
 
 ### 8.1 Conversion en k d'une carte
 
-*Functions → Map k conversion...* dans la fenêtre du contour. Faites glisser
+*Functions → Convert to momentum (k)...* dans la fenêtre du contour. Faites glisser
 le curseur de lecture sur le point qui doit devenir **k = (0, 0)** — la
 fenêtre le suit — puis **Convert**. Le résultat est une nouvelle ligne
 `k-map` dans la liste.
@@ -487,7 +603,7 @@ endroit ne soit pas pris pour de la physique.
 
 ### 9.2 Correction de la surface de Fermi (FS)
 
-*Functions → FS correction...* sur une coupe (ou sur la coupe selon la fente
+*Functions → Straighten bands (FS correction)...* sur une coupe (ou sur la coupe selon la fente
 d'une carte) redresse une structure qui devrait être plate — en général le
 front de Fermi, courbé en fonction de l'angle de l'analyseur. Cliquez le long
 de la structure : un polynôme (d'ordre 2 par défaut) est ajusté et chaque
@@ -502,7 +618,7 @@ selon la fente d'une carte, le même décalage est appliqué à tout le cube.
 ## 10. Traitement : lissage, dérivées, courbure
 
 Sélectionnez une ou plusieurs coupes (ou cartes) dans la liste et appuyez sur
-**Process...**. Chaque résultat est un nouveau jeu de données qui garde la
+**Smooth / derivative...**. Chaque résultat est un nouveau jeu de données qui garde la
 trace des étapes qui l'ont produit.
 
 ![Traitement 2D](images/process_dialog.png)
@@ -528,12 +644,13 @@ plans.
 
 ![Traitement 3D](images/volume_process_dialog.png)
 
-**Data operations...** (fenêtre principale) tronque, auto-normalise ou
-compresse (regroupe des pixels) un ou plusieurs jeux de données à la fois — à
-condition qu'ils soient du même type et aient le même nombre de points sur
-chaque axe.
+**Crop / bin / normalise...** (fenêtre principale) change la grille ou
+l'échelle d'un ou plusieurs jeux de données à la fois — à condition qu'ils
+soient du même type et aient le même nombre de points sur chaque axe.
+Onglets : **Crop (truncate)** rogne à un intervalle, **Normalise** normalise
+chaque spectre sur lui-même, **Bin (compress)** regroupe des points.
 
-![Opérations sur les données](images/data_operations.png)
+![Rogner / regrouper / normaliser](images/data_operations.png)
 
 ---
 
@@ -599,10 +716,10 @@ l'énergie de photon en fonction de l'angle, à une énergie donnée.
 
 ![Une carte kz](images/kz_map_contour.png)
 
-### 13.1 Traitement d'une carte kz
+### 13.1 Aligner les niveaux de Fermi d'une carte kz
 
 Rien dans les fichiers n'indique où se trouve réellement le niveau de Fermi
-de chaque spectre. *Functions → kz map processing...* le mesure sur les
+de chaque spectre. *Functions → Align Fermi levels (kz map)...* le mesure sur les
 spectres eux-mêmes.
 
 1. La coupe selon la fente s'ouvre avec un cadre. Faites glisser le cadre sur
@@ -617,15 +734,15 @@ spectres eux-mêmes.
    chaque spectre est **normalisé par son intensité totale**, ce qui élimine
    les variations du flux de photons.
 
-![Traitement d'une carte kz](images/kz_processing_dialog.png)
+![Aligner les niveaux de Fermi (kz map)](images/kz_processing_dialog.png)
 
 E_F en fonction de l'énergie de photon est tracé. Une courbe régulière
 signifie des ajustements fiables ; les points dont l'ajustement n'est pas
 crédible sont signalés et remplacés par interpolation de leurs voisins.
 
-### 13.2 kz → impulsion
+### 13.2 Convertir une carte kz en impulsion
 
-*Functions → kz -> momentum...* convertit le balayage en (k_z, k∥).
+*Functions → Convert to momentum (kz, k∥)...* convertit le balayage en (k_z, k∥).
 
 ![kz → impulsion](images/kz_conversion_dialog.png)
 
@@ -640,7 +757,7 @@ crédible sont signalés et remplacés par interpolation de leurs voisins.
   structure, distants d'une zone ; les plans du réseau réciproque compatibles
   sont listés.
 - Le bandeau jaune avertit quand le front de Fermi est encore courbé en
-  fonction de l'angle de l'analyseur — corrigez-le d'abord (correction FS sur
+  fonction de l'angle de l'analyseur — corrigez-le d'abord (Straighten bands (FS correction) sur
   la coupe selon la fente).
 - **Convert the whole cube** ajoute une `kz map (k)` à la liste.
 
@@ -655,8 +772,8 @@ image. **À faire en premier** : seules les données encore sur les pixels du
 détecteur peuvent être dégrillées ; le bouton refuse donc tout ce qui a déjà
 été converti, corrigé ou lissé, et dit pourquoi.
 
-*Functions → De-grid map...* sur une carte (ou sa coupe selon la fente), ou
-*De-grid...* sur une coupe. Pour une carte, aucune référence n'est
+*Functions → Remove detector grid...* sur une carte (ou sa coupe selon la
+fente), ou sur une coupe. Pour une carte, aucune référence n'est
 nécessaire — la grille reste sur les mêmes pixels dans chaque tranche, alors
 que la photoémission se déplace. **Find and remove the grid** :
 
@@ -683,7 +800,7 @@ résolu en spin, donnent un jeu de données de courbes, qui s'ouvre dans la
 
 Les canaux peuvent être masqués, décalés en cascade (**Offset**), affichés
 avec des **Error bars** (à partir d'un canal σ), et **Range** délimite une
-fenêtre en x utilisée par les opérations. *Functions → Data operations*
+fenêtre en x utilisée par les opérations. *Functions → Transform*
 propose **Crop**, **Bin**, **Normalise**, **Subtract a background**
 (constant, linéaire, Shirley), **Shift the axis** et **Add counting errors
 (√N)** ; chacune crée un nouveau jeu de données et propage correctement σ.
@@ -724,7 +841,7 @@ Une EDC de spin s'ouvre avec une courbe par canal de spin :
   reference** facultative.
 - Graphiques : canaux bruts, P avec ses barres d'erreur, et I↑ / I↓ avec
   leurs erreurs.
-- **P to list**, **I↑ / I↓ to list**, **As a figure**.
+- **P to list**, **I↑ / I↓ to list**, **As a figure** (ouvre le composeur de figures).
 
 ---
 
@@ -749,21 +866,24 @@ droit sur un panneau donne les deux intégrations :
 
 ### 17.1 Composeur de figures
 
-Sélectionnez des coupes (ou des courbes) dans la liste → clic droit → **Plot
-as a figure**. Le composeur dispose les panneaux pour un article : une même
+Sélectionnez des coupes (ou des courbes) dans la liste → clic droit → **Open
+in figure composer...** (ou, depuis une tranche figée, son bouton **Figure
+composer...**). Le composeur dispose les panneaux pour un article : une même
 taille par colonne, des étiquettes seulement sur les bords extérieurs, des
 lettres (a)/(b)/(c), et des échelles de couleurs partagées si on le souhaite.
 
 ![Composeur de figures](images/figure_composer.png)
 
-**Plot tools** règle tout (taille en mm, polices, graduations, barres de
-couleurs, lignes, flèches, texte, encarts, barres d'échelle) ; **Add
+**Figure tools...** règle tout (taille en mm, polices, graduations, barres de
+couleurs, lignes, flèches, texte, encarts, barres d'échelle) — à ne pas
+confondre avec les **Plot tools** d'une fenêtre, qui dessinent des guides sur
+le graphique affiché ; **Add
 panel...** ajoute un autre jeu de données ; **PDF**, **PNG**, **SVG**
 exportent, **Copy** copie dans le presse-papiers.
 
 ### 17.2 Figure de tranches
 
-Depuis une carte : *Functions → Slice figure...* dispose une série de
+Depuis une carte : *Functions → Multi-slice figure...* dispose une série de
 tranches du cube — contours à énergie constante ou coupes — régulièrement
 espacées ou à des valeurs choisies, avec intégration, une échelle de couleurs
 commune et des titres.
@@ -779,7 +899,7 @@ Clic droit sur n'importe quelle image → **Export** → **Data (.nxs)...**,
 exactement ce que montre le panneau (étendue comprise) : les données, comme
 un jeu de données que ce programme sait relire ; une image avec la palette
 appliquée (PNG, TIFF ou JPEG, à la taille et à la résolution choisies, avec
-ou sans les axes) ; ou le cadre, les graduations et les étiquettes en
+ou sans les axes, et avec les guides des Plot tools s'il y en a) ; ou le cadre, les graduations et les étiquettes en
 PostScript vectoriel, pour y placer l'image dans Illustrator.
 
 ![Exportation](images/export_dialog.png)

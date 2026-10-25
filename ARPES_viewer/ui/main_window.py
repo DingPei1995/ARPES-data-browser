@@ -16,12 +16,14 @@ original app used.
 """
 from PyQt5 import QtCore, QtWidgets
 
+import version
+
 
 class Ui_MainWindow:
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(560, 900)
-        MainWindow.setWindowTitle("ARPES viewer")
+        MainWindow.setWindowTitle(version.title())
         # The panel's colours. The disabled rules are not optional: a colour
         # set for every widget is also the colour of a *disabled* widget and
         # of a disabled menu entry, so without them a greyed-out entry of the
@@ -97,29 +99,40 @@ class Ui_MainWindow:
             "selected datasets; Ctrl/Shift-click selects several.")
         menu_layout.addWidget(self.FilePathListWidget, stretch=1)
 
-        button_row = QtWidgets.QHBoxLayout()
+        # -- what can be done to the selected rows. In a box of its own, so
+        # it reads as "acts on the selection" rather than as three unrelated
+        # buttons. Each name says what the window does, not a category:
+        # "Data operations" and "Process" were both true of all three.
+        self.SelectionBox = QtWidgets.QGroupBox(
+            "With the selected datasets", self.centralwidget)
+        button_row = QtWidgets.QHBoxLayout(self.SelectionBox)
+        button_row.setContentsMargins(6, 4, 6, 4)
         # Opening is a double-click (or right-click -> Open); the button
-        # slot goes to combining several cuts into one map, which has no
+        # slot goes to combining several datasets into one, which has no
         # gesture of its own.
-        self.CombineDataButton = QtWidgets.QPushButton("Combine data...", self.centralwidget)
+        self.CombineDataButton = QtWidgets.QPushButton("Combine datasets...", self.centralwidget)
         self.CombineDataButton.setToolTip(
-            "Stack the selected cuts (same axes) into one map along an axis "
-            "of your own -- temperature, gate voltage, photon energy (kz "
-            "map)... -- in the list's order or one you choose. The same as "
-            "right-click -> Combine cuts into a map.")
-        self.DataOpsButton = QtWidgets.QPushButton("Data operations...", self.centralwidget)
+            "Join or stack the selected datasets into one: cuts into a map "
+            "along an axis of your own (temperature, gate voltage, photon "
+            "energy...), or the pieces of a map or kz map measured in "
+            "segments back into one. The same as right-click -> Combine "
+            "datasets.")
+        self.DataOpsButton = QtWidgets.QPushButton("Crop / bin / normalise...", self.centralwidget)
         self.DataOpsButton.setToolTip(
-            "Truncate, self-normalise or compress the selected datasets. Several at "
-            "once, as long as they have the same kind and the same axis lengths.")
-        self.ProcessButton = QtWidgets.QPushButton("Process...", self.centralwidget)
+            "Change the data's grid or scale: crop to a range, bin points "
+            "together, or normalise each spectrum to itself. Several "
+            "datasets at once, as long as they have the same kind and the "
+            "same axis lengths.")
+        self.ProcessButton = QtWidgets.QPushButton("Smooth / derivative...", self.centralwidget)
         self.ProcessButton.setToolTip(
-            "Smooth, differentiate, take the curvature, symmetrise, subtract a "
-            "background, normalise or fit peaks. Every result is added to this "
-            "list as a new dataset carrying the steps that made it.")
+            "Filters that bring out the bands: smooth, second derivative, "
+            "curvature, background subtraction, symmetrise. Every result is "
+            "added to this list as a new dataset carrying the steps that "
+            "made it.")
         button_row.addWidget(self.CombineDataButton, stretch=1)
         button_row.addWidget(self.DataOpsButton, stretch=1)
         button_row.addWidget(self.ProcessButton, stretch=1)
-        menu_layout.addLayout(button_row)
+        menu_layout.addWidget(self.SelectionBox)
 
         # -- what the selected data is: extent, point count and step per
         # axis. It stays in the launcher because it is what you compare
@@ -193,6 +206,22 @@ class Ui_MainWindow:
             "system's file browser, to delete old working copies by hand. "
             "The folder of the session now running is in use; leave it.")
         menu_layout.addWidget(self.OpenAutosaveButton)
+
+        # -- which build this is, and where to report a bug or get a newer
+        # one. Updates come often; without this a user cannot tell which
+        # version they are running, or whether a fix has reached them.
+        self.AboutLabel = QtWidgets.QLabel(
+            f"<b>{version.title()}</b><br>"
+            f"Bug reports, questions and the latest version: "
+            f"<a href=\"{version.REPOSITORY}\">{version.REPOSITORY}</a>"
+            f" (bugs: <a href=\"{version.REPOSITORY}/issues\">Issues</a>)",
+            self.centralwidget)
+        self.AboutLabel.setWordWrap(True)
+        self.AboutLabel.setOpenExternalLinks(True)
+        self.AboutLabel.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
+        self.AboutLabel.setToolTip(
+            "Please give this version number when reporting a bug.")
+        menu_layout.addWidget(self.AboutLabel)
 
         self.statusbar = QtWidgets.QStatusBar(MainWindow)
         MainWindow.setStatusBar(self.statusbar)

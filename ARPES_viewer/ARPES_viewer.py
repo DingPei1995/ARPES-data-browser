@@ -478,8 +478,8 @@ def show_list_menu(position):
     add("rename", "Rename...", "Change the name the dataset is listed "
         "(and saved) under. The file on disk keeps its name.")
     menu.addSeparator()
-    add("figure", "Plot as a figure..." if len(keys) <= 1
-        else f"Plot {len(keys)} as one figure...",
+    add("figure", "Open in figure composer..." if len(keys) <= 1
+        else f"Open {len(keys)} in one figure composer...",
         "One panel per selected dataset, in the figure composer.")
     add("stack", "Stack plot (EDC / MDC)...",
         "A waterfall of EDCs or MDCs across the cut.")
@@ -502,12 +502,13 @@ def show_list_menu(position):
         "Combine two cuts: linear or circular dichroism, dividing by a "
         "reference, A \u2212 B, A / B, (A \u2212 B)/(A + B), A + B. The first "
         "selected is A; the window can swap them.")
-    add("combine", "Combine cuts into a map..." if len(keys) <= 1
-        else f"Combine {len(keys)} cuts into a map...",
-        "Stack cuts measured with the same settings into one map along an "
-        "axis of your own: temperature, gate voltage, photon energy (a kz "
-        "map)... You choose the axis name, start and step, and the order.")
-    # Processing is the Process... button under the list, not in here: one
+    add("combine", "Combine datasets..." if len(keys) <= 1
+        else f"Combine {len(keys)} datasets...",
+        "Stack cuts into one map along an axis of your own (temperature, "
+        "gate voltage, photon energy -> a kz map...), or join the pieces of "
+        "a measurement taken in segments -- a map's deflector range, a kz "
+        "map's photon-energy range, a cut's energy window -- end to end.")
+    # Processing is the Smooth / derivative... button under the list, not in here: one
     # way in, where it is always visible.
     menu.addSeparator()
     add("save", "Save dataset..." if len(keys) <= 1
@@ -550,7 +551,7 @@ def run_list_action(name):
         "corelevel": open_core_level_check,
         "view3d": open_volume_view,
         "arithmetic": open_cut_arithmetic,
-        "combine": combine_selected_cuts,
+        "combine": combine_selected,
         "save": save_selected,
         "log": show_operations_log,
         "remove": remove_selected,
@@ -595,7 +596,7 @@ def plot_selected_as_figure():
         QApplication.restoreOverrideCursor()
 
     if not panels:
-        QMessageBox.warning(win, "Plot as a figure",
+        QMessageBox.warning(win, "Figure composer",
                             "Nothing could be plotted:\n" + "\n".join(problems))
         return None
     window = figure_window(panels)
@@ -1262,7 +1263,7 @@ def open_data_operations():
     keys = selected_keys()
     if not keys:
         ui.statusbar.showMessage("Select one or more datasets first")
-        QMessageBox.information(win, "Data operations",
+        QMessageBox.information(win, "Crop / bin / normalise",
                                  "Select the dataset(s) to work on first.")
         return None
 
@@ -1290,7 +1291,7 @@ def open_data_operations():
         datasets.append((label_for(key), data))
 
     if problems or not datasets:
-        QMessageBox.warning(win, "Data operations",
+        QMessageBox.warning(win, "Crop / bin / normalise",
                              "These cannot be operated on:\n" + "\n".join(problems or
                              ["nothing usable was selected"]))
         return None
@@ -1304,7 +1305,7 @@ def open_data_operations():
         listing = "\n".join(f"  {name}: {kind} {' x '.join(str(n) for n in shape)}"
                              for (name, _), (kind, shape) in zip(datasets, shapes))
         QMessageBox.warning(
-            win, "Data operations",
+            win, "Crop / bin / normalise",
             "The selected datasets are not the same format, so one set of "
             "bounds or factors cannot describe them all. Select datasets with "
             "the same kind and the same number of points on every axis:\n\n"
@@ -1336,7 +1337,7 @@ def open_processing():
     keys = selected_keys()
     if not keys:
         ui.statusbar.showMessage("Select one or more datasets first")
-        QMessageBox.information(win, "Data processing",
+        QMessageBox.information(win, "Smooth / derivative",
                                 "Select the dataset(s) to work on first.")
         return None
 
@@ -1357,7 +1358,7 @@ def open_processing():
 
     if not datasets:
         QMessageBox.warning(
-            win, "Data processing",
+            win, "Smooth / derivative",
             "These cannot be processed:\n" + "\n".join(problems or
             ["nothing usable was selected"]) +
             "\n\nOpen a spatial scan first and process a cut taken from it.")
@@ -1366,7 +1367,7 @@ def open_processing():
     kinds = {data.kind for _, data in datasets}
     if len(kinds) > 1:
         QMessageBox.warning(
-            win, "Data processing",
+            win, "Smooth / derivative",
             "Cuts and maps need different panels, so they cannot be processed "
             "in one go. Select one kind at a time.")
         release()
@@ -1594,83 +1595,122 @@ def open_cut_arithmetic():
     return dialog
 
 
-def combine_selected_cuts(ask=None, dialog_hook=None):
-    """Stack the selected cuts into one map along an axis the user names.
+def combine_selected(ask=None, dialog_hook=None):
+    """Combine the selected datasets into one.
 
-    The cuts must share their grid (see :mod:`tools.stackcuts`). First asks
-    whether to keep the list's order; if not, the dialog lets the cuts be
-    dragged into order. The dialog also asks for the new axis -- role, name,
-    unit, start and step. The result is listed like any computed dataset.
+    Two ways (see :mod:`ui.stackcuts`): cuts can be *stacked* into a map
+    along an axis the user names, and cuts or cubes of one kind (maps, kz
+    maps, k-maps) can be *joined* end to end along one of their own axes --
+    the pieces of a measurement taken in segments. For a stack of cuts on
+    one grid, first asks whether to keep the list's order; if not, the
+    dialog lets the cuts be dragged into order. The result is listed like
+    any computed dataset.
 
     ``ask`` and ``dialog_hook`` stand in for the order question and for
     running the dialog, for the tests.
     """
     from tools import stackcuts
-    from ui.stackcuts import CombineCutsDialog, combined_dataset
+    from ui.stackcuts import CombineCutsDialog, combined_dataset, joined_dataset
 
     keys = selected_keys()
-    title = "Combine cuts"
+    title = "Combine datasets"
     if len(keys) < 2:
-        QMessageBox.information(win, title, "Select at least two cuts.")
+        QMessageBox.information(win, title, "Select at least two datasets.")
         return None
-    cuts = []
-    release = lambda: release_once(*[data for _, data in cuts])()  # noqa: E731
+    kinds = {str(loaded_items.get(k, {}).get("kind", "")).lower() for k in keys}
+    if len(kinds) != 1:
+        QMessageBox.information(
+            win, title, "The selected datasets are of different kinds ("
+                        + ", ".join(sorted(kinds)) + "). Combine cuts with "
+                        "cuts, maps with maps, kz maps with kz maps.")
+        return None
+    datasets = []
+    release = lambda: release_once(*[data for _, data in datasets])()  # noqa: E731
     for key in keys:
-        if str(loaded_items.get(key, {}).get("kind", "")).lower() != "cut":
-            release()
-            QMessageBox.information(
-                win, title, f"{label_for(key)} is not a cut; only cuts can be "
-                            f"combined into a map.")
-            return None
         try:
             data = load_dataset(key)
         except Exception as exc:                            # noqa: BLE001
             release()
             QMessageBox.warning(win, title, str(exc))
             return None
-        cuts.append((label_for(key), data))
+        datasets.append((label_for(key), data))
     try:
-        problem = stackcuts.compatibility(
-            [(name, (data.scan.x, data.scan.y), data.cut_frame,
-              dict(data.scan.labels or {})) for name, data in cuts])
-        if problem:
+        kind = datasets[0][1].kind
+        if kind != "cut" and kind not in CUBE_KINDS:
             QMessageBox.information(
-                win, title, "These cuts cannot be combined: they must have "
-                            "the same axes, point for point.\n\n" + problem)
+                win, title, f"A {kind} cannot be combined; cuts, maps, kz "
+                            f"maps and k-maps can.")
             return None
+        names = [name for name, _ in datasets]
+        from loader.nxs_file import axis_slots
+        slots = axis_slots(kind, "constructor")
+        pieces = []
+        for _name, data in datasets:
+            labels = dict(data.scan.labels or {})
+            pieces.append((tuple(np.asarray(getattr(data.scan, slot), dtype=float)
+                                 for slot in slots),
+                           [labels.get(slot, slot) for slot in slots]))
 
-        names = [name for name, _ in cuts]
-        listing = "\n".join(f"  {i + 1}. {n}" for i, n in enumerate(names))
-        if ask is None:
-            answer = QMessageBox.question(
-                win, title,
-                f"Combine the {len(names)} cuts in this order?\n\n{listing}"
-                f"\n\nYes: this order.  No: choose the order.",
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                QMessageBox.Yes)
-            if answer == QMessageBox.Cancel:
-                return None
-            keep_order = answer == QMessageBox.Yes
-        else:
-            keep_order = ask(names)
-            if keep_order is None:
-                return None
+        stack_problem = ""
+        if kind == "cut":
+            stack_problem = stackcuts.compatibility(
+                [(name, (data.scan.x, data.scan.y), data.cut_frame,
+                  dict(data.scan.labels or {})) for name, data in datasets])
+            if stack_problem:
+                stack_problem = ("Stacking needs cuts with the same axes, "
+                                 "point for point: " + stack_problem)
 
-        dialog = CombineCutsDialog(names, reorder=not keep_order, parent=win)
+        keep_order = False
+        if kind == "cut" and not stack_problem:
+            listing = "\n".join(f"  {i + 1}. {n}" for i, n in enumerate(names))
+            if ask is None:
+                answer = QMessageBox.question(
+                    win, title,
+                    f"Combine the {len(names)} cuts in this order?\n\n{listing}"
+                    f"\n\nYes: this order.  No: choose the order.",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                    QMessageBox.Yes)
+                if answer == QMessageBox.Cancel:
+                    return None
+                keep_order = answer == QMessageBox.Yes
+            else:
+                keep_order = ask(names)
+                if keep_order is None:
+                    return None
+
+        dialog = CombineCutsDialog(names, reorder=not keep_order, parent=win,
+                                   pieces=pieces, can_stack=kind == "cut",
+                                   stack_problem=stack_problem)
         accepted = (dialog_hook(dialog) if dialog_hook is not None
                     else dialog.exec_() == dialog.Accepted)
         if not accepted:
             return None
-        role, axis_name, unit, values = dialog.axis()
         order = dialog.order()
-        label = unique_name(f"{names[order[0]]} + {len(names) - 1} "
-                            f"[{axis_name or 'stack'}]")
-        result = combined_dataset(cuts, order, role, axis_name, unit, values,
-                                  label)
+        if dialog.mode() == "stack":
+            role, axis_name, unit, values = dialog.axis()
+            label = unique_name(f"{names[order[0]]} + {len(names) - 1} "
+                                f"[{axis_name or 'stack'}]")
+            result = combined_dataset(datasets, order, role, axis_name, unit,
+                                      values, label)
+        else:
+            plan = dialog.join_plan()
+            if not isinstance(plan, dict):
+                QMessageBox.information(win, title, f"Cannot join: {plan}")
+                return None
+            label = unique_name(f"{names[order[0]]} + {len(names) - 1} "
+                                f"[joined]")
+            result = joined_dataset(datasets, order, dialog.join_axis(),
+                                    dialog.overlap(), label)
+            if plan["notes"]:
+                ui.statusbar.showMessage(" ".join(plan["notes"]))
     finally:
         release()
     _list_computed([result])
     return result
+
+
+#: The old name, from when only cuts could be combined.
+combine_selected_cuts = combine_selected
 
 
 def await_list_selection(on_chosen, *, kind: str = "cut", exclude=None,
@@ -2179,7 +2219,7 @@ def SetConnect():
     # click. Double-click still opens a viewer.
     ui.FilePathListWidget.itemDoubleClicked.connect(open_selected)
     ui.FilePathListWidget.customContextMenuRequested.connect(show_list_menu)
-    ui.CombineDataButton.clicked.connect(lambda: combine_selected_cuts())
+    ui.CombineDataButton.clicked.connect(lambda: combine_selected())
 
     # The metadata filter and its CSV export live in the information
     # window now, and are wired when that window is first made.

@@ -63,7 +63,7 @@ def momentum_cut_reason(data) -> str:
             f"eV·Å and an effective mass is ħ²/2mₑ over eV·Å², so an "
             f"angle axis makes every number here wrong by a factor that "
             f"cannot be recovered later — while still looking reasonable.\n\n"
-            f"Use “Cut k conversion” in the cut viewer first, or take the "
+            f"Use “Convert to momentum (k)” in the cut viewer first, or take the "
             f"slice from a converted k-map.")
 
 

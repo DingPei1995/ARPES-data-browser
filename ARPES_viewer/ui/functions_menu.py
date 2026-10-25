@@ -77,10 +77,10 @@ class FunctionsMenuMixin:
 
     #: Sections, in the order they are shown. A function added under any
     #: other name gets a section of its own, after these and before "Slice".
-    FUNCTION_SECTIONS = ("Analysis", "Data operations", "Visualization")
+    FUNCTION_SECTIONS = ("Analysis", "Transform", "Visualization")
 
     def add_function(self, text: str, slot, tooltip: str = "", *,
-                     section: str = "Data operations", visible: bool = True,
+                     section: str = "Transform", visible: bool = True,
                      enabled: bool = True) -> QAction:
         """Offer ``slot`` in this window's **Functions** menu.
 

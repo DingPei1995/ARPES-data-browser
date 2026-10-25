@@ -56,6 +56,7 @@ from tools import colormaps
 from tools import export
 from loader.nxs_file import (load_soleil_nxs, to_kspace_cube, NxsScan,
                              save_dataset, CUBE_KINDS)
+from ui.plot_tools import draw_guides, guides_of, plot_tools_button
 
 pg.setConfigOption("background", (245, 241, 249))
 pg.setConfigOption("foreground", (102, 126, 161))
@@ -2592,6 +2593,13 @@ class ExportDialog(QDialog):
             "measured point as a hard rectangle, which is the honest choice "
             "for a coarse scan.")
         form.addRow("", self.smooth_export)
+        self.with_guides = QCheckBox("Include the Plot tools guides")
+        self.with_guides.setChecked(True)
+        self.with_guides.setToolTip(
+            "Draw the guide lines and labels added with Plot tools on the "
+            "image, as they are on screen.")
+        self.with_guides.setVisible(bool(guides_of(self.view)))
+        form.addRow("", self.with_guides)
 
         self.image_size_label = QLabel("")
         self.image_size_label.setWordWrap(True)
@@ -2768,6 +2776,16 @@ class ExportDialog(QDialog):
             width=self.width_box.value(), height=self.height_box.value(),
             interpolate=self.smooth_export.isChecked(),
             invert_x=self.view.axis_inverted(0), invert_y=self.view.axis_inverted(1))
+        guides = guides_of(self.view)
+        if guides and self.with_guides.isChecked():
+            # Line widths as on screen, scaled with the picture: a 1.5 px
+            # line on a 3000 px export would vanish.
+            shown = self.view.view_box.sceneBoundingRect().width()
+            rgba = draw_guides(
+                rgba, guides, x_range=x_range, y_range=y_range,
+                invert_x=self.view.axis_inverted(0),
+                invert_y=self.view.axis_inverted(1),
+                scale=max(1.0, self.width_box.value() / max(shown, 1.0)))
         if not self.with_axes.isChecked():
             return rgba
         return render_framed(rgba, x_range=x_range, y_range=y_range,
@@ -4453,7 +4471,13 @@ class FrameWindow(QWidget):
         bar.addWidget(self.colormap_combo)
         bar.addWidget(self.flip_cb)
         bar.addWidget(separator())
-        self.figure_button = QPushButton("Plot tools")
+        # Two buttons with two jobs. "Plot tools" draws on this live panel
+        # (guide lines, labels); "Figure composer" makes a figure for a
+        # paper out of it, in a window of its own with its own "Figure
+        # tools". Both used to be called "Plot tools".
+        self.plot_tools_button = plot_tools_button(self)
+        bar.addWidget(self.plot_tools_button)
+        self.figure_button = QPushButton("Figure composer...")
         self.figure_button.setToolTip(
             "Turn this panel into a figure for a paper: panel letters, a "
             "colour bar, editable labels, annotations, a second axis, and "

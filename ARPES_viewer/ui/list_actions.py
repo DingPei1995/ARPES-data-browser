@@ -41,7 +41,8 @@ RULES = {
     "corelevel": ("one", frozenset({"cut"}), "a cut"),
     "view3d": ("one", CUBES, "a map"),
     "arithmetic": ("two", frozenset({"cut"}), "two cuts"),
-    "combine": ("many", frozenset({"cut"}), "two or more cuts"),
+    "combine": ("many", frozenset({"cut"}) | CUBES,
+                "two or more cuts or maps of one kind"),
     "save": ("any", None, "datasets"),
     "remove": ("any", "all", "datasets"),
     "log": ("none", "all", ""),
@@ -82,4 +83,7 @@ def availability(action: str, rows):
             return False, (f"Works on {wanted} only; “{name}” is "
                            f"{'a ' if kind_of(label) != 'unknown' else ''}"
                            f"{what}.")
+    if action == "combine" and len({kind_of(label) for _, label in rows}) > 1:
+        return False, ("Combines datasets of one kind: cuts with cuts, maps "
+                       "with maps, kz maps with kz maps.")
     return True, ""

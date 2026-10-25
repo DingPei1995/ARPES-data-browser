@@ -490,7 +490,7 @@ class ProcessDialog(QDialog):
         super().__init__(parent)
         self.datasets = list(datasets)          # [(label, data), ...]
         self.colormap, self.flip = colormap, flip
-        self.setWindowTitle("Data processing (2D)")
+        self.setWindowTitle("Smooth / derivative (2D)")
         self.setModal(False)
         self.resize(1000, 900)
 
@@ -1003,7 +1003,7 @@ class ProcessDialog(QDialog):
         try:
             key, params, run = self.operation()
         except Exception as exc:
-            QMessageBox.warning(self, "Data processing", str(exc))
+            QMessageBox.warning(self, "Smooth / derivative", str(exc))
             return None
 
         try:
@@ -1014,7 +1014,7 @@ class ProcessDialog(QDialog):
                   np.asarray(data.scan.y, dtype=float)])
                 for name, data in self.datasets]
         except Exception as exc:
-            QMessageBox.warning(self, "Data processing", f"Could not read: {exc}")
+            QMessageBox.warning(self, "Smooth / derivative", f"Could not read: {exc}")
             return None
 
         def work(report):
@@ -1030,7 +1030,7 @@ class ProcessDialog(QDialog):
                 self, "Processing", work,
                 on_done=lambda made: self._finish_apply(made, key),
                 on_error=lambda exc: QMessageBox.warning(
-                    self, "Data processing", str(exc)),
+                    self, "Smooth / derivative", str(exc)),
                 on_cancel=lambda: self.note.setText("Processing cancelled."))
             if started:
                 self.note.setText("Processing...")
@@ -1039,7 +1039,7 @@ class ProcessDialog(QDialog):
         try:
             created = work(lambda *a, **k: None)
         except Exception as exc:
-            QMessageBox.warning(self, "Data processing", str(exc))
+            QMessageBox.warning(self, "Smooth / derivative", str(exc))
             return None
         return self._finish_apply(created, key)
 

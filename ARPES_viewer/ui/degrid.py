@@ -3,8 +3,8 @@ ui/degrid.py
 ============
 The De-grid window: remove the detector's grid from a cut or a whole map.
 
-Opened from a cut viewer (**De-grid...**, that cut only) or from a map's
-contour or slit-cut window (**De-grid map...**, the whole map -- angle maps
+Opened from a cut viewer (**Remove detector grid...**, that cut only) or from a map's
+contour or slit-cut window (**Remove detector grid...**, the whole map -- angle maps
 and kz maps alike). The defaults are the configuration that did best on the
 real data it was developed on; the Advanced box is there for when it does
 not, and can stay closed. :mod:`tools.degrid` has the method and the

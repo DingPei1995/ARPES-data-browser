@@ -844,7 +844,7 @@ class VolumeProcessDialog(QDialog):
         super().__init__(parent)
         self.datasets = list(datasets)
         self.colormap, self.flip = colormap, flip
-        self.setWindowTitle("Data processing (3D)")
+        self.setWindowTitle("Smooth / derivative (3D)")
         self.setModal(False)
         self.resize(1000, 880)
 
@@ -1150,7 +1150,7 @@ class VolumeProcessDialog(QDialog):
                                  [np.asarray(x, float), np.asarray(k, float),
                                   np.asarray(z, float)]))
         except Exception as exc:
-            QMessageBox.warning(self, "Data processing (3D)",
+            QMessageBox.warning(self, "Smooth / derivative (3D)",
                                 f"Could not read the cube: {exc}")
             return None
 
@@ -1179,7 +1179,7 @@ class VolumeProcessDialog(QDialog):
                 if symmetry["mirrors"]:
                     params["mirrors"] = list(symmetry["mirrors"])
         except Exception as exc:
-            QMessageBox.warning(self, "Data processing (3D)", str(exc))
+            QMessageBox.warning(self, "Smooth / derivative (3D)", str(exc))
             return None
 
         def work(report):
@@ -1219,7 +1219,7 @@ class VolumeProcessDialog(QDialog):
                 self, "Processing the cube", work,
                 on_done=self._finish_apply,
                 on_error=lambda exc: QMessageBox.warning(
-                    self, "Data processing (3D)", str(exc)),
+                    self, "Smooth / derivative (3D)", str(exc)),
                 on_cancel=lambda: self.note.setText("Processing cancelled."))
             if started:
                 self.note.setText("Processing the cube...")
@@ -1228,7 +1228,7 @@ class VolumeProcessDialog(QDialog):
         try:
             created = work(lambda *a, **k: None)
         except Exception as exc:
-            QMessageBox.warning(self, "Data processing (3D)", str(exc))
+            QMessageBox.warning(self, "Smooth / derivative (3D)", str(exc))
             return None
         return self._finish_apply(created)
 

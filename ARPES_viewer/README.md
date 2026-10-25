@@ -1,7 +1,11 @@
 # ARPES viewer
 
-**Version 2026-10-12** (last modified 12 October 2026) — see
-[CHANGELOG.md](CHANGELOG.md) for what changed.
+**Version 1.0.0** (last modified 25 October 2026) — see
+[CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
+`version.py` and is shown in the main window's title bar and at its foot,
+with a link to this repository for bug reports and the latest version
+(<https://github.com/DingPei1995/ARPES-data-browser>). Please quote it when
+reporting a bug.
 
 A Python/PyQt5 program for ARPES data: browse the measurements in a folder,
 open them in their own windows, convert to momentum, cut, fit, process, and
@@ -159,8 +163,23 @@ Right-click a row (or a selection) for what operates on datasets: open,
 **Open slit cut** / **Open deflector cut** (a map's cut in a window of its
 own, without its contour on screen), information, rename, a figure, the
 stack plot, the MDC/EDC fit, the 3-D view, **Cut arithmetic on the two...**
-(see below), save, remove and the session log. Processing is the
-**Process...** button under the list, and only there.
+(see below), **Combine N datasets...**, save, remove and the session log.
+
+Under the list, in a box titled *With the selected datasets*, three buttons
+named for what they do (they were *Combine data*, *Data operations* and
+*Process*, names that did not tell the three apart):
+
+- **Combine datasets...** -- stack cuts into a map along an axis of your
+  own, or join the pieces of a measurement taken in segments (a map's
+  deflector range, a kz map's photon energies, a cut's energy window) end
+  to end. See *Combining datasets* below.
+- **Crop / bin / normalise...** -- change the grid or the scale: crop to a
+  range, bin points together, normalise each spectrum to itself.
+- **Smooth / derivative...** -- the filters that bring out bands: smoothing,
+  derivatives, curvature, backgrounds, symmetrisation.
+
+At the foot of the panel: the version and its date, and the link to GitHub
+for bug reports and updates.
 
 The menu only offers what fits the selection. An entry is greyed out when
 the selected dataset is the wrong kind (a stack plot needs a cut, the 3-D
@@ -173,7 +192,8 @@ not fit and why -- at once, as the pointer moves.
 |---|---|---|
 | Open, Show information, Rename | one | any |
 | Open slit cut / deflector cut | one or more | maps (angle, kz, k) |
-| Plot as a figure | one or more | cuts, EDC / MDC / spin EDC |
+| Open in figure composer | one or more | cuts, EDC / MDC / spin EDC |
+| Combine datasets | two or more | cuts, or maps of one kind |
 | Stack plot, MDC / EDC fit, Core-level check | one | cut |
 | 3D view | one | map |
 | Cut arithmetic on the two | two | cuts |
@@ -259,18 +279,36 @@ is listed as an MDC even if it was the "EDC" of a constant-energy contour.
 ### The top row, and the Functions menu
 
 Every viewer has **one row** along its top: the colormap (and Flip) and the
-view controls (axis ranges, Auto, Inv, Reset, Grid) side by side, and a
-**Functions** menu. A map's window also keeps its **Deflector cut** and
+view controls (axis ranges, Auto, Inv, Reset, Grid) side by side, a
+**Functions** menu, and **Plot tools**. A map's window also keeps its **Deflector cut** and
 **Slit cut** buttons there, since the cuts are how a map is navigated.
 
 Everything else a viewer can do is in **Functions**, in sections:
 
-| Viewer | Analysis | Data operations | Visualization | Slice |
+| Viewer | Analysis | Transform | Visualization | Slice |
 |---|---|---|---|---|
-| map / kz map / k-map | | Arbitrary cut, Map k conversion (angle maps), kz map processing and kz -> momentum (kz maps), De-grid map (maps as measured) | Brillouin zone (k-maps), Slice figure | Save slice to the main list, Open slice in a new panel |
-| cut | Fermi level, MDC / EDC fit | FS correction, Cut k conversion, Cut arithmetic, De-grid | | same |
-| slit cut of a map | | FS correction, De-grid map | | same |
-| curve (EDC, MDC, spin EDC) | Curve fit, Spin analysis (spin EDCs) | Crop, Bin, Normalise, Subtract a background, Shift the axis, Add counting errors (√N) | As a figure | |
+| map / kz map / k-map | | Arbitrary cut, Convert to momentum (k) (angle maps), Align Fermi levels (kz map) and Convert to momentum (kz, k∥) (kz maps), Remove detector grid (maps as measured) | Brillouin zone (k-maps), Multi-slice figure | Save slice to the main list, Freeze slice in a new window |
+| cut | Fermi edge fit, MDC / EDC fit | Straighten bands (FS correction), Convert to momentum (k), Cut arithmetic, Remove detector grid | | same |
+| slit cut of a map | | Straighten bands (FS correction), Remove detector grid | | same |
+| curve (EDC, MDC, spin EDC) | Curve fit, Spin analysis (spin EDCs) | Crop, Bin, Normalise, Subtract a background, Shift the axis, Add counting errors (√N) | Figure composer | |
+
+The section that was called *Data operations* is **Transform**, and several
+entries were renamed to say what they do -- *Fermi level* → **Fermi edge
+fit**, *Cut / Map k conversion* → **Convert to momentum (k)**, *kz map
+processing* → **Align Fermi levels (kz map)**, *kz -> momentum* → **Convert
+to momentum (kz, k∥)**, *FS correction* → **Straighten bands (FS
+correction)**, *De-grid* → **Remove detector grid**, *Slice figure* →
+**Multi-slice figure**, *Open slice in a new panel* → **Freeze slice in a
+new window**. The sections below keep the old names as headings where the
+history is easier to follow with them.
+
+**Plot tools** (every viewer and every frozen slice, on the top row) draws
+on the live plot: vertical, horizontal or angled guide lines and text
+labels, each in its own colour, width and style, draggable on the plot and
+drawn into the panel's image export too (`ui/plot_tools.py`). It is not the
+figure composer's **Figure tools...**, which dresses up a figure for a paper;
+the two used to share the name *Plot tools*. A frozen slice's
+**Figure composer...** button is the way from one to the other.
 
 In the curve viewer the top row keeps the display controls (error bars,
 waterfall offset, the Range); an operation chosen from Functions opens the
@@ -339,8 +377,16 @@ mouse to pause; a map held in memory follows it live.
   reference, differences, ratios and sums between two cuts; see below.
 - **Processing** (2-D and over a cube) -- smoothing, derivatives, curvature,
   backgrounds, symmetrisation, despiking.
-- **Data operations** -- truncate, self-normalise, compress, on several
-  datasets at once when they really are the same format.
+- **Crop / bin / normalise** -- truncate, self-normalise, compress, on
+  several datasets at once when they really are the same format.
+- **Combining datasets** -- *Stack* cuts into a map along a new axis (a
+  photon-energy series of angle cuts becomes a kz map), or *Join* cuts,
+  maps, kz maps or k-maps of one kind end to end along one of their own
+  axes (`tools/combine.py`). Pieces on one grid are copied as measured;
+  a different step or offset is interpolated onto the first piece's step;
+  other axes that differ are resampled onto the range all pieces cover;
+  overlaps are averaged (or the earlier / later piece kept); gaps are left
+  at zero and reported.
 - **Brillouin zone** -- overlay a conventional or irreducible zone, or a
   moiré zone, on a converted contour. Space group first, then the lattice
   parameters it constrains; a 3-D preview shows how the cut plane sits,
@@ -487,7 +533,7 @@ calibration can be checked or reused later.
 
 ### kz -> momentum
 
-**Functions → kz -> momentum...** on a kz map's viewer converts it to `(k_z, k_par, E)`
+**Functions → Convert to momentum (kz, k∥)...** on a kz map's viewer converts it to `(k_z, k_par, E)`
 in Å⁻¹, with k_z along the first axis.
 
 The conversion is a coordinate change:
@@ -538,7 +584,7 @@ Channels can be hidden, offset into a waterfall (**Offset**), and read off
 with the cursor. **Range** is a draggable x window used by the operations
 and the panels below.
 
-**Operations** (**Functions → Data operations**) each make a new dataset in
+**Operations** (**Functions → Transform**) each make a new dataset in
 the list, with the step recorded:
 
 | operation | what it does | uncertainties |
@@ -621,7 +667,7 @@ only data still on the detector's pixels can be de-gridded, so the button
 refuses anything k-converted, Fermi-surface corrected, kz-aligned,
 interpolated along a path, smoothed or differentiated, and says why.
 
-**A map or kz map** -- **Functions → De-grid map...** on the contour window
+**A map or kz map** -- **Functions → Remove detector grid...** on the contour window
 or on its slit-cut window; the whole map is done at once. No reference measurement is
 needed: the map is its own reference. The grid stays on the same pixels in
 every slice while the photoemission moves, so it survives an average over
@@ -649,7 +695,7 @@ grid's power over that of the same k-space regions without a grid:
 falls as the count rate rises (their correlation was −0.99 on LHhv). A
 113-slice ANTARES map takes about a minute, with a progress bar.
 
-**A cut** -- **Functions → De-grid...** on the cut viewer. Best is a grid from a map
+**A cut** -- **Functions → Remove detector grid...** on the cut viewer. Best is a grid from a map
 taken with the same lens mode and pass energy: tick **Also list the grid
 pattern** when de-gridding the map and a `[grid]` dataset goes to the list;
 the cut's window finds it (same detector frame) and chooses it when the
@@ -740,7 +786,11 @@ the scale applied to B and the settings in its processing history.
 
 The **figure composer** lays panels out for a paper: shared colour scales,
 labels only on the outer edges, and a slice-series page (a row of
-constant-energy contours, or of cuts) from one cube.
+constant-energy contours, or of cuts) from one cube. It is reached from the
+list (right-click → **Open in figure composer...**), from a frozen slice's
+**Figure composer...** button, or from a map's **Multi-slice figure...**;
+its **Figure tools...** set sizes, fonts, ticks, colour bars and
+annotations.
 
 Export gives what the panel actually shows, in the formats that make sense
 for it -- image, data, or both.
@@ -848,6 +898,7 @@ you what it may depend on.
 | `tools/kspace.py`, `tools/cutk.py` | Angle-to-momentum conversion, for a map and for a single cut, and the rotation read off a picked direction. |
 | `tools/analysis.py` | Arbitrary-direction cut and Fermi-surface correction. |
 | `tools/dataops.py` | Truncate / self-normalise / compress, and the axis tables derived from `loader/nxs_file.py`. |
+| `tools/stackcuts.py`, `tools/combine.py` | Combining datasets: stacking cuts along a new axis, and joining pieces end to end along one of their own axes. |
 | `tools/process.py`, `tools/volume.py` | Smoothing, derivatives, curvature, backgrounds, symmetrisation -- in 2-D and over a cube. |
 | `tools/kzmap.py` | Calibrating a photon-energy scan against its own Fermi edges: fit per spectrum, align, crop, normalise. |
 | `tools/kzconv.py` | The k_z conversion: the analytic forward and inverse maps, the resampling, and the inner-potential scan. |
@@ -863,17 +914,20 @@ you what it may depend on.
 | `tools/colormaps.py`, `tools/system.py` | Generated colormap tables; the stand-ins for the lab's `tools_packages`. |
 | **`ui/`** | |
 | `ui/main_window.py` | The launcher window's layout. |
+| `version.py` | The version number and date shown in the launcher. |
+| `ui/stackcuts.py` | The Combine datasets window (stack or join). |
+| `ui/plot_tools.py` | Plot tools: guide lines and labels on a live viewer, and drawing them into an image export. |
 | `ui/windows.py`, `ui/widgets.py` | The per-file viewers, and the image panels they are built from. |
 | `ui/list_actions.py` | Which right-click entries of the main list fit a selection (by kind and row count), Qt-free. |
 | `ui/functions_menu.py` | The Functions menu shared by every viewer (`add_function`). |
 | `ui/gcguard.py` | Cyclic garbage collection from the event loop only, never inside a Qt call (prevents random crashes on opening and closing windows). |
 | `ui/cursorlink.py` | The readout cursor shared by a map's contour and its cut windows (positions only; widths stay in each window). |
 | `ui/loader_dialog.py` | The Load-data window: files, reader, axis options. |
-| `ui/kzmap.py` | The kz map processing window. |
+| `ui/kzmap.py` | The Align Fermi levels (kz map) window. |
 | `ui/kzconv.py` | The kz-to-momentum window: V0, the zone lines, the period tool. |
 | `ui/cutops.py` | The cut arithmetic window. |
 | `ui/corelevel.py` | The core-level check: elements, energy reference, results window. |
-| `ui/degrid.py` | The De-grid window. |
+| `ui/degrid.py` | The Remove detector grid window. |
 | `ui/curves.py` | The curve viewer, its curve fit panel and the spin analysis panel. |
 | `ui/jobs.py` | Running one long operation at a time off the GUI thread. |
 | `ui/figure.py`, `ui/fit.py`, `ui/process.py`, `ui/volume.py` | The figure composer, the MDC/EDC fit panel, and the 2-D and 3-D processing panels. |

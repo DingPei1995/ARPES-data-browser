@@ -228,10 +228,13 @@ class CurveWindow(FunctionsMenuMixin, QMainWindow):
                 "set it up there and press Apply. Each makes a new dataset in "
                 "the list.")
         self.figure_action = self.add_function(
-            "As a figure...", self.to_figure,
+            "Figure composer...", self.to_figure,
             "The channels shown, as a figure to adjust and export.",
             section="Visualization")
         bar.addWidget(self.make_functions_button())
+        from ui.plot_tools import plot_tools_button
+        self.plot_tools_button = plot_tools_button(self)
+        bar.addWidget(self.plot_tools_button)
         bar.addWidget(separator())
         bar.addWidget(section_label("View"))
         self.errors_box = QCheckBox("Error bars")

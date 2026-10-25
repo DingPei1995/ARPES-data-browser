@@ -2,7 +2,10 @@
 
 *[English version / 英文版](USER_GUIDE_en.md) · [Version française / 法文版](USER_GUIDE_fr.md)*
 
-*最后更新：2026 年 10 月 24 日*
+*最后更新：2026 年 10 月 25 日——对应 ARPES viewer v1.0.0*
+
+程序的版本号和更新日期显示在主窗口标题栏和主窗口最下方。报告 bug、提问或获取最新版本：
+<https://github.com/DingPei1995/ARPES-data-browser>（报告 bug 时请注明版本号）。
 
 本指南按照日常使用的顺序，配合截图介绍程序的主要功能：载入数据、浏览数据、
 转换到动量空间、分析，以及制作论文图。每一步背后的技术细节（公式、测试结果、
@@ -90,12 +93,38 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
 | 操作 | 方法 |
 |---|---|
 | 在独立窗口中打开数据集 | **双击**该行（或右键 → **Open**） |
-| 把多张 cut 合并成一个 map（温度、门电压、光子能量 → kz map 等） | 选中这些 cut → **Combine data...**（或右键 → **Combine N cuts into a map...**） |
+| 把多张 cut 叠成一个 map（温度、门电压、光子能量 → kz map 等），或把分段采集的 map / kz map 拼接起来 | 选中它们 → **Combine datasets...**（或右键 → **Combine N datasets...**） |
 | 其余所有针对数据集的操作 | **右键**该行（或选中的多行） |
 | 查看各轴的首末值、点数、步长 | 右键 → **Show information**（填入 *Data Information* 表） |
-| 同时对多个数据集截取 / 自归一 / 压缩 | **Data operations...** |
-| 平滑、求导、曲率、扣背景、对称化 | **Process...** |
+| 改变数据的网格或标度——裁剪范围、合并像素、每张谱自归一——可多个数据集同时进行 | **Crop / bin / normalise...** |
+| 突出能带的滤波——平滑、二阶导数、曲率、扣背景、对称化 | **Smooth / derivative...** |
 | 查看并释放内存 | 底部的 **Memory** 区 |
+| 查看当前版本、报告 bug、获取最新版本 | 标题栏，以及窗口最后一行（GitHub 链接） |
+
+列表下方的三个按钮位于 **With the selected datasets**（对选中的数据集操作）框中：
+它们都作用于上方选中的行，结果都作为新行加入列表——原数据不会被修改。
+
+### 各名称对应的功能
+
+v1.0.0 中若干按钮改了名，使名称直接说明它做什么。新旧名称对照：
+
+| 现在 | 以前 | 作用 |
+|---|---|---|
+| **Combine datasets...** | Combine data... | 把 cut 叠成 map，或把分段采集的数据拼接起来 |
+| **Crop / bin / normalise...** | Data operations... | 改变网格或标度：裁剪（truncate）、合并像素（compress）、自归一 |
+| **Smooth / derivative...** | Process... | 突出能带的滤波：平滑、求导、曲率、扣背景、对称化 |
+| Functions 菜单中的 **Transform** 分组 | Data operations | 查看窗口中的转换与校正 |
+| **Fermi edge fit...** | Fermi level... | 在 cut 上拟合 E_F（及分辨率） |
+| **Convert to momentum (k)...** | Cut / Map k conversion... | 角度 → k∥ |
+| **Align Fermi levels (kz map)...** | kz map processing... | 拟合并对齐每个光子能量的 E_F |
+| **Convert to momentum (kz, k∥)...** | kz -> momentum... | 光子能量扫描 → (k_z, k∥) |
+| **Straighten bands (FS correction)...** | FS correction... | 把弯曲的费米边或特征拉直 |
+| **Remove detector grid...** | De-grid... / De-grid map... | 去除 MCP / 网栅图案 |
+| **Multi-slice figure...** | Slice figure... | 由 map 的一系列切片组成的一页图 |
+| **Freeze slice in a new window** | Open slice in a new panel | 当前切片的冻结副本 |
+| **Plot tools**（查看窗口顶部一行） | —（新增） | 在实时图上画辅助线和文字 |
+| **Figure composer...**（冻结切片窗口）、**Open in figure composer...**（列表右键） | Plot tools、Plot as a figure... | 制作论文图 |
+| **Figure tools...**（作图器内） | Plot tools | 该论文图的尺寸、字体、刻度、色标、标注等 |
 
 右键菜单只列出适用于当前选择的操作。灰色的条目在鼠标悬停时会说明原因——
 例如 *Cut arithmetic* 需要恰好两个 cut，*3D view* 需要 map。
@@ -108,26 +137,60 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
 **Clear list** 会先确认；如果本次会话中有计算得到但尚未保存的数据，会提示保存。
 磁盘上的文件永远不会被删除。
 
-### 把多张 cut 合并成一个 map
+### 合并数据集：叠加（Stack）与拼接（Join）
 
-温度序列、门电压序列，或每个光子能量一张的 cut，都可以叠成一个数据立方体，然后
-像普通 map 一样查看——在固定能量处切片，或沿新轴切片。
+**Combine datasets...**（列表下方，或右键 → **Combine N datasets...**）可以做两件
+不同的事，并会让你选择：
 
-1. 在列表中选中这些 cut（Ctrl/Shift 多选），点列表下方的 **Combine data...**，
-   或右键 → **Combine N cuts into a map...**。这些 cut 的坐标轴必须逐点一致
-   （点数、数值、单位都相同）；否则程序会指出第一张不一致的 cut 及原因。
+- **Stack（叠加）**——*仅限 cut*。每张 cut 成为新 map 的一个切片，沿一个由你命名的
+  轴：温度序列、门电压序列、每个光子能量一张的 cut。结果可以像普通 map 一样查看——
+  在固定能量处切片，或沿新轴切片。
+- **Join（拼接）**——*cut、map、kz map 或 k-map，但须同一类型*。把一次分段采集的
+  测量按其自身的某个轴首尾拼接起来：偏转角范围分两次扫描的 map、光子能量范围分几次
+  采集的 kz map、能量窗口分两半采集的 cut。
+
+**叠加 cut**
+
+1. 在列表中选中这些 cut（Ctrl/Shift 多选），点 **Combine datasets...**。叠加要求
+   各 cut 的坐标轴逐点一致（点数、数值、单位都相同）；若不一致，*Stack* 选项变灰并
+   指出第一处差异，此时可改用 *Join*。
 2. 程序会询问是否**按列表中的顺序**合并。选 *Yes* 保持该顺序；选 *No* 则可自行
    调整顺序。
-3. 在对话框中设置新轴：**Axis is**（温度、门电压、光子能量、延迟、位置、其他——
-   会自动填入 *Name* 和 *Unit*，均可修改）、**Start**（起始值）和 **Step**（间隔）。
-   每张 cut 旁边会显示它对应的数值。如果选择了调整顺序，可**拖动**各行（或用
-   **Move up** / **Move down** / **Reverse**）。点 **Combine**。
+3. 选择 **Stack**，然后设置新轴：**New axis is**（温度、门电压、光子能量、延迟、
+   位置、其他——会自动填入 *Name* 和 *Unit*，均可修改）、**Start**（起始值）和
+   **Step**（间隔）。每张 cut 旁边会显示它对应的数值。如果选择了调整顺序，可
+   **拖动**各行（或用 **Move up** / **Move down** / **Reverse**）。点 **Combine**。
 
 ![合并 cut](images/combine_cuts_dialog.png)
 
-结果作为新的一行加入列表。由角度 cut 组成的光子能量序列会成为 `kz map`，可直接
-使用 *kz map processing* 和 *kz → momentum*（见[第 13 节](#13-光子能量扫描kz)）；
+由角度 cut 组成的光子能量序列会成为 `kz map`，可直接使用 *Align Fermi levels (kz
+map)* 和 *Convert to momentum (kz, k∥)*（见[第 13 节](#13-光子能量扫描kz)）；
 其他轴得到的是 `map`，其第一个轴被标记为非角度，因此不会提供 k 转换。
+
+**拼接分段采集的数据**
+
+1. 选中各段（全是 map，或全是 kz map，或全是 cut……），点 **Combine datasets...**。
+   map 和 kz map 直接进入 *Join*。
+2. **Join along**：测量被分段的那个轴——map 默认是扫描（偏转角）轴，kz map 默认是
+   光子能量；对 cut 可选择角度轴或能量轴。
+3. **Where pieces overlap**（重叠部分）：*Average them*（取平均），或按下方列表的
+   顺序保留较早 / 较晚的一段（拖动各行可改变顺序）。
+4. 对话框列出每一段的范围，并给出 **Result**（拼接后的范围和点数），以及处理过程中
+   所做的说明。点 **Combine**。
+
+![拼接分两段采集的 map](images/combine_dialog.png)
+
+坐标轴的处理方式：
+
+- 各段在同一网格上（步长相同，范围相接或按整点重叠——通常情况）时，数据**按原样
+  复制**，不做插值。
+- 某段步长不同或有半步偏移时，会被**插值**到公共轴上（采用第一段的步长），对话框
+  会说明。
+- 若**其他轴**不同——几次采集的能量窗口相差几 meV、slit 通道数不同——所有段都会
+  重采样到它们**共同覆盖**的范围，对话框会说明。
+- 没有任何一段覆盖的区间是**空缺**，填为零并给出提示。
+- 拼接后的 kz map 仍是 `kz map`：请在拼接结果上运行 *Align Fermi levels (kz
+  map)*，而不是在各段上（各段按光子能量的拟合结果不会被带入）。
 
 ---
 
@@ -178,8 +241,8 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
 
 ![带读数光标的 cut 窗口](images/cut_viewer.png)
 
-- **顶部一行**：**Functions** 菜单（本窗口能做的所有事）、色表（每个窗口独立）
-  及 **Flip**（反转），以及视图控制——坐标范围、**Auto**、**Inv**（反向）、
+- **顶部一行**：**Functions** 菜单（本窗口能做的所有事）、**Plot tools**（在本图上
+  画辅助线和文字，见下文）、色表（每个窗口独立）及 **Flip**（反转），以及视图控制——坐标范围、**Auto**、**Inv**（反向）、
   **Reset**、**Grid**。
 - **图像上方**：**Levels** 色阶条（拖动两个滑块，或输入 **Min%/Max%** 百分位，
   **Clip** 应用）以及 **Gamma**。您设置的最小/最大值在移动切片位置时（contour 的
@@ -194,20 +257,51 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
   （见[第 15 节](#15-曲线edcmdc-与自旋分辨数据)）。
 - **图像右键 → Export** 导出该面板当前显示的内容——数据（`.nxs`）、图片，或
   矢量坐标轴（`.eps`），见[第 17 节](#17-作图与导出)。
-- **Functions → Slice → Save slice to the main list / Open slice in a new
-  panel** 保存当前切片的副本。新面板（以及空间 map 上的 *Open this position in
-  a new window*）会沿用原面板的最小/最大值和 gamma，便于直接对比。
+- **Functions → Slice → Save slice to the main list / Freeze slice in a new
+  window** 保存当前切片的副本。冻结窗口（以及空间 map 上的 *Open this position in
+  a new window*）会沿用原面板的最小/最大值和 gamma，便于直接对比。它有自己的
+  **Plot tools**，以及用来制作论文图的 **Figure composer...** 按钮
+  （见[第 17 节](#17-作图与导出)）。
 
 **Functions** 菜单按类别分组：
 
-| 窗口 | Analysis（分析） | Data operations（数据操作） | Visualization（可视化） |
+| 窗口 | Analysis（分析） | Transform（转换与校正） | Visualization（可视化） |
 |---|---|---|---|
-| map / kz map / k-map | | Arbitrary cut、Map k conversion、kz map processing、kz → momentum、De-grid map | Brillouin zone（k-map）、Slice figure |
-| cut | Fermi level、MDC / EDC fit | FS correction、Cut k conversion、Cut arithmetic、De-grid | |
-| 曲线 | Curve fit、Spin analysis | Crop、Bin、Normalise、Background、Shift axis、Add √N errors | As a figure |
+| map / kz map / k-map | | Arbitrary cut、Convert to momentum (k)、Align Fermi levels (kz map)、Convert to momentum (kz, k∥)、Remove detector grid | Brillouin zone（k-map）、Multi-slice figure |
+| cut | Fermi edge fit、MDC / EDC fit | Straighten bands (FS correction)、Convert to momentum (k)、Cut arithmetic、Remove detector grid | |
+| 曲线 | Curve fit、Spin analysis | Crop、Bin、Normalise、Background、Shift axis、Add √N errors | Figure composer |
 
 不适用于当前数据的条目不会显示；适用但暂时无法运行的条目显示为灰色，
 悬停提示会说明原因。
+
+### Plot tools：在图上画辅助线和文字
+
+每个查看窗口（cut、map、空间扫描、曲线、冻结切片）顶部一行都有 **Plot tools**
+按钮，打开一个小窗口，**直接在眼前这幅图上**作画：
+
+![cut 上的辅助线](images/plot_tools_viewer.png)
+
+| ![Plot tools](images/plot_tools.png) | |
+|---|---|
+
+- **Type**（类型）：*Vertical line*（竖线）、*Horizontal line*（横线）、*Line at an
+  angle*（过某点的斜线；角度按图本身的单位计，即斜率为 tan(角度) 个 y 单位 / x 单位）、
+  *Text label*（文字）。
+- **Position**（x, y）、**Angle**（角度）、可选的 **Label**（显示在线上，如 `E_F`、
+  `Γ`）、**Colour**（九种一键颜色，或 **More...** 自选）、**Width**（线宽）、
+  **Style**（实线、虚线、点线、点划线）和 **Text size**（字号）。
+- **Add** 在输入的位置画出（**Centre of view** 可填入当前视图中心）；**Place by
+  clicking** 则在图上点击处画出。
+- 在图上**拖动**线条即可移动，窗口中的数值同步更新。在列表中选中某条可**编辑**
+  （修改立即生效）或 **Remove**（删除）；**New guide** 结束编辑；**Remove all**
+  清空。
+- 有两个面板时（空间扫描），用 **Draw on** 选择画在哪一个上。
+- 移动切片时辅助线保持不变（浏览 map 时 E_F 线始终在 E_F 处），关闭 Plot tools
+  窗口后也保留。面板的 **Export → Image** 也会画出它们（*Include the Plot tools
+  guides*）。
+
+*Plot tools* 用于看数据；要制作论文图，请使用**作图器（Figure composer）**及其
+**Figure tools**（见[第 17 节](#17-作图与导出)）。
 
 ---
 
@@ -236,11 +330,11 @@ cut**），此时等能面窗口保持隐藏，需要时用 *Functions → Show 
 
 ## 7. Cut：从原始谱到能带参数
 
-单张 cut 的常规流程：**费米能级 → 平移能量轴 → k 转换 → MDC/EDC 拟合**。
+单张 cut 的常规流程：**费米边拟合 → 平移能量轴 → 转换到动量 → MDC/EDC 拟合**。
 
-### 7.1 费米能级
+### 7.1 费米边拟合
 
-*Functions → Fermi level...* 对选框内求和得到的 EDC 拟合费米边（费米-狄拉克
+*Functions → Fermi edge fit...* 对选框内求和得到的 EDC 拟合费米边（费米-狄拉克
 分布 × 线性态密度，再与高斯分辨率卷积）。
 
 ![费米能级对话框](images/fermi_dialog.png)
@@ -256,9 +350,9 @@ cut**），此时等能面窗口保持隐藏，需要时用 *Functions → Show 
 
 *Advanced* 区域可以除去费米截断（用于能隙与参考样品），或逐通道拟合 E_F。
 
-### 7.2 Cut 的 k 转换
+### 7.2 把 cut 转换到动量空间
 
-*Functions → Cut k conversion...* 把角度轴转换为 k∥（Å⁻¹）。一张 cut 是 (kx, ky)
+*Functions → Convert to momentum (k)...* 把角度轴转换为 k∥（Å⁻¹）。一张 cut 是 (kx, ky)
 平面上的一条线，通常不经过 Γ 点，所以对话框需要知道 Γ 的位置：手动输入角度，
 或用 **From a converted map...** 从已转换的 map 继承。
 
@@ -335,7 +429,7 @@ cut**），此时等能面窗口保持隐藏，需要时用 *Functions → Show 
 
 ### 8.1 Map 的 k 转换
 
-在等能面窗口中选择 *Functions → Map k conversion...*。把读数光标拖到应成为
+在等能面窗口中选择 *Functions → Convert to momentum (k)...*。把读数光标拖到应成为
 **k = (0, 0)** 的点（对话框会跟随光标），然后点 **Convert**，结果作为新的
 `k-map` 行加入列表。
 
@@ -392,7 +486,7 @@ segment** 可让每一段分别成为一个数据集。
 
 ### 9.2 费米面（FS）校正
 
-在 cut（或 map 的 slit cut）上 *Functions → FS correction...*，把本应平直的特征
+在 cut（或 map 的 slit cut）上 *Functions → Straighten bands (FS correction)...*，把本应平直的特征
 拉直——通常是随分析器角度弯曲的费米边。沿该特征点击若干点，程序拟合多项式
 （默认 2 阶），并把每一列在能量方向上平移。**From a reference (Au)...** 改用列表
 中的金参考谱确定曲线。在 map 的 slit cut 上操作时，同样的平移会应用到整个数据
@@ -404,7 +498,7 @@ segment** 可让每一段分别成为一个数据集。
 
 ## 10. 数据处理：平滑、求导、曲率
 
-在列表中选中一个或多个 cut（或 map），点击 **Process...**。每个结果都是新的
+在列表中选中一个或多个 cut（或 map），点击 **Smooth / derivative...**。每个结果都是新的
 数据集，并记录生成它的处理步骤。
 
 ![二维处理](images/process_dialog.png)
@@ -424,10 +518,11 @@ segment** 可让每一段分别成为一个数据集。
 
 ![三维处理](images/volume_process_dialog.png)
 
-主窗口的 **Data operations...** 可同时对一个或多个数据集进行截取（truncate）、
-自归一（self-normalise）或压缩（合并像素）——前提是它们类型相同，且各轴点数一致。
+主窗口的 **Crop / bin / normalise...** 可同时改变一个或多个数据集的网格或标度——
+前提是它们类型相同，且各轴点数一致。各页：**Crop (truncate)** 裁剪到某一范围、
+**Normalise** 每张谱自归一、**Bin (compress)** 合并像素。
 
-![数据操作](images/data_operations.png)
+![裁剪 / 合并 / 归一](images/data_operations.png)
 
 ---
 
@@ -480,9 +575,9 @@ segment** 可让每一段分别成为一个数据集。
 
 ![kz map](images/kz_map_contour.png)
 
-### 13.1 kz map 处理
+### 13.1 对齐 kz map 的费米能级
 
-文件中并没有记录每张谱真正的费米能级位置。*Functions → kz map processing...*
+文件中并没有记录每张谱真正的费米能级位置。*Functions → Align Fermi levels (kz map)...*
 直接从谱本身测量它。
 
 1. slit cut 随之打开，上面有一个选框。把选框拖到费米边处——角度范围决定求和的
@@ -494,14 +589,14 @@ segment** 可让每一段分别成为一个数据集。
    平移使其自身的费米边位于零点，把数据立方体裁剪到所有谱共有的能量范围，并
    （默认）**按每张谱的总强度归一**，以消除光通量的变化。
 
-![kz map 处理](images/kz_processing_dialog.png)
+![对齐费米能级 (kz map)](images/kz_processing_dialog.png)
 
 图中给出 E_F 随光子能量的变化。曲线平滑说明拟合可靠；拟合不可信的点会被标记，
 并用相邻点插值补上。
 
-### 13.2 kz → 动量
+### 13.2 把 kz map 转换到动量空间
 
-*Functions → kz -> momentum...* 把扫描转换为 (k_z, k∥)。
+*Functions → Convert to momentum (kz, k∥)...* 把扫描转换为 (k_z, k∥)。
 
 ![kz → 动量](images/kz_conversion_dialog.png)
 
@@ -512,7 +607,7 @@ segment** 可让每一段分别成为一个数据集。
   确定到什么精度。
 - **Measure a k_z period...**：点击相隔一个布里渊区的同一特征上的两点，程序列出
   与之匹配的倒格子晶面。
-- 黄色横幅提示费米边仍随分析器角度弯曲——应先在 slit cut 上做 FS 校正。
+- 黄色横幅提示费米边仍随分析器角度弯曲——应先在 slit cut 上做 Straighten bands (FS correction)。
 - **Convert the whole cube** 生成 `kz map (k)`。
 
 ![转换后的 kz map](images/kz_map_in_k.png)
@@ -525,7 +620,7 @@ MCP（六角）和网栅（方形）图案会印在每一幅图像上。**请最
 探测器原始像素上的数据才能去网格，因此对已转换、校正或平滑过的数据，该按钮会
 拒绝并说明原因。
 
-在 map（或其 slit cut）上 *Functions → De-grid map...*，在 cut 上 *De-grid...*。
+在 map（或其 slit cut）或 cut 上 *Functions → Remove detector grid...*。
 对 map 不需要参考测量——网格在每个切片中都位于同样的像素上，而光电子信号会移动。
 点击 **Find and remove the grid**：
 
@@ -549,7 +644,7 @@ MCP（六角）和网栅（方形）图案会印在每一幅图像上。**请最
 ![曲线窗口](images/curve_viewer.png)
 
 可以隐藏通道、用 **Offset** 做成瀑布图、显示 **Error bars**（来自 σ 通道）；
-**Range** 标记一个 x 范围供各操作使用。*Functions → Data operations* 提供
+**Range** 标记一个 x 范围供各操作使用。*Functions → Transform* 提供
 **Crop**（裁剪）、**Bin**（合并）、**Normalise**（归一）、**Subtract a
 background**（扣背景：常数、线性、Shirley）、**Shift the axis**（平移横轴）和
 **Add counting errors (√N)**（添加计数误差）；每个操作都生成新数据集，并正确
@@ -583,7 +678,7 @@ Voigt 峰，点击放置或 **Find peaks** 自动寻峰；无 / 常数 / 线性 
   **单对通道**，但它带有仪器不对称性，程序会测量并报告该不对称性（ε）。
 - **S_eff**（Sherman 函数，默认 0.2）、**Bin**、可选的 **Zero reference** 窗口。
 - 图：原始通道、带误差棒的极化率 P，以及带误差的 I↑ / I↓。
-- **P to list**、**I↑ / I↓ to list**、**As a figure**。
+- **P to list**、**I↑ / I↓ to list**、**As a figure**（打开作图器）。
 
 ---
 
@@ -604,19 +699,21 @@ E-k 谱**。拖动红色靶标即可查看另一点的谱。在面板上右键�
 
 ### 17.1 作图器（Figure composer）
 
-在列表中选中若干 cut（或曲线）→ 右键 → **Plot as a figure**。作图器按论文格式
+在列表中选中若干 cut（或曲线）→ 右键 → **Open in figure composer...**（或在冻结切片
+窗口中点 **Figure composer...**）。作图器按论文格式
 排版：同一列面板尺寸一致、只在外侧边缘标注坐标、自动添加 (a)/(b)/(c) 标号，
 并可选择共用色阶。
 
 ![作图器](images/figure_composer.png)
 
-**Plot tools** 可设置所有细节（毫米为单位的尺寸、字体、刻度、色标、线条、箭头、
-文字、插图、比例尺）；**Add panel...** 添加数据集；**PDF**、**PNG**、**SVG**
+**Figure tools...** 可设置所有细节（毫米为单位的尺寸、字体、刻度、色标、线条、箭头、
+文字、插图、比例尺）——注意不要与查看窗口的 **Plot tools** 混淆，后者是在实时图上
+画辅助线；**Add panel...** 添加数据集；**PDF**、**PNG**、**SVG**
 导出，**Copy** 复制到剪贴板。
 
-### 17.2 切片组图（Slice figure）
+### 17.2 切片组图（Multi-slice figure）
 
-在 map 上 *Functions → Slice figure...*：把数据立方体沿某一轴的一系列切片——
+在 map 上 *Functions → Multi-slice figure...*：把数据立方体沿某一轴的一系列切片——
 等能面或 cut——排成一幅图，可等间距或指定位置，可积分，可共用色阶并自动加标题。
 
 | 设置 | 结果 |
@@ -628,7 +725,7 @@ E-k 谱**。拖动红色靶标即可查看另一点的谱。在面板上右键�
 在任意图像上右键 → **Export** → **Data (.nxs)...**、**Image...** 或 **Axes only
 (.eps)...**。导出的总是该面板当前显示的内容（包括显示范围）：数据导出为本程序
 可重新读取的数据集；图片应用当前色表（PNG、TIFF 或 JPEG，可设定尺寸和 dpi，
-可带或不带坐标轴）；或者把边框、刻度和标签导出为矢量 PostScript，便于在
+可带或不带坐标轴，如有 Plot tools 辅助线也会一并画出）；或者把边框、刻度和标签导出为矢量 PostScript，便于在
 Illustrator 中放入图片。
 
 ![导出](images/export_dialog.png)

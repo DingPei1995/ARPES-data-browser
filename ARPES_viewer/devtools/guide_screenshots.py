@@ -145,7 +145,8 @@ class Shots:
              "fermi", "cut_k", "mdc_fit", "map_k", "brillouin", "arbitrary_cut",
              "fs_correction", "process", "stack", "volume", "cut_arithmetic",
              "kz_processing", "kz_conversion", "degrid", "curves", "spin",
-             "figure", "export", "data_operations", "spatial", "slice_figure"]
+             "figure", "export", "data_operations", "spatial", "slice_figure",
+             "plot_tools", "combine"]
 
     def __init__(self, av, app, paths, data_dir):
         self.av, self.app, self.paths, self.data_dir = av, app, paths, data_dir
@@ -510,6 +511,63 @@ class Shots:
         pump(10)
         window = contour.figure_windows[-1]
         shot(window, "slice_figure", (1250, 760))
+
+    def plot_tools(self):
+        from ui.plot_tools import open_plot_tools
+        cut = self.cut
+        cut.view.set_readout_cursor_visible(False)
+        dialog = open_plot_tools(cut)
+        kinds = dialog.kind_combo
+        for kind, setup, colour in (
+                ("horizontal", lambda: (dialog.y_box.setValue(demo_EF()),
+                                        dialog.text_edit.setText("E_F")),
+                 "#ff3b30"),
+                ("vertical", lambda: (dialog.x_box.setValue(0.0),
+                                      dialog.text_edit.setText("k = 0")),
+                 "#ffd60a"),
+                ("angled", lambda: (dialog.x_box.setValue(-4.0),
+                                    dialog.y_box.setValue(demo_EF() - 0.3),
+                                    dialog.angle_box.setValue(60),
+                                    dialog.text_edit.setText("")),
+                 "#34c759")):
+            dialog.list.setCurrentRow(-1)
+            kinds.setCurrentIndex(kinds.findData(kind))
+            setup()
+            dialog.set_colour(colour)
+            dialog.add()
+        dialog.list.setCurrentRow(0)
+        pump(10)
+        shot(cut, "plot_tools_viewer", (1000, 760))
+        shot(dialog, "plot_tools", (520, 680))
+        dialog.clear()
+        dialog.close()
+
+    def combine(self):
+        from ui.stackcuts import CombineCutsDialog
+        contour = self.contour
+        x, k, z, _cube = contour.data.angle_cube
+        x = np.asarray(x, dtype=float)
+        half = x.size // 2
+        labels = [contour.data.scan.labels.get(s, s) for s in ("x", "k", "z")]
+        pieces = [((x[:half + 3], k, z), labels), ((x[half:], k, z), labels)]
+        dialog = CombineCutsDialog(["FS_map_part1", "FS_map_part2"],
+                                   reorder=True, parent=self.av.win,
+                                   pieces=pieces, can_stack=False)
+        shot(dialog, "combine_dialog", (520, 560))
+        dialog.reject()
+
+        cut = self.cut.data
+        cut_axes = (np.asarray(cut.scan.x, dtype=float),
+                    np.asarray(cut.scan.y, dtype=float))
+        cut_labels = [cut.scan.labels.get("x", "x"), cut.scan.labels.get("y", "y")]
+        names = [f"Gamma_cut_T{t}K" for t in (20, 60, 100, 140)]
+        dialog = CombineCutsDialog(names, reorder=True, parent=self.av.win,
+                                   pieces=[(cut_axes, cut_labels)] * 4)
+        dialog.role.setCurrentIndex(dialog.role.findData("temperature"))
+        dialog.start.setValue(20)
+        dialog.step.setValue(40)
+        shot(dialog, "combine_cuts_dialog", (520, 600))
+        dialog.reject()
 
 
 if __name__ == "__main__":

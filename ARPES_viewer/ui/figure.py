@@ -1,8 +1,10 @@
 """
 ui/figure.py
 ===================
-The figure composer: the window "Open in a new panel" leads to, the plot
-tools that dress a figure up, and the painter that draws it.
+The figure composer: the window a frozen slice's "Figure composer..."
+button leads to, the figure tools that dress a figure up, and the painter
+that draws it. (Not to be confused with a viewer's "Plot tools", which draw
+guide lines on the live plot -- see ``ui.plot_tools``.)
 
 One painter, every output
 -------------------------
@@ -20,7 +22,7 @@ the same figure at 600 dpi is 2102 px.
 
 What the tools act on
 ---------------------
-:class:`PlotToolsDialog` edits the *selected panel* of the figure, or every
+:class:`FigureToolsDialog` edits the *selected panel* of the figure, or every
 panel at once when "Apply to all panels" is ticked -- which is the honest
 form of the MATLAB original's Apply2All, where each button had to
 re-implement the loop. Its tabs follow what a figure is made of rather than
@@ -878,7 +880,7 @@ def whole(value, lo, hi, tip="", width=90):
 # --------------------------------------------------------------------------
 # The tools
 # --------------------------------------------------------------------------
-class PlotToolsDialog(QDialog):
+class FigureToolsDialog(QDialog):
     """Everything that dresses a figure up, in six tabs.
 
     Each control writes into the model and asks the canvas to redraw, so
@@ -892,7 +894,7 @@ class PlotToolsDialog(QDialog):
         super().__init__(window)
         self.window_ = window
         self.figure = window.figure
-        self.setWindowTitle("Plot tools")
+        self.setWindowTitle("Figure tools")
         self.setModal(False)
         self._syncing = False
 
@@ -1974,7 +1976,7 @@ class SliceSeriesDialog(QDialog):
         self.to_box = spin(1, -1e9, 1e9, 4, 0.05, "Last slice.")
         self.from_box.valueChanged.connect(self._refresh)
         self.to_box.valueChanged.connect(self._refresh)
-        form.addRow("From / to", PlotToolsDialog._pair(self.from_box, self.to_box))
+        form.addRow("From / to", FigureToolsDialog._pair(self.from_box, self.to_box))
         self.values_edit = QLineEdit()
         self.values_edit.setPlaceholderText("e.g. 0, -0.1, -0.25")
         self.values_edit.editingFinished.connect(self._refresh)
@@ -2096,7 +2098,7 @@ def slice_panels(cube, axes, labels, *, axis: int, values, half_width: float = 0
 class FigureWindow(QMainWindow):
     """Where a figure for a paper is put together.
 
-    Seeded with one panel by "Plot tools" in a popped-out panel, or with a
+    Seeded with one panel by "Figure composer..." in a frozen slice, or with a
     page of them by a map's multi-slice button. The canvas is the figure
     itself at the size it will be printed; everything else is in the tools.
     """
@@ -2121,7 +2123,7 @@ class FigureWindow(QMainWindow):
         root.setContentsMargins(4, 4, 4, 4)
 
         bar = QHBoxLayout()
-        self.tools_button = QPushButton("Plot tools")
+        self.tools_button = QPushButton("Figure tools...")
         self.tools_button.setToolTip(
             "Everything that dresses the figure up: panels, axes, text, "
             "colour, annotations and export.")
@@ -2180,7 +2182,7 @@ class FigureWindow(QMainWindow):
             self._tools.raise_()
             self._tools.activateWindow()
             return self._tools
-        self._tools = PlotToolsDialog(self)
+        self._tools = FigureToolsDialog(self)
         self._tools.show()
         return self._tools
 

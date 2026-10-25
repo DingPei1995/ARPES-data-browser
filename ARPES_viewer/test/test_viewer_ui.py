@@ -71,14 +71,14 @@ def _toolbar_buttons(window):
 # -- layout -----------------------------------------------------------------
 def test_map_keeps_only_its_cut_buttons(app):
     window = W.ContourWindow(_map(), "m", "gray", False)
-    assert _toolbar_buttons(window) == ["Deflector cut", "Slit cut"]
+    assert _toolbar_buttons(window) == ["Deflector cut", "Slit cut", "Plot tools"]
     texts = _visible_texts(window)
-    for expected in ("Arbitrary cut...", "Map k conversion...", "De-grid map...",
-                     "Slice figure...", "Save slice to the main list",
-                     "Open slice in a new panel"):
+    for expected in ("Arbitrary cut...", "Convert to momentum (k)...", "Remove detector grid...",
+                     "Multi-slice figure...", "Save slice to the main list",
+                     "Freeze slice in a new window"):
         assert expected in texts
     assert "Brillouin zone..." not in texts          # angle map: not offered
-    assert "kz map processing..." not in texts
+    assert "Align Fermi levels (kz map)..." not in texts
     window.close()
 
 
@@ -93,10 +93,10 @@ def test_colormap_and_view_controls_share_one_row(app):
 
 def test_cut_viewer_keeps_no_tool_buttons(app):
     window = W.CutWindow(_cut(), "c", "gray", False)
-    assert _toolbar_buttons(window) == []
+    assert _toolbar_buttons(window) == ["Plot tools"]
     texts = _visible_texts(window)
-    for expected in ("Fermi level...", "MDC / EDC fit...", "FS correction...",
-                     "Cut k conversion...", "Cut arithmetic...", "De-grid..."):
+    for expected in ("Fermi edge fit...", "MDC / EDC fit...", "Straighten bands (FS correction)...",
+                     "Convert to momentum (k)...", "Cut arithmetic...", "Remove detector grid..."):
         assert expected in texts
     # an angle cut cannot be band-fitted: the entry says why instead of vanishing
     assert not window.fit_action.isEnabled()
@@ -108,13 +108,13 @@ def test_menu_sections_and_hidden_entries(app):
     window = W.ContourWindow(_map("kz_map"), "kz", "gray", False)
     window._rebuild_functions_menu()
     shown = [a.text() for a in window.functions_menu.actions()]
-    assert shown[0] == "Data operations"
-    assert "kz map processing..." in shown and "kz -> momentum..." in shown
-    assert "Map k conversion..." not in shown
+    assert shown[0] == "Transform"
+    assert "Align Fermi levels (kz map)..." in shown and "Convert to momentum (kz, k\u2225)..." in shown
+    assert "Convert to momentum (k)..." not in shown
     assert shown.index("Slice") > shown.index("Visualization")
     k_map = W.ContourWindow(_map("k_map"), "k", "gray", False)
     assert "Brillouin zone..." in _visible_texts(k_map)
-    assert "De-grid map..." not in _visible_texts(k_map)
+    assert "Remove detector grid..." not in _visible_texts(k_map)
     window.close()
     k_map.close()
 
@@ -298,15 +298,15 @@ def test_curve_viewer_has_a_functions_menu(app):
     window = CurveWindow(_curve(), "edc")
     bar_buttons = [b.text() for b in window.findChildren(QPushButton)
                    if b.isVisibleTo(window)]
-    assert "Curve fit..." not in bar_buttons and "As a figure..." not in bar_buttons
+    assert "Curve fit..." not in bar_buttons and "Figure composer..." not in bar_buttons
     texts = _visible_texts(window)
-    for expected in ("Curve fit...", "As a figure...", "Bin...", "Normalise...",
+    for expected in ("Curve fit...", "Figure composer...", "Bin...", "Normalise...",
                      "Crop to the range...", "Add counting errors (√N)"):
         assert expected in texts
     assert "Spin analysis..." not in texts               # not a spin EDC
     window._rebuild_functions_menu()
     shown = [a.text() for a in window.functions_menu.actions()]
-    assert shown.index("Analysis") < shown.index("Data operations") < shown.index("Visualization")
+    assert shown.index("Analysis") < shown.index("Transform") < shown.index("Visualization")
     window.close()
 
 
