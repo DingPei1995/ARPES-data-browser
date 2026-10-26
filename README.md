@@ -1,6 +1,6 @@
 # ARPES viewer
 
-**Version 1.0.3** (last modified 26 October 2026) — see
+**Version 1.0.4** (last modified 26 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
@@ -15,7 +15,8 @@ It began as a rewrite of the lab's `h5Loader*.py` for SOLEIL ANTARES `*.nxs`
 files, and reading those is now one loader among several rather than the
 whole program. It currently reads **SOLEIL ANTARES** (NeXus/HDF5), **SOLEIL
 CASSIOPEE** (Scienta SES text, single spectra and whole folders), **ALS
-MAESTRO** (BL 7.0.2 HDF5), and its own
+MAESTRO** (BL 7.0.2 HDF5), **ALBA LOREA** (BL20 NeXus), **Diamond I05**
+(HR-ARPES) and **I05-1** (nano-ARPES) NeXus, and its own
 saved format. Adding a beamline is a new file in `loader/`.
 
 The round-by-round history, and the reasoning behind the choices below, is in
@@ -157,6 +158,52 @@ and over what range:
   (`info["maestro.aborted"]`).
 - The energy axis is the analyser's own scale (kinetic energy). Set E_F
   from the data, as for CASSIOPEE spin.
+
+### ALBA LOREA, Diamond I05 and I05-1 (NeXus)
+
+Three NeXus readers share one module, `loader/nexus_arpes.py`, and differ
+only in where the spectra are and how the scanned axes are named. Each was
+written against `h5info` dumps of a cut, a deflector map, a photon-energy
+scan and a spatial scan from that beamline.
+
+| loader | file | spectra | scanned axes come from |
+|---|---|---|---|
+| **ALBA LOREA** (`loader/alba_loader.py`) | `NNN_<sample>.nxs` | `entry1/data/data` | the group's `@axes` list |
+| **Diamond I05 HR-ARPES** (`loader/diamond_loader.py`) | `i05-NNNNNN.nxs` | `entry1/analyser/data` | `@axis` on each vector |
+| **Diamond I05-1 nano-ARPES** (`loader/diamond_loader.py`) | `i05-1-NNNNN.nxs` | `entry1/analyser/data` | `@axis` on each vector |
+
+All three are recognised by structure. ALBA has an `NXdata` group with
+`@signal`/`@axes` and no `entry1/analyser`. Diamond has `entry1/analyser`.
+The two Diamond branches are told apart by `instrument/name`, then the file
+name, then the I05-1 zone plate and `sm*` motors.
+
+| scanned | ALBA | I05 | I05-1 | opens as |
+|---|---|---|---|---|
+| nothing | `angles, energies` | `(1, angles, energies)` | same | `cut` |
+| deflector | `defl_angles` | `deflector_x` | `deflector_x` | `map`, convertible to k |
+| photon energy | `photon_energies` (+ `binding_energies`) | `energy` | `value` (`scan_group`) | `kz map` |
+| sample position | `saz, sax` | `sax, saz` on the grid | `smx, smy` on the grid | `spem_4d` |
+
+- Any other scanned motor is read the same way. A polar or tilt angle opens
+  as a convertible map and anything else as a map of its own name. A
+  two-axis scan that is not a spatial pair opens as one map per outer step.
+- **Spatial scans at Diamond** store both motors on the whole
+  `(slow, fast)` grid (`@axis = '1,2'`). Which motor steps along which
+  dimension is read off the values, not assumed.
+- **Energy** of a cut, map or spatial scan is the analyser's kinetic
+  energy, as for MAESTRO. The monochromator energy is in `info` as
+  `photon_energy_eV`, and the sample temperature as `SampleTemperature_K`.
+- **kz maps** are read into memory and put on one `E - E_F` axis. At ALBA
+  the file's own `binding_energies` is used. It is negated if it is a
+  positive binding energy, and the work function is worked out from it and
+  the per-hv kinetic axes. At Diamond each spectrum's own kinetic window is
+  referred by its own hv (`E_kin - hv + W`, `W = 4.5 eV` assumed, as for
+  ANTARES PhD). The spectra are stacked untouched when the referred windows
+  coincide, else resampled onto their common range. The hv axis is
+  straightened when it is plainly a jittered even scan. The readbacks are
+  kept in `info["axis0_measured"]`.
+- Everything except a kz map stays in the file and is read as it is looked
+  at. Integer counts are read as float32.
 
 ### CASSIOPEE spin end station (MBS)
 
@@ -920,6 +967,9 @@ you what it may depend on.
 | `loader/cassiopee.py` | The SOLEIL/CASSIOPEE reader: Scienta text spectra, and folders of them assembled into a map or a kz map. |
 | `loader/cassiopee_spin.py` | CASSIOPEE's spin end station: MBS A-1 `.krx` and `.txt` files, as a cut, a map or a spin EDC. |
 | `loader/maestro_loader.py` | ALS MAESTRO (BL 7.0.2) `.h5` files: cuts, deflector maps, XY spatial scans, two-motor lines and focus scans, read lazily. |
+| `loader/nexus_arpes.py` | What the NeXus readers share: the layout, the kind it opens as, kz-map energy referencing, the lazy `NexusView`, the metadata. |
+| `loader/alba_loader.py` | ALBA LOREA (BL20) `.nxs` files: cuts, deflector maps, photon-energy scans and spatial scans. |
+| `loader/diamond_loader.py` | Diamond I05 (HR-ARPES) and I05-1 (nano-ARPES) `.nxs` files, as two loaders: cuts, deflector maps, photon-energy scans and spatial scans. |
 | `loader/native.py` | This program's own saved format -- detected, never chosen. |
 | `loader/nxs_file.py` | The SOLEIL parser, the saved format's reader and writer, `NxsScan`, the axis-slot table, and the lazy arrays that keep a measurement on disk. Start here. |
 | `loader/cubecache.py` | `CubeCache`: a map cube read into memory once it is being browsed, so the energy slider and the cut sliders slice an array rather than the file. |
@@ -1038,7 +1088,7 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 612 of them, no display needed -- `conftest.py` puts the
+from this folder. 774 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`, and
 `test/conftest.py` runs garbage collection only between tests, the rule
 `ui/gcguard.py` applies in the program.

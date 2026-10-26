@@ -14,6 +14,31 @@ file is the record of how it got that way.
 
 (nothing yet)
 
+## 1.0.4 — 2026-10-26
+
+- **ALBA LOREA, Diamond I05 and Diamond I05-1 files open.** Three new
+  loaders read these beamlines' NeXus `.nxs` files. They were written
+  against `h5info` dumps of a cut, a deflector map, a photon-energy scan and
+  a spatial scan from each (`for loader/*.mat`). ALBA is `loader/alba_loader.py`.
+  Both Diamond branches are in `loader/diamond_loader.py`, because they write
+  the same dialect, and each is registered as its own loader. What they share
+  is in `loader/nexus_arpes.py`. A cut opens as a cut, a deflector scan as a
+  map that converts to k, a photon-energy scan as a kz map, and an XY scan as
+  a spatial scan.
+  - Detection is by structure. ALBA's `NXdata` names its signal and axes,
+    Diamond's spectra are in `entry1/analyser`, and neither is claimed by
+    the ANTARES reader. The two Diamond branches are told apart by
+    `instrument/name`, then the file name, then the I05-1 zone plate.
+  - A Diamond spatial scan stores both motors on the whole grid. The motor
+    each dimension steps is read from the values, not assumed from the
+    order.
+  - kz maps are put on one `E - E_F` axis. At ALBA this is the file's own
+    binding energy, with its sign checked against the kinetic axes, and the
+    work function is taken from the two. At Diamond each spectrum is
+    referred by its own hv with `W = 4.5 eV`, and resampled only when the
+    windows do not coincide.
+  - Everything but a kz map is read lazily.
+
 ## 1.0.3 — 2026-10-26
 
 - **ALS MAESTRO (BL 7.0.2) files open.** A new loader,
