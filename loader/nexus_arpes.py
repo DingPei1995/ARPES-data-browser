@@ -165,6 +165,9 @@ class Layout:
     energy_scale: str = "kinetic"
     energies: Optional[np.ndarray] = None
     info: dict = field(default_factory=dict)
+    #: The analyser work function, when the beamline states one; ``None``
+    #: assumes :data:`WORK_FUNCTION_EV`.
+    work_function: Optional[float] = None
 
 
 # --------------------------------------------------------------------------
@@ -385,9 +388,11 @@ def _refer_kz(layout: Layout, cube: np.ndarray, hv: np.ndarray, notes: dict):
 
     if kinetic is None:
         kinetic = np.broadcast_to(energy, (hv.size, energy.size))
-    w = WORK_FUNCTION_EV
+    w = WORK_FUNCTION_EV if layout.work_function is None \
+        else float(layout.work_function)
     notes["work_function_eV"] = w
-    notes["work_function_source"] = "assumed (not recorded)"
+    notes["work_function_source"] = "assumed (not recorded)" \
+        if layout.work_function is None else "the beamline's figure"
     notes["energy_reference"] = (
         f"each spectrum referred by its own hv: E_kin - hv + {w:g} eV")
     referred = [np.asarray(row, dtype=float) - h + w
@@ -443,7 +448,7 @@ def build_scan(layout: Layout, entry: str = None) -> NxsScan:
     scan = NxsScan(kind=kind, filename_prefix=layout.prefix)
     scan.info.update(layout.info)
     scan.info["facility"] = layout.facility
-    scan.info["nexus.dataset"] = layout.dataset.name
+    scan.info["nexus.dataset"] = getattr(layout.dataset, "name", "")
     for d, i in fixed_dims.items():
         dim = layout.dims[d]
         scan.fourd_info[dim.name] = \

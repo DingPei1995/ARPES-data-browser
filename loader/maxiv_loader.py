@@ -74,7 +74,7 @@ from loader.nexus_arpes import (Dim, Layout, build_scan, list_layout,
 from loader.nxs_file import ANGLE_UNIT, ENERGY_UNIT
 from loader.registry import Loader, register
 
-__all__ = ["MaxIVLoader", "IgorWave", "read_ibw", "parse_ses_note",
+__all__ = ["MaxIVLoader", "SESLoader", "ses_location", "IgorWave", "read_ibw", "parse_ses_note",
            "read_layout_ibw", "read_layouts_zip", "is_ses_ibw", "is_ses_zip"]
 
 FACILITY = "MAX IV Bloch"
@@ -236,20 +236,31 @@ def _run_mode_table(lines) -> dict:
     return {name: table[:, i] for i, name in enumerate(header)}
 
 
-_MOTOR_NAMES = {"A": "Azimuth", "P": "Polar", "T": "Tilt",
-                "X": "X", "Y": "Y", "Z": "Z"}
+#: Manipulator columns of the run-mode table, by their folded name:
+#: ``(label, unit)``. Bloch writes ``A P T X Y Z``, APE ``polar tilt X Y Z``.
+_MOTORS = {
+    "x": ("X", "mm"), "y": ("Y", "mm"), "z": ("Z", "mm"),
+    "p": ("Polar", "deg"), "polar": ("Polar", "deg"),
+    "t": ("Tilt", "deg"), "tilt": ("Tilt", "deg"),
+    "a": ("Azimuth", "deg"), "azi": ("Azimuth", "deg"),
+    "azimuth": ("Azimuth", "deg"),
+}
 
 
 def _motor_for(table: dict, column: str):
-    """The manipulator axis whose readback repeats ``column``."""
+    """``(label, unit)`` of the manipulator axis whose readback repeats
+    ``column``; spatial axes are tried first."""
     values = table.get(column)
     if values is None:
         return None
-    for name in ("X", "Y", "Z", "P", "T", "A"):
-        other = table.get(name)
-        if other is not None and other.size == values.size \
-                and np.allclose(other, values, atol=1e-6):
-            return name
+    ranked = sorted((name for name in table
+                     if name.strip().casefold() in _MOTORS),
+                    key=lambda n: _MOTORS[n.strip().casefold()][1] != "mm")
+    for name in ranked:
+        other = table[name]
+        if other.size == values.size and np.allclose(other, values,
+                                                     atol=1e-6):
+            return _MOTORS[name.strip().casefold()]
     return None
 
 
@@ -274,11 +285,9 @@ def _scan_dim(label: str, axis, table: dict) -> Dim:
     if folded in {"point", "position"}:
         motor = _motor_for(table, label) or _motor_for(table, name)
         if motor is not None:
-            pretty = _MOTOR_NAMES[motor]
-            spatial = motor in "XYZ"
-            motor_unit = "mm" if spatial else "deg"
+            pretty, motor_unit = motor
             role, text = motor_role(pretty)
-            if spatial:
+            if motor_unit == "mm":
                 role, text = "position", f"{pretty} ({motor_unit})"
             return Dim(pretty, motor_unit, axis, role, text or "")
         return Dim(name, "" if unit == "unit" else unit, axis, "position")
@@ -491,22 +500,49 @@ def read_layouts_zip(path: str) -> dict:
     return layouts
 
 
+def ses_location(path: str) -> str:
+    """The ``Location`` an SES file names in its ``[SES]`` header (``Bloch``
+    at MAX IV), or ``""``."""
+    if path.lower().endswith(".ibw"):
+        note = read_ibw(path).note
+    else:
+        with zipfile.ZipFile(path) as z:
+            names = set(z.namelist())
+            note = next((z.read(ini).decode("latin-1")
+                         for _t, _m, _s, ini in _zip_regions(z)
+                         if ini in names), "")
+    return _keys(parse_ses_note(note).get("SES")).get("Location", "")
+
+
 # --------------------------------------------------------------------------
-# The loader
+# The loaders
 # --------------------------------------------------------------------------
-class MaxIVLoader(Loader):
-    name = "MAX IV Bloch"
-    description = ("Scienta SES files from the Bloch beamline at MAX IV: "
-                   ".ibw cuts, photon-energy scans and manipulator scans, "
-                   "and .zip deflector maps.")
+class SESLoader(Loader):
+    """Scienta SES ``.ibw`` and ``.zip``, for one facility.
+
+    A subclass sets ``name``, ``facility`` and ``prefix`` and, when it
+    should only claim its own files, :meth:`claims` -- SES writes the
+    ``Location`` set up on the acquisition PC, which is how two beamlines
+    writing the same format are told apart."""
+
+    facility = FACILITY
+    prefix = PREFIX
     patterns = ("*.ibw", "*.zip")
-    priority = 12
+
+    def claims(self, location: str) -> bool:
+        return True
 
     def can_open(self, path: str) -> bool:
         try:
-            return is_ses_ibw(path) or is_ses_zip(path)
+            if not (is_ses_ibw(path) or is_ses_zip(path)):
+                return False
+            return self.claims(ses_location(path))
         except Exception:
             return False
+
+    def _own(self, layout: Layout) -> Layout:
+        layout.facility, layout.prefix = self.facility, self.prefix
+        return layout
 
     def list_entries(self, path: str) -> list:
         base = os.path.splitext(os.path.basename(path))[0]
@@ -540,12 +576,22 @@ class MaxIVLoader(Loader):
                 layout = layouts[region]
             else:
                 layout = next(iter(layouts.values()))
-            return build_scan(layout, None)
-        layout = read_layout_ibw(path)
+            return build_scan(self._own(layout), None)
+        layout = self._own(read_layout_ibw(path))
         try:
             return build_scan(layout, entry)
         except KeyError:
             raise KeyError(f"no dataset {entry!r} in {path}") from None
+
+
+class MaxIVLoader(SESLoader):
+    """Bloch -- and, as the lowest-priority SES reader, any SES file no
+    other facility claims."""
+    name = "MAX IV Bloch"
+    description = ("Scienta SES files from the Bloch beamline at MAX IV: "
+                   ".ibw cuts, photon-energy scans and manipulator scans, "
+                   "and .zip deflector maps.")
+    priority = 12
 
 
 register(MaxIVLoader())

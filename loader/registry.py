@@ -331,7 +331,8 @@ def _install_default_loaders():
     for module in ("loader.native", "loader.soleil", "loader.cassiopee",
                    "loader.cassiopee_spin", "loader.maestro_loader",
                    "loader.alba_loader", "loader.diamond_loader",
-                   "loader.maxiv_loader"):
+                   "loader.maxiv_loader", "loader.ape_loader",
+                   "loader.sgm4_loader"):
         try:
             __import__(module)
         except Exception as exc:                        # noqa: BLE001
