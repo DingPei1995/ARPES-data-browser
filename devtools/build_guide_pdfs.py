@@ -23,7 +23,7 @@ import sys
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOCS = os.path.join(HERE, "docs")
 OUT = os.path.join(DOCS, "pdf")
-REPO = "https://github.com/DingPei1995/ARPES-data-browser/blob/main/ARPES_viewer"
+REPO = "https://github.com/DingPei1995/ARPES-data-browser/blob/main"
 
 GUIDES = {
     "en": {"title": "ARPES viewer — User Guide", "lang": "en"},
