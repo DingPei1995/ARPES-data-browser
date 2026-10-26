@@ -127,3 +127,25 @@ def test_contiguous_runs_become_slices():
     kept = simplify_key((np.array([1, 3]),), 3)[0]
     assert isinstance(kept, np.ndarray)
     assert simplify_key((Ellipsis, 2), 3) == (slice(None), slice(None), 2)
+
+
+def test_a_float16_cube_is_held_half_size_but_read_as_float32():
+    # 64 planes of 4000 counts sum to 256000 -- inf in float16
+    array = np.full((3, 4, 64), 4000.0, dtype=np.float16)
+    cache = CubeCache(array)
+    assert cache.nbytes == array.nbytes
+    assert cache.dtype == np.float32
+    window = cache[:, :, 0:64]
+    assert window.dtype == np.float32
+    assert np.all(window.sum(axis=2) == 256000.0)
+    assert np.asarray(cache).dtype == np.float32
+
+
+def test_a_float16_cube_on_disk_is_read_as_float32(tmp_path):
+    path = tmp_path / "half.h5"
+    with h5py.File(path, "w") as f:
+        f.create_dataset("v", data=np.full((3, 4, 5), 1000.0, dtype=np.float16))
+    with h5py.File(path, "r") as f:
+        cache = CubeCache(LazyArray(f["v"]), lazy_reads=0)
+        assert cache[:, :, 2].dtype == np.float32
+        assert cache[1].dtype == np.float32

@@ -69,6 +69,20 @@ def default_budget() -> int:
     return int(min(MAX_BUDGET, AVAILABLE_SHARE * available))
 
 
+def widen(array):
+    """``array`` as float32 if it is stored as float16, else unchanged.
+
+    A converted k-map is kept in float16 to halve its size, but float16
+    tops out at 65504: summing an integration window of a few dozen planes
+    of counts in it would overflow to inf, and every reduction would round
+    at each step. So half precision is a storage format only -- whatever
+    is handed out to be summed, cut or fitted is widened first.
+    """
+    if getattr(array, "dtype", None) == np.float16:
+        return np.asarray(array, dtype=np.float32)
+    return array
+
+
 def _as_slice(sel):
     """``sel`` as a slice if it is a 1-D run of consecutive ascending
     integers, else ``sel`` unchanged. Indexing with the slice gives the same
@@ -103,6 +117,10 @@ class CubeCache:
     ``size``, ``nbytes``, ``len()`` and ``np.asarray()`` all work, so it
     can stand wherever the lazy cube stood.
 
+    A float16 cube is held as float16 but read out as float32 (see
+    :func:`widen`); ``dtype`` says what the reads return, ``nbytes`` what
+    the cube costs to hold.
+
     The in-memory copy is read-only: slices handed out are views of it, and
     a caller writing into one would otherwise silently change the map for
     every later slice.
@@ -111,10 +129,11 @@ class CubeCache:
     def __init__(self, source, budget: int = None, lazy_reads: int = 1):
         self._source = source
         self.shape = tuple(int(n) for n in source.shape)
-        self.dtype = np.dtype(source.dtype)
+        stored = np.dtype(source.dtype)
+        self.dtype = np.dtype(np.float32) if stored == np.float16 else stored
         self.ndim = len(self.shape)
         self.size = int(np.prod(self.shape)) if self.shape else 1
-        self.nbytes = self.size * self.dtype.itemsize
+        self.nbytes = self.size * stored.itemsize
         self.budget = default_budget() if budget is None else int(budget)
         self._lazy_reads = int(lazy_reads)
         self._reads = 0
@@ -172,6 +191,9 @@ class CubeCache:
 
     # -- reading -------------------------------------------------------------
     def __getitem__(self, key):
+        return widen(self._read(key))
+
+    def _read(self, key):
         key = simplify_key(key, self.ndim)
         if self._full is not None:
             return self._full[key]
@@ -190,8 +212,8 @@ class CubeCache:
         if self._full is None and self.fits:
             self.load()
         if self._full is not None:
-            return np.array(self._full)
-        return np.asarray(self._source[(slice(None),) * self.ndim])
+            return widen(np.array(self._full))
+        return widen(np.asarray(self._source[(slice(None),) * self.ndim]))
 
     def __array__(self, dtype=None, copy=None):
         """A fresh array, like the lazy arrays' own ``__array__``: the

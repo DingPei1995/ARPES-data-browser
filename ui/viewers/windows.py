@@ -1547,7 +1547,28 @@ class KConversionDialog(QDialog):
         # grid setting is visible, and a clipped one would be worse than none.
         self.grid_note.setMinimumHeight(34)
         form.addRow("", self.grid_note)
+
+        # Half precision by default: the converted cube is the largest thing
+        # this program makes, and float16 resolves far finer than the
+        # counting noise of the measurement it came from.
+        self.precision_combo = QComboBox()
+        self.precision_combo.addItem("float16 (half the memory and file size)", "float16")
+        self.precision_combo.addItem("float32", "float32")
+        self.precision_combo.setToolTip(
+            "Precision the converted cube is stored in. The interpolation "
+            "itself is always done in double precision.")
+        form.addRow("Output precision", self.precision_combo)
+        precision_note = QLabel(
+            "float16 keeps about 3 significant digits (0.05 % steps), far "
+            "finer than the counting noise of any measured point, so "
+            "contours, cuts and fits are unchanged at half the storage. "
+            "Values outside float16's range stay float32 automatically.")
+        precision_note.setWordWrap(True)
         layout.addLayout(form)
+        # Below the form at full width, not in its value column: a form row
+        # does not grow with a wrapped label, and clipped this note would be
+        # worse than none.
+        layout.addWidget(precision_note)
 
         for radio in (self.by_count, self.by_resolution):
             radio.toggled.connect(self._update_grid_mode)
@@ -1781,6 +1802,7 @@ class KConversionDialog(QDialog):
             "n_kx": n_kx,
             "n_ky": n_ky,
             "n_energy": n_energy,
+            "precision": self.precision_combo.currentData(),
         }
 
     def closeEvent(self, event):
@@ -4056,9 +4078,12 @@ class ContourWindow(ViewerWindow):
             kdata.scan.labels["z"] = self.energy_label
         self.kMapCreated.emit(kdata)
         finite = float(np.isfinite(cube).mean() * 100.0)
+        stored = np.dtype(cube.dtype).name
+        if settings.get("precision") == "float16" and stored != "float16":
+            stored += " (values out of float16's range)"
         self.statusBar().showMessage(
-            f"Converted to k-space: {cube.shape[0]}x{cube.shape[1]}x{cube.shape[2]}, "
-            f"{finite:.0f}% inside the light cone -- added to the file list")
+            f"Converted to k-space: {cube.shape[0]}x{cube.shape[1]}x{cube.shape[2]} "
+            f"{stored}, {finite:.0f}% inside the light cone -- added to the file list")
         return kdata
 
     # -- Brillouin-zone overlay ---------------------------------------------

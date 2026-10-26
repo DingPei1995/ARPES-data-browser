@@ -14,6 +14,31 @@ file is the record of how it got that way.
 
 (nothing yet)
 
+## 1.0.8 — 2026-10-26
+
+- **A converted Map is stored in float16 by default.** The k-conversion
+  dialog has an *Output precision* choice -- float16 (default) or float32 --
+  with a note under it saying why half precision is enough: its relative
+  step of 2^-11 (0.05 %) is far below the counting noise of a measured
+  point (1 % already needs 10^4 counts), so contours, cuts and fits come
+  out the same while the cube takes half the memory and roughly half the
+  file. Before this, a map read as float64 was also
+  converted to float64 -- four times the float16 size for digits the
+  counts never had.
+  - `kspace.convert_map(..., precision=)`: `"float16"`, `"float32"`, or
+    None for the old rule (follow the measurement's dtype). The
+    interpolation is still done in float64; only the stored result changes.
+  - float16 is granted only when the values fit it
+    (`kspace.float16_holds`): a peak above 65504 would overflow, and one
+    below 0.0625 would sink a map's weak tail under float16's normal range.
+    Either way the result is float32, and the status bar says so.
+  - Half precision is a storage format only. `CubeCache` holds a float16
+    cube as it is but hands out every slice as float32, and the integration
+    window widens before it sums (`cubecache.widen`): a window of a few
+    dozen planes of counts summed in float16 would reach inf. A float16
+    k-map saved to a file and opened again reads the same way.
+  - The default grid (as many points as were measured) is unchanged.
+
 ## 1.0.7 — 2026-10-26
 
 - **BESSY One Cube / One Square and SOLARIS URANOS loaders.** All three

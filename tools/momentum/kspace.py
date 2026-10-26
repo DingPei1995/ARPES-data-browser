@@ -257,6 +257,54 @@ def result_dtype(dtype) -> np.dtype:
     return np.dtype(np.float64)
 
 
+#: What a converted cube can be stored as. float16 is the default the dialog
+#: offers: a converted map is for looking at, cutting and fitting, and its
+#: relative step of 2^-11 (0.05 %) is far below the counting noise of any
+#: real point (1 % already needs 10^4 counts), so it halves the memory and
+#: the file for no visible or fitted difference.
+PRECISIONS = ("float16", "float32")
+
+#: float16's largest finite value. Interpolation only ever takes weighted
+#: averages, so a converted cube never exceeds its source's extremes, and
+#: this is the whole overflow test.
+FLOAT16_MAX = 65504.0
+#: Below this peak magnitude the weak parts of a map (a thousandth of the
+#: peak) would fall under float16's smallest normal number (6.1e-5) and lose
+#: digits -- a map normalised to tiny numbers, say. Such a map is kept in
+#: float32 instead.
+FLOAT16_MIN_PEAK = 0.0625
+
+
+def float16_holds(lo: float, hi: float) -> bool:
+    """Whether values spanning ``[lo, hi]`` survive float16 storage: no
+    overflow, and a peak large enough that its weak tail keeps its digits.
+    An all-NaN range (nothing measured) is trivially fine."""
+    if not (np.isfinite(lo) and np.isfinite(hi)):
+        return True
+    peak = max(abs(float(lo)), abs(float(hi)))
+    return FLOAT16_MIN_PEAK <= peak <= FLOAT16_MAX
+
+
+def storage_dtype(cube, precision: str = None) -> np.dtype:
+    """The dtype a converted cube is written as.
+
+    ``precision=None`` keeps the old rule (:func:`result_dtype`, following
+    the measurement); ``"float32"`` and ``"float16"`` ask for that. float16
+    is only granted when the data fit it (:func:`float16_holds`) -- anything
+    else comes back as float32, and the caller can tell from the dtype.
+    """
+    cube = np.asarray(cube)
+    if precision is None:
+        return result_dtype(cube.dtype)
+    if precision not in PRECISIONS:
+        raise ValueError(f"precision must be one of {PRECISIONS}, not {precision!r}")
+    if precision == "float32":
+        return np.dtype(np.float32)
+    with np.errstate(invalid="ignore"):
+        lo, hi = np.nanmin(cube), np.nanmax(cube)
+    return np.dtype(np.float16 if float16_holds(lo, hi) else np.float32)
+
+
 def _resample_energy(cube: np.ndarray, energy: np.ndarray, n_energy: int):
     """Linearly resample the cube along its energy axis.
 
@@ -293,6 +341,7 @@ def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
                 energy_offset_eV: float = 0.0,
                 n_kx: int = 100, n_ky: int = 100,
                 n_energy: int = None,
+                precision: str = None,
                 progress=None):
     """Convert an angle-space Map cube to a regular (kx, ky, E) grid.
 
@@ -308,6 +357,11 @@ def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
     ``n_kx`` / ``n_ky`` / ``n_energy`` set the output grid size, so the
     result can be coarser or finer than the measurement. ``n_energy=None``
     keeps the original energy sampling.
+
+    ``precision`` is ``"float16"`` or ``"float32"`` for the stored result
+    (see :func:`storage_dtype`; float16 falls back to float32 when the
+    values do not fit it), or None to follow the measurement's dtype. The
+    interpolation itself is always done in float64.
 
     Returns ``(kx, ky, energy, cube_k)`` with ``cube_k`` shaped
     ``(n_kx, n_ky, n_energy)`` and NaN wherever the target point was not
@@ -361,7 +415,7 @@ def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
     p_index = np.arange(phi_sorted.size, dtype=float)
 
     out = np.full((int(n_kx), int(n_ky), energy.size), np.nan,
-                  dtype=result_dtype(cube.dtype))
+                  dtype=storage_dtype(cube, precision))
     for m in range(energy.size):
         if k0[m] <= 0:
             continue                      # no momentum to speak of at E<=0

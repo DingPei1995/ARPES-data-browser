@@ -158,3 +158,23 @@ def test_the_map_conversion_keeps_the_measured_angles(app):
     assert not any("offset" in t.lower() and "Theta" in t for t in texts)
     dialog.close()
     window.close()
+
+
+def test_the_map_conversion_stores_float16_unless_asked_otherwise(app):
+    from ui.viewers import windows as W
+    window = W.ContourWindow(_map(), "m", "gray", False)
+    dialog = W.KConversionDialog(window)
+    from PyQt5.QtWidgets import QLabel
+    texts = " ".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "float16 keeps about 3 significant digits" in texts
+    settings = dialog.settings()
+    assert settings["precision"] == "float16"
+    kdata = window.run_k_conversion(settings, name="k", background=False)
+    assert kdata.scan.value.dtype == np.float16
+    dialog.precision_combo.setCurrentIndex(1)
+    settings = dialog.settings()
+    assert settings["precision"] == "float32"
+    assert window.run_k_conversion(settings, name="k32",
+                                   background=False).scan.value.dtype == np.float32
+    dialog.close()
+    window.close()

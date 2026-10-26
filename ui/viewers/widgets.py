@@ -54,6 +54,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
 
 from tools.output import colormaps
 from tools.output import export
+from loader.cubecache import widen
 from loader.nxs_file import (load_soleil_nxs, to_kspace_cube, NxsScan,
                              save_dataset, CUBE_KINDS)
 from ui.viewers.plot_tools import draw_guides, guides_of, plot_tools_button
@@ -4388,8 +4389,10 @@ class _SliceControl(QWidget):
         return self.reduce_combo.currentText()
 
     def combine(self, values, axis: int):
-        """Collapse the integration window the way the combo box says."""
-        values = np.asarray(values)
+        """Collapse the integration window the way the combo box says.
+        A float16 k-map is widened first: a window of counts summed in half
+        precision overflows (see ``loader.cubecache.widen``)."""
+        values = widen(np.asarray(values))
         return values.mean(axis=axis) if self.reduce == "mean" else values.sum(axis=axis)
 
     # -- integration window ------------------------------------------------

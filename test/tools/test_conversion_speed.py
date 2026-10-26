@@ -132,3 +132,49 @@ def test_a_cut_on_e_minus_ef_is_refused_with_the_offset_named():
     k, e, values, _ = convert_cut(slit, energy, np.ones((21, 13)),
                                   deflector_deg=0.0, energy_offset_eV=55.6)
     assert np.isfinite(values).any()
+
+
+def _small_map(scale=1.0):
+    rng = np.random.default_rng(4)
+    cube = (rng.random((11, 13, 5)) * scale).astype(np.float64)
+    return (np.linspace(-5, 5, 11), np.linspace(-6, 6, 13),
+            np.linspace(30, 31, 5), cube)
+
+
+def test_float16_output_matches_float32_to_its_own_rounding():
+    theta, phi, energy, cube = _small_map(4000.0)
+    half = kspace.convert_map(theta, phi, energy, cube, n_kx=8, n_ky=8,
+                              precision="float16")[3]
+    single = kspace.convert_map(theta, phi, energy, cube, n_kx=8, n_ky=8,
+                                precision="float32")[3]
+    assert half.dtype == np.float16 and single.dtype == np.float32
+    assert np.array_equal(np.isnan(half), np.isnan(single))
+    ok = np.isfinite(single)
+    # one float16 rounding: half a step of 2^-10 relative
+    np.testing.assert_allclose(half[ok].astype(float), single[ok], rtol=2.0 ** -11)
+
+
+@pytest.mark.parametrize("scale", [1e6, 1e-4])
+def test_float16_falls_back_when_the_values_do_not_fit(scale):
+    # 1e6 overflows float16; 1e-4 would sink its weak tail below float16's
+    # normal range. Both come back as float32 rather than damaged.
+    theta, phi, energy, cube = _small_map(scale)
+    out = kspace.convert_map(theta, phi, energy, cube, n_kx=8, n_ky=8,
+                             precision="float16")[3]
+    assert out.dtype == np.float32
+    assert np.isfinite(out).any() and np.nanmax(out) > 0
+
+
+def test_float16_holds_the_range_it_claims():
+    assert kspace.float16_holds(0.0, 4091.0)
+    assert kspace.float16_holds(-1.0, kspace.FLOAT16_MAX)
+    assert not kspace.float16_holds(0.0, 7e4)
+    assert not kspace.float16_holds(0.0, 1e-3)
+    assert kspace.float16_holds(np.nan, np.nan)
+
+
+def test_no_precision_keeps_following_the_measurement():
+    theta, phi, energy, cube = _small_map()
+    assert kspace.convert_map(theta, phi, energy, cube, n_kx=4, n_ky=4)[3].dtype == np.float64
+    with pytest.raises(ValueError, match="precision"):
+        kspace.convert_map(theta, phi, energy, cube, n_kx=4, n_ky=4, precision="int8")

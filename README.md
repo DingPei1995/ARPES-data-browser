@@ -1,6 +1,6 @@
 # ARPES viewer
 
-**Version 1.0.7** (last modified 26 October 2026) — see
+**Version 1.0.8** (last modified 26 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
@@ -553,7 +553,11 @@ mouse to pause; a map held in memory follows it live.
   rotation off a direction picked on the contour: two points mark a line, so
   the order you click them in and which side of the origin they sit on make
   no difference, and what comes back is the smaller of the two turns that
-  stand it vertical.
+  stand it vertical. A converted Map is stored in float16 by default (half
+  the memory and file size; its 0.05 % steps are far below any point's
+  counting noise), with float32 one click away. Values outside float16's
+  range are kept in float32 automatically, and every slice is widened to
+  float32 before it is summed, cut or fitted.
 - **Fermi level** -- fit the edge, offset the energy axis, or divide it out.
 - **MDC / EDC fitting** -- fit the peaks across a cut and read the band off
   them: `v_F`, `m*`, and the self-energy. Only accepts a cut whose in-plane
@@ -1224,7 +1228,7 @@ has already happened once ("AuK 2022" vs "2021").
 python -m pytest
 ```
 
-from this folder. 838 of them, no display needed -- `conftest.py` puts the
+from this folder. 846 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`, and
 `test/conftest.py` runs garbage collection only between tests, the rule
 `ui/common/gcguard.py` applies in the program.
