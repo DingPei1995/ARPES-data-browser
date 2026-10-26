@@ -1,6 +1,6 @@
 # ARPES viewer
 
-**Version 1.0.2** (last modified 25 October 2026) — see
+**Version 1.0.3** (last modified 26 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
@@ -14,7 +14,8 @@ lay the results out as a publication figure.
 It began as a rewrite of the lab's `h5Loader*.py` for SOLEIL ANTARES `*.nxs`
 files, and reading those is now one loader among several rather than the
 whole program. It currently reads **SOLEIL ANTARES** (NeXus/HDF5), **SOLEIL
-CASSIOPEE** (Scienta SES text, single spectra and whole folders), and its own
+CASSIOPEE** (Scienta SES text, single spectra and whole folders), **ALS
+MAESTRO** (BL 7.0.2 HDF5), and its own
 saved format. Adding a beamline is a new file in `loader/`.
 
 The round-by-round history, and the reasoning behind the choices below, is in
@@ -128,6 +129,34 @@ the first entry, which holds only the beamline state, is skipped.
   processing** to fit the real Fermi level per photon energy.
 - A single frame can still be opened on its own, by its entry name, as a
   cut.
+
+### ALS MAESTRO (BL 7.0.2)
+
+MAESTRO's `.h5` files are read by **ALS MAESTRO** (`loader/maestro_loader.py`),
+ported from the MAESTRO reader in
+[TensorSpec](https://github.com/fawkesdx/TensorSpec) (MIT). A file is
+recognised by its three top-level groups (`0D_Data`, `2D_Data`, `Headers`).
+The scan plan in `Headers/Low_Level_Scan` says which motors were stepped,
+and over what range:
+
+| scan | opens as |
+|---|---|
+| one spectrum (`Process_000`) | `cut` |
+| deflector scan | `map` (deflector × slit angle × energy), convertible to k |
+| XY mesh | `spem_4d` |
+| deflector + X in one loop (two-motor line) | one `map` per X position |
+| focus XY (XY around a deflector loop) | one `spem_4d` per deflector step |
+| swept `Process_000` with motors in `0D_Data` | a map or `spem_4d` if the motors form a regular grid, else a map over the scan points |
+
+- The spectra stay in the file and are read as they are looked at, as for
+  an ANTARES spatial scan.
+- A fixed-mode slit axis given in pixels becomes degrees at 0.048 °/px
+  (R4000 Angular30), centred on the detector; `info` says so.
+- An aborted scan is read as far as it went: an XY mesh keeps its complete
+  rows, anything else opens as a list of the points recorded
+  (`info["maestro.aborted"]`).
+- The energy axis is the analyser's own scale (kinetic energy). Set E_F
+  from the data, as for CASSIOPEE spin.
 
 ### CASSIOPEE spin end station (MBS)
 
@@ -890,6 +919,7 @@ you what it may depend on.
 | `loader/soleil.py` | The SOLEIL/ANTARES reader. **Copy this file to add an HDF5 beamline.** |
 | `loader/cassiopee.py` | The SOLEIL/CASSIOPEE reader: Scienta text spectra, and folders of them assembled into a map or a kz map. |
 | `loader/cassiopee_spin.py` | CASSIOPEE's spin end station: MBS A-1 `.krx` and `.txt` files, as a cut, a map or a spin EDC. |
+| `loader/maestro_loader.py` | ALS MAESTRO (BL 7.0.2) `.h5` files: cuts, deflector maps, XY spatial scans, two-motor lines and focus scans, read lazily. |
 | `loader/native.py` | This program's own saved format -- detected, never chosen. |
 | `loader/nxs_file.py` | The SOLEIL parser, the saved format's reader and writer, `NxsScan`, the axis-slot table, and the lazy arrays that keep a measurement on disk. Start here. |
 | `loader/cubecache.py` | `CubeCache`: a map cube read into memory once it is being browsed, so the energy slider and the cut sliders slice an array rather than the file. |

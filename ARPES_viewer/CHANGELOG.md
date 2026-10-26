@@ -14,6 +14,24 @@ file is the record of how it got that way.
 
 (nothing yet)
 
+## 1.0.3 — 2026-10-26
+
+- **ALS MAESTRO (BL 7.0.2) files open.** A new loader,
+  `loader/maestro_loader.py`, reads MAESTRO's `.h5` files. It is ported
+  from the MAESTRO reader in TensorSpec (fawkesdx/TensorSpec, MIT), which
+  worked the layout out against real files. That covers the scan plan in
+  `Headers/Low_Level_Scan`, the `(angle, energy)` detector plane whatever
+  `unitNames` says, and the point order of each scan kind. A deflector scan
+  opens as a map and an XY mesh as a spatial scan. A two-motor line opens
+  as one map per X position, and a focus scan as one spatial scan per
+  deflector step, because this program has no 4-D or 5-D kind for them. A
+  single swept spectrum opens as a cut. Changes from TensorSpec:
+  - The spectra are read lazily, so a large spatial scan opens at once.
+  - For a swept `Process_000`, only the `0D_Data` channels the scan plan
+    names are taken as motors, so a drifting readback such as the beam
+    current no longer breaks the grid. A grid is accepted only if it
+    reproduces every recorded position, with each axis running one way.
+
 ## 1.0.2 — 2026-10-25
 
 Every tool now opens on the conventional setting, and settings say what

@@ -329,7 +329,7 @@ def _install_default_loaders():
     module is enough to have them. Kept in a function so the import order is
     explicit and a broken third-party loader cannot stop the rest loading."""
     for module in ("loader.native", "loader.soleil", "loader.cassiopee",
-                   "loader.cassiopee_spin"):
+                   "loader.cassiopee_spin", "loader.maestro_loader"):
         try:
             __import__(module)
         except Exception as exc:                        # noqa: BLE001
