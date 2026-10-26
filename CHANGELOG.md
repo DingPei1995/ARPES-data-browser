@@ -14,6 +14,36 @@ file is the record of how it got that way.
 
 (nothing yet)
 
+## 1.0.7 — 2026-10-26
+
+- **BESSY One Cube / One Square and SOLARIS URANOS loaders.** All three
+  write Scienta SES files, so the SES reader moved out of the Bloch module
+  into `loader/formats/ses.py`, and each beamline is a small `SESLoader`
+  subclass that claims its own headers (`loader/beamlines/bessy.py`,
+  `loader/beamlines/solaris.py`). Written against the headers uploaded to
+  `for loader/BESSY` and `for loader/SOLARIS`.
+  - One Square's map steps `P-Axis` under a `Point [deg]` label, and its
+    run-mode table starts each row with a running number; the motor is now
+    also matched against the wave's own axis, so the map is a polar map
+    that converts to k.
+  - URANOS numbers manipulator points `1, 2, 3 ...`; the motor that moves
+    along a dimension (and only that one) now gives the real axis. Motor
+    names with a trailing colon (`X:`) and One Square's `P-Axis R-Axis
+    Z-Axis` are known.
+  - A two-motor manipulator scan is a spatial scan even when one motor is
+    an angle (One Square steps polar against Z).
+  - The SES `.txt` export with one region per photon energy (how URANOS
+    saves a kz scan) opens as one kz map, each region referred to E_F by
+    its own hv. APE's `.txt` now uses the same path.
+  - One Cube leaves `Location=Scienta`, so it is also recognised by its
+    analyser's serial.
+- **The code is grouped into subpackages.** `tools/` into `momentum`,
+  `crystal`, `processing`, `spectra`, `output`, `runtime`; `ui/` into
+  `launcher`, `viewers`, `panels`, `common`; `loader/` into `beamlines`
+  (the `_loader` suffixes dropped) and `formats`; `test/` into `loaders`,
+  `tools`, `ui`. Only import paths changed. `test_imports` now walks the
+  subpackages and checks each has a docstring.
+
 ## 1.0.6 — 2026-10-26
 
 - **Elettra APE and ASTRID2 SGM4 loaders, ported from peaks.** No files

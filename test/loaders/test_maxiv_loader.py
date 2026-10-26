@@ -13,7 +13,7 @@ import zipfile
 import numpy as np
 import pytest
 
-from loader.beamlines import maxiv as maxiv_loader
+from loader.formats import ses as maxiv_loader
 from loader import registry
 
 NA, NE = 5, 6

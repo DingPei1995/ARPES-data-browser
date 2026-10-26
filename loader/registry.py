@@ -328,11 +328,10 @@ def _install_default_loaders():
     """Import the loaders that ship with the program, so that importing this
     module is enough to have them. Kept in a function so the import order is
     explicit and a broken third-party loader cannot stop the rest loading."""
-    for module in ("loader.native", "loader.beamlines.soleil", "loader.beamlines.cassiopee",
-                   "loader.beamlines.cassiopee_spin", "loader.beamlines.maestro",
-                   "loader.beamlines.alba", "loader.beamlines.diamond",
-                   "loader.beamlines.maxiv", "loader.beamlines.ape",
-                   "loader.beamlines.sgm4"):
+    beamlines = ("soleil", "cassiopee", "cassiopee_spin", "maestro", "alba",
+                 "diamond", "maxiv", "ape", "bessy", "solaris", "sgm4")
+    for module in ("loader.native",
+                   *(f"loader.beamlines.{name}" for name in beamlines)):
         try:
             __import__(module)
         except Exception as exc:                        # noqa: BLE001

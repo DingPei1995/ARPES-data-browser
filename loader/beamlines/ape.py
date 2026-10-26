@@ -7,10 +7,10 @@ Bloch.
 Ported from the APE reader in peaks
 (<https://github.com/phrgab/peaks>, ``peaks/core/fileIO/loaders/ape.py``),
 which is the generic SES reader with APE's manipulator names -- ``polar``,
-``tilt``, ``X``, ``Y``, ``Z``. Here too the reading is shared:
-``.ibw`` and ``.zip`` go through :mod:`loader.beamlines.maxiv` (whose run-mode
-table already knows APE's motor names), and a ``.txt`` spectrum through the
-Scienta text parser of :mod:`loader.beamlines.cassiopee`.
+``tilt``, ``X``, ``Y``, ``Z``. Here too the reading is shared: ``.ibw``,
+``.zip`` and ``.txt`` all go through :mod:`loader.formats.ses` (whose
+run-mode table already knows APE's motor names, and whose text path uses
+the Scienta parser of :mod:`loader.beamlines.cassiopee`).
 
 The three formats are written the same way at every SES beamline, so the
 facility is told by the ``Location`` the acquisition PC writes into the
@@ -24,11 +24,9 @@ Nothing in here imports Qt.
 """
 from __future__ import annotations
 
-import os
 import re
 
-from loader.beamlines.maxiv import SESLoader
-from loader.nxs_file import NxsScan
+from loader.formats.ses import SESLoader
 from loader.registry import register
 
 __all__ = ["ApeLoader", "is_ape_location"]
@@ -40,70 +38,20 @@ def is_ape_location(location: str) -> bool:
     return bool(_APE.search(location or ""))
 
 
-def _text_location(path: str) -> str:
-    with open(path, "rb") as handle:
-        head = handle.read(16384).decode("latin-1")
-    match = re.search(r"^\s*Location\s*=(.*)$", head, re.MULTILINE)
-    return match.group(1).strip() if match else ""
-
-
 class ApeLoader(SESLoader):
     name = "Elettra APE"
     description = ("Scienta SES files from the APE beamline at Elettra: "
                    ".ibw and .txt spectra and scans, .zip deflector maps.")
     patterns = ("*.ibw", "*.zip", "*.txt")
+    reads_text = True
     # Above the CASSIOPEE readers, which would otherwise take an APE .txt;
     # this one only claims a file whose header says APE.
     priority = 22
     facility = "Elettra APE"
     prefix = "APE_"
 
-    def claims(self, location: str) -> bool:
-        return is_ape_location(location)
-
-    def can_open(self, path: str) -> bool:
-        if path.lower().endswith(".txt"):
-            from loader.beamlines.cassiopee import CassiopeeLoader
-            try:
-                return CassiopeeLoader().can_open(path) \
-                    and is_ape_location(_text_location(path))
-            except Exception:
-                return False
-        return super().can_open(path)
-
-    def list_entries(self, path: str) -> list:
-        if not path.lower().endswith(".txt"):
-            return super().list_entries(path)
-        from loader.beamlines.cassiopee import parse_scienta
-        try:
-            regions = parse_scienta(path)
-        except Exception:
-            return []
-        base = os.path.splitext(os.path.basename(path))[0]
-        return [{"entry": f"region {i + 1}" if len(regions) > 1 else "cut",
-                 "kind": "Cut", "name": region.name or base,
-                 "title": region.name,
-                 "start_time": region.info.get("date")}
-                for i, region in enumerate(regions)]
-
-    def load(self, path: str, entry: str = None, progress=None):
-        if not path.lower().endswith(".txt"):
-            return super().load(path, entry, progress)
-        from loader.beamlines.cassiopee import parse_scienta
-        regions = parse_scienta(path)
-        if not regions:
-            raise ValueError(f"{os.path.basename(path)}: no spectrum in it")
-        index = 0
-        if entry and entry.startswith("region "):
-            index = int(entry.split()[1]) - 1
-        region = regions[min(index, len(regions) - 1)]
-        scan = NxsScan(kind="cut", filename_prefix=self.prefix)
-        scan.x, scan.y = region.angle, region.energy
-        scan.value = region.values
-        scan.labels = {"x": region.angle_label, "y": region.energy_label}
-        scan.info.update(region.info)
-        scan.info["facility"] = self.facility
-        return scan
+    def claims(self, header: dict) -> bool:
+        return is_ape_location(header.get("Location", ""))
 
 
 register(ApeLoader())
