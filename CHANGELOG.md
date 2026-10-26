@@ -14,6 +14,26 @@ file is the record of how it got that way.
 
 (nothing yet)
 
+## 1.0.6 — 2026-10-26
+
+- **Elettra APE and ASTRID2 SGM4 loaders, ported from peaks.** No files
+  from either beamline were at hand, so both follow the peaks readers. The
+  tests build files the way those readers expect them.
+  - `loader/ape_loader.py`: APE writes the same SES files as Bloch, so the
+    SES reader became a base class (`SESLoader`) with a facility of its own.
+    A file is APE's when the `Location` in its header says APE or Elettra.
+    The run-mode table now matches motors by name in either beamline's
+    spelling (`A P T X Y Z`, `polar tilt X Y Z`). APE's `.txt` spectra are
+    read with the CASSIOPEE Scienta parser.
+  - `loader/sgm4_loader.py`: `ScanDetails` gives the axes, and
+    `TransformedData` holds one row per point with the first slow axis
+    fastest. A grid view reads only what is indexed, and pads a stopped
+    scan with NaN. The deflectors open as a map, stage axes as a spatial
+    scan, and a grating's photon energy as a kz map with SGM4's
+    `W = 4.416 eV`. A knife-edge scan is listed but not opened.
+  - A `Layout` can now carry the beamline's own work function for kz-map
+    referencing. Without one, it is still the 4.5 eV assumed before.
+
 ## 1.0.5 — 2026-10-26
 
 - **MAX IV Bloch files open.** `loader/maxiv_loader.py` reads the Scienta

@@ -1,6 +1,6 @@
 # ARPES viewer
 
-**Version 1.0.5** (last modified 26 October 2026) — see
+**Version 1.0.6** (last modified 26 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
@@ -16,8 +16,8 @@ files, and reading those is now one loader among several rather than the
 whole program. It currently reads **SOLEIL ANTARES** (NeXus/HDF5), **SOLEIL
 CASSIOPEE** (Scienta SES text, single spectra and whole folders), **ALS
 MAESTRO** (BL 7.0.2 HDF5), **ALBA LOREA** (BL20 NeXus), **Diamond I05**
-(HR-ARPES) and **I05-1** (nano-ARPES) NeXus, **MAX IV Bloch** (Scienta
-SES `.ibw` and `.zip`), and its own saved format. Adding a beamline is a new file in `loader/`.
+(HR-ARPES) and **I05-1** (nano-ARPES) NeXus, **MAX IV Bloch** and **Elettra APE** (Scienta
+SES `.ibw` and `.zip`), **ASTRID2 SGM4** (HDF5), and its own saved format. Adding a beamline is a new file in `loader/`.
 
 The round-by-round history, and the reasoning behind the choices below, is in
 [CHANGELOG.md](CHANGELOG.md).
@@ -245,6 +245,35 @@ same kind open the same way.
   and a compressed one is read into memory.
 - The energy of a cut, map or spatial scan is the analyser's kinetic
   energy. Set E_F from the data, as for MAESTRO.
+
+### Elettra APE and ASTRID2 SGM4 (ported from peaks, untested)
+
+These two were ported from the readers in
+[peaks](https://github.com/phrgab/peaks) (`loaders/ape.py`, `loaders/sgm4.py`)
+without files from either beamline. The tests build files the way those
+readers expect them. Open a real file and check it before relying on it.
+
+- **Elettra APE** (`loader/ape_loader.py`) writes the same SES files as
+  Bloch. `.ibw` and `.zip` go through the Bloch reader, and a `.txt`
+  spectrum through the CASSIOPEE Scienta text parser. The run-mode table
+  knows APE's motor names (`polar tilt X Y Z`). Because the format is the
+  same, the facility is told by the `Location` in the SES header: a file
+  whose `Location` says APE or Elettra opens as APE, and anything else stays
+  with Bloch (or CASSIOPEE for `.txt`). Choose the reader in the Loader
+  window when `Location` was left blank. Spin data is not read, as in peaks.
+- **ASTRID2 SGM4** (`loader/sgm4_loader.py`): `Entry/Data/ScanDetails`
+  gives each slow and fast axis as start, step and length. The spectra in
+  `Entry/Data/TransformedData` are one row per point, with the first slow
+  axis fastest. They are read lazily through a grid view, and a scan
+  stopped early is padded with NaN (`info["sgm4.incomplete"]`).
+  - `ShiftX`/`ShiftY` (or `SALX`/`SALY`) are the deflectors, and open as a
+    map that converts to k.
+  - `FSamX/Y/Z` are the stage in µm; two of them open as a spatial scan.
+  - `LEG`/`MEG`/`HEG` are the photon energy, which opens as a kz map with
+    `W = 4.416 eV`. Each hv keeps one binding window, as in peaks.
+  - `CapZ` (focus) and `Loop` (repeats) are listed one dataset per step.
+  - A knife-edge scan holds a summed intensity per point, not spectra. It
+    is listed but does not open.
 
 ### CASSIOPEE spin end station (MBS)
 
@@ -1012,6 +1041,8 @@ you what it may depend on.
 | `loader/alba_loader.py` | ALBA LOREA (BL20) `.nxs` files: cuts, deflector maps, photon-energy scans and spatial scans. |
 | `loader/diamond_loader.py` | Diamond I05 (HR-ARPES) and I05-1 (nano-ARPES) `.nxs` files, as two loaders: cuts, deflector maps, photon-energy scans and spatial scans. |
 | `loader/maxiv_loader.py` | MAX IV Bloch (Scienta SES): `.ibw` cuts, photon-energy scans and manipulator scans, and `.zip` deflector maps, read lazily. |
+| `loader/ape_loader.py` | Elettra APE (Scienta SES), recognised by the header's `Location`: `.ibw`/`.zip` via the Bloch reader, `.txt` via the CASSIOPEE text parser. Ported from peaks. |
+| `loader/sgm4_loader.py` | ASTRID2 SGM4 `.h5` files: cuts, deflector maps, photon-energy scans and spatial scans, read lazily. Ported from peaks. |
 | `loader/native.py` | This program's own saved format -- detected, never chosen. |
 | `loader/nxs_file.py` | The SOLEIL parser, the saved format's reader and writer, `NxsScan`, the axis-slot table, and the lazy arrays that keep a measurement on disk. Start here. |
 | `loader/cubecache.py` | `CubeCache`: a map cube read into memory once it is being browsed, so the energy slider and the cut sliders slice an array rather than the file. |
