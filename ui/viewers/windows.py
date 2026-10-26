@@ -1501,7 +1501,7 @@ class KConversionDialog(QDialog):
         # disagreeing about the same axis.
         n_e = len(contour.E)
         self.by_count = QRadioButton("by number of points")
-        self.by_resolution = QRadioButton("by resolution")
+        self.by_resolution = QRadioButton("by step size")
         self.by_count.setChecked(True)
         mode_row = QWidget()
         mode_box = QHBoxLayout(mode_row)
@@ -1528,24 +1528,25 @@ class KConversionDialog(QDialog):
         form.addRow("ky points", self.nky_box)
         form.addRow("E points", self.ne_box)
 
-        self.dkx_box = self._resolution_box(0.01, 4, "\u00c5\u207b\u00b9",
+        # The two halves describe the same grid: whichever is chosen above is
+        # typed, and the other (greyed) follows it -- see _sync_grid.
+        self.dkx_box = self._resolution_box(0.01, 5, "\u00c5\u207b\u00b9",
                                             "Spacing between kx points.")
-        self.dky_box = self._resolution_box(0.01, 4, "\u00c5\u207b\u00b9",
+        self.dky_box = self._resolution_box(0.01, 5, "\u00c5\u207b\u00b9",
                                             "Spacing between ky points.")
         energy_step = abs(float(contour.E[1] - contour.E[0])) * 1000 if n_e > 1 else 10.0
         self.de_box = self._resolution_box(
             max(round(energy_step, 3), 0.001), 3, "meV",
             "Spacing between energy points. The measurement's own step is "
             f"{energy_step:.4g} meV.")
-        form.addRow("kx resolution (\u00c5\u207b\u00b9)", self.dkx_box)
-        form.addRow("ky resolution (\u00c5\u207b\u00b9)", self.dky_box)
-        form.addRow("E resolution (meV)", self.de_box)
+        form.addRow("kx step (\u00c5\u207b\u00b9)", self.dkx_box)
+        form.addRow("ky step (\u00c5\u207b\u00b9)", self.dky_box)
+        form.addRow("E step (meV)", self.de_box)
 
+        # Only for a setting that defines no grid at all; the values
+        # themselves are in the boxes.
         self.grid_note = QLabel("")
         self.grid_note.setWordWrap(True)
-        # Two lines' worth: the note is the only place the other half of the
-        # grid setting is visible, and a clipped one would be worse than none.
-        self.grid_note.setMinimumHeight(34)
         form.addRow("", self.grid_note)
 
         # Half precision by default: the converted cube is the largest thing
@@ -1572,9 +1573,13 @@ class KConversionDialog(QDialog):
 
         for radio in (self.by_count, self.by_resolution):
             radio.toggled.connect(self._update_grid_mode)
+        # The origin, rotation and energy offset move the k range, and with it
+        # the spacing a given number of points works out to.
         for box in (self.dkx_box, self.dky_box, self.de_box,
-                    self.nkx_box, self.nky_box, self.ne_box):
-            box.valueChanged.connect(self._update_grid_note)
+                    self.nkx_box, self.nky_box, self.ne_box,
+                    self.theta_box, self.phi_box, self.azimuth_box,
+                    self.energy_offset_box):
+            box.valueChanged.connect(self._sync_grid)
         self._update_grid_mode()
 
         self.note = QLabel("")
@@ -1628,7 +1633,7 @@ class KConversionDialog(QDialog):
             box.setEnabled(by_count)
         for box in (self.dkx_box, self.dky_box, self.de_box):
             box.setEnabled(not by_count)
-        self._update_grid_note()
+        self._sync_grid()
 
     def k_extent(self):
         """The (kx, ky) box the current settings would produce, so a
@@ -1661,26 +1666,37 @@ class KConversionDialog(QDialog):
         n_e = int(round(span_meV / self.de_box.value())) + 1
         return max(n_kx, 2), max(n_ky, 2), max(n_e, 2)
 
-    def _update_grid_note(self, *_):
+    def _sync_grid(self, *_):
+        """Show the other half of the grid setting in its (greyed) boxes.
+
+        Points and spacings are one choice seen two ways. Whichever the
+        user is typing decides; the other always shows what that works out
+        to -- the spacing the typed counts give over the current k range,
+        or the counts the typed spacings round to -- so a greyed box never
+        holds a stale number that looks like a result.
+        """
         try:
             n_kx, n_ky, n_e = self.grid_counts()
+            extent = self.k_extent()
+            if extent is None:
+                raise ValueError("the conversion settings do not define a k range yet")
         except Exception as exc:
             self.grid_note.setText(str(exc))
             return
+        self.grid_note.setText("")
+        kx_lo, kx_hi, ky_lo, ky_hi = extent
+        energy = np.asarray(self.contour.E, dtype=float)
+        span_meV = abs(float(energy[-1] - energy[0])) * 1000.0
         if self.by_count.isChecked():
-            extent = self.k_extent()
-            if extent is None:
-                self.grid_note.setText("")
-                return
-            kx_lo, kx_hi, ky_lo, ky_hi = extent
-            energy = np.asarray(self.contour.E, dtype=float)
-            span_meV = abs(float(energy[-1] - energy[0])) * 1000.0
-            self.grid_note.setText(
-                f"\u2192 {(kx_hi - kx_lo) / max(n_kx - 1, 1):.4g} / "
-                f"{(ky_hi - ky_lo) / max(n_ky - 1, 1):.4g} \u00c5\u207b\u00b9 and "
-                f"{span_meV / max(n_e - 1, 1):.4g} meV per point")
+            shown = ((self.dkx_box, (kx_hi - kx_lo) / max(n_kx - 1, 1)),
+                     (self.dky_box, (ky_hi - ky_lo) / max(n_ky - 1, 1)),
+                     (self.de_box, span_meV / max(n_e - 1, 1)))
         else:
-            self.grid_note.setText(f"\u2192 {n_kx} x {n_ky} x {n_e} points")
+            shown = ((self.nkx_box, n_kx), (self.nky_box, n_ky), (self.ne_box, n_e))
+        for box, value in shown:
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
 
     # -- sample rotation from the contour ---------------------------------
     def _toggle_rotation_picking(self, on: bool):
@@ -1743,7 +1759,7 @@ class KConversionDialog(QDialog):
                 f"Two points \u2192 {rotation:.3f}\u00b0 stands that line "
                 f"vertical (along ky). The line has no direction, so clicking "
                 f"the pair the other way round gives the same number.")
-        self._update_grid_note()
+        self._sync_grid()
 
     def _angle_box(self, tip):
         box = QDoubleSpinBox()
@@ -1791,6 +1807,9 @@ class KConversionDialog(QDialog):
                           f"deflector {theta:.4g} deg, slit {phi:.4g} deg.")
         if mark:
             self._user_edited = True
+        # The boxes were set with their signals blocked; the origin moves the
+        # k range, so the greyed half of the grid follows by hand.
+        self._sync_grid()
 
     def settings(self) -> dict:
         n_kx, n_ky, n_energy = self.grid_counts()
@@ -2512,6 +2531,8 @@ class BrillouinZoneDialog(QDialog):
         self.mode_3d.toggled.connect(self._toggle_mode)
         self.moire_cb.toggled.connect(self._toggle_moire)
         self.moire_same_cb.toggled.connect(self._toggle_moire_same)
+        for box in (self.a2_box, self.b2_box, self.gamma2_box):
+            box.valueChanged.connect(self._sync_moire_bottom)
         for box in (self.a_box, self.b_box, self.c_box, self.alpha_box,
                     self.beta_box, self.gamma_box, self.h_box, self.k_box,
                     self.l_box, self.offset_box, self.kpar_h_box,
@@ -2666,6 +2687,20 @@ class BrillouinZoneDialog(QDialog):
         same = self.moire_same_cb.isChecked()
         for box in (self.a2b_box, self.b2b_box, self.gamma2b_box):
             box.setEnabled(not same)
+        self._sync_moire_bottom()
+
+    def _sync_moire_bottom(self, *_):
+        """With "same lattice" on, the greyed bottom-layer boxes show the
+        top layer's a/b/gamma -- the lattice actually used -- rather than
+        whatever they held, which read as a second lattice that was not.
+        Unticking it then starts the bottom layer from the top one."""
+        if not self.moire_same_cb.isChecked():
+            return
+        for target, source in ((self.a2b_box, self.a2_box), (self.b2b_box, self.b2_box),
+                               (self.gamma2b_box, self.gamma2_box)):
+            target.blockSignals(True)
+            target.setValue(source.value())
+            target.blockSignals(False)
 
     def zone_kind(self) -> str:
         return "irreducible" if self.zone_irreducible.isChecked() else "conventional"
@@ -4885,7 +4920,7 @@ class CutKConversionDialog(QDialog):
         out.addRow("Name", self.name_box)
 
         self.by_count = QRadioButton("by number of points")
-        self.by_resolution = QRadioButton("by resolution")
+        self.by_resolution = QRadioButton("by step size")
         self.by_count.setChecked(True)
         mode_row = QWidget()
         mode_box = QHBoxLayout(mode_row)
@@ -4905,15 +4940,17 @@ class CutKConversionDialog(QDialog):
         out.addRow("k points", self.nk_box)
         out.addRow("E points", self.ne_box)
 
-        self.dk_box = self._resolution_box(0.01, 4, "Å⁻¹",
+        # Points and spacings are one choice seen two ways: whichever is
+        # chosen above is typed, and the other (greyed) follows it.
+        self.dk_box = self._resolution_box(0.01, 5, "Å⁻¹",
                                            "Spacing between k points.")
         step_meV = abs(float(self.energy[1] - self.energy[0])) * 1000 if n_e > 1 else 10.0
         self.de_box = self._resolution_box(
             max(round(step_meV, 3), 0.001), 3, "meV",
             f"Spacing between energy points. The measurement's own step is "
             f"{step_meV:.4g} meV.")
-        out.addRow("k resolution (Å⁻¹)", self.dk_box)
-        out.addRow("E resolution (meV)", self.de_box)
+        out.addRow("k step (Å⁻¹)", self.dk_box)
+        out.addRow("E step (meV)", self.de_box)
 
         self.radial_box = QCheckBox("Measure from Γ itself")
         self.radial_box.setToolTip(
@@ -4931,9 +4968,10 @@ class CutKConversionDialog(QDialog):
             "on, the output is cut back to the range all of them share.")
         out.addRow("", self.trim_box)
 
+        # Only for a setting that defines no grid at all; the values
+        # themselves are in the boxes.
         self.grid_note = QLabel("")
         self.grid_note.setWordWrap(True)
-        self.grid_note.setMinimumHeight(34)
         out.addRow("", self.grid_note)
         layout.addWidget(out_group)
 
@@ -5141,17 +5179,23 @@ class CutKConversionDialog(QDialog):
             self.geometry_note.setText("")
             return
         if extent is None:
-            self.grid_note.setText("")
+            self.grid_note.setText("These settings do not define a k range.")
             self.geometry_note.setText("")
             return
         lo, hi = extent
+        self.grid_note.setText("")
+        # The greyed half of the grid shows what the typed half works out
+        # to, so it never holds a stale number that looks like a result.
+        span_meV = abs(float(self.energy[-1] - self.energy[0])) * 1000.0
         if self.by_count.isChecked():
-            span_meV = abs(float(self.energy[-1] - self.energy[0])) * 1000.0
-            self.grid_note.setText(
-                f"→ {(hi - lo) / max(n_k - 1, 1):.4g} Å⁻¹ and "
-                f"{span_meV / max(n_e - 1, 1):.4g} meV per point")
+            shown = ((self.dk_box, (hi - lo) / max(n_k - 1, 1)),
+                     (self.de_box, span_meV / max(n_e - 1, 1)))
         else:
-            self.grid_note.setText(f"→ {n_k} x {n_e} points")
+            shown = ((self.nk_box, n_k), (self.ne_box, n_e))
+        for box, value in shown:
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
         self.geometry_note.setText(self.describe_geometry(lo, hi))
 
     def describe_geometry(self, lo: float, hi: float) -> str:
@@ -5844,7 +5888,41 @@ class DataOperationsDialog(QDialog):
         mode_box.addWidget(self.trunc_by_index)
         mode_box.addStretch(1)
         form.addRow("Bounds mean", mode)
+        self.trunc_by_index.toggled.connect(self._trunc_mode_changed)
         return page
+
+    @staticmethod
+    def _retype(edit, axis, to_index: bool):
+        """Rewrite a typed bound for the other reading of the same boxes:
+        a value as the 1-based index of the nearest point, an index as that
+        point's value. Switching "by value"/"by index" then keeps pointing
+        at the same data instead of silently reading 1.2 eV as point 1.2.
+        Blank or unreadable text is left as it is."""
+        text = edit.text().strip()
+        axis = np.asarray(axis, dtype=float)
+        if not text or axis.size == 0:
+            return
+        try:
+            number = float(text)
+        except ValueError:
+            return
+        if to_index:
+            edit.setText(str(int(np.argmin(np.abs(axis - number))) + 1))
+        else:
+            i = int(np.clip(round(number), 1, axis.size)) - 1
+            edit.setText(f"{axis[i]:.6g}")
+
+    def _trunc_mode_changed(self, to_index: bool):
+        for axis, (lo, hi) in zip(self.axes, self.trunc_boxes):
+            self._retype(lo, axis, to_index)
+            self._retype(hi, axis, to_index)
+
+    def _norm_mode_changed(self, to_index: bool):
+        dim = self.norm_window_axis.currentData()
+        if dim is None:
+            return
+        for edit in (self.norm_from, self.norm_to):
+            self._retype(edit, self.axes[dim], to_index)
 
     def _normalise_tab(self) -> QWidget:
         """Choose what is divided by its own intensity.
@@ -5909,6 +5987,7 @@ class DataOperationsDialog(QDialog):
         wbox.addWidget(self.norm_by_index)
         wbox.addStretch(1)
         form.addRow("Sum only over", window)
+        self.norm_by_index.toggled.connect(self._norm_mode_changed)
 
         self.norm_to_peak = QCheckBox("normalise to the peak instead of the sum")
         self.norm_to_peak.toggled.connect(self._norm_checks_changed)

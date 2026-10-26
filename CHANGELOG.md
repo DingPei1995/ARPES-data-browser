@@ -39,6 +39,26 @@ file is the record of how it got that way.
     k-map saved to a file and opened again reads the same way.
   - The default grid (as many points as were measured) is unchanged.
 - **A k conversion onto a grid coarser than the measurement now averages instead of picking samples** (Map and Cut, in energy and in k; `tools/momentum/rebin.py`), so a reduced grid keeps every count and no longer aliases; at the measured sampling the result is bit-for-bit what it was.
+- **Greyed-out inputs now show what is actually used, never a leftover number.**
+  A dialog that offers two ways to give one thing disables the half not
+  being typed; that half used to keep whatever it held when the dialog
+  opened, and read as the result.
+  - k conversion (Map and Cut): points and step sizes are one grid seen two
+    ways. Whichever is chosen is typed; the other follows it -- the step the
+    counts give over the current k range (which also moves with Γ, the
+    rotation and the energy offset), or the counts the steps round to. The
+    note under the boxes that used to carry this is gone. The boxes are now
+    labelled *step*, not *resolution*: they set the grid spacing, not the
+    momentum or energy resolution of the measurement.
+  - Brillouin zone, moire: with "Same lattice, twisted" on, the greyed
+    bottom-layer a/b/gamma show the top layer's lattice (the one used), not
+    3 Å / 3 Å / 120°.
+  - Multi-slice figure: in "evenly spaced" mode the greyed list shows the
+    positions it gives; with typed positions, the greyed number/from/to
+    show how many and their range.
+  - Crop / normalise: switching bounds between "by value" and "by index"
+    rewrites what is typed, so the bounds keep pointing at the same points
+    instead of 1.2 eV being read as point 1.2.
 
 ## 1.0.7 — 2026-10-26
 

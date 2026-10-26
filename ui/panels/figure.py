@@ -2024,6 +2024,17 @@ class SliceSeriesDialog(QDialog):
         self.to_box.setEnabled(even)
         self.values_edit.setEnabled(not even)
         values = self.values()
+        # The greyed half shows what the other one gives -- the positions
+        # the even spacing works out to, or the number and range of the
+        # typed ones -- never what was left there from before.
+        if even:
+            self.values_edit.setText(", ".join(f"{v:.6g}" for v in values))
+        else:
+            for box, value in ((self.count_box, len(values)),
+                               (self.from_box, min(values)), (self.to_box, max(values))):
+                box.blockSignals(True)
+                box.setValue(value)
+                box.blockSignals(False)
         axis = np.asarray(self.axes[self.direction.currentIndex()], dtype=float)
         step = abs(float(axis[1] - axis[0])) if axis.size > 1 else 0.0
         planes = max(int(round(2 * self.width_box.value() / step)) + 1, 1) if step else 1
