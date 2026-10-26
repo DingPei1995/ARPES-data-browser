@@ -330,7 +330,8 @@ def _install_default_loaders():
     explicit and a broken third-party loader cannot stop the rest loading."""
     for module in ("loader.native", "loader.soleil", "loader.cassiopee",
                    "loader.cassiopee_spin", "loader.maestro_loader",
-                   "loader.alba_loader", "loader.diamond_loader"):
+                   "loader.alba_loader", "loader.diamond_loader",
+                   "loader.maxiv_loader"):
         try:
             __import__(module)
         except Exception as exc:                        # noqa: BLE001
