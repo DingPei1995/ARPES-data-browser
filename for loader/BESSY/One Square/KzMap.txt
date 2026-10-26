@@ -1,0 +1,94 @@
+Wave: w013_kz
+Type: Single Float 32 bit
+Rows: 1077  Start: 5.97654  Delta: -0.001496  Units: Binding Energy [eV]
+Columns: 668  Start: -17.5788  Delta: 0.0456  Units: Y-Scale [deg]
+Layers: 41  Start: 50  Delta: 2  Units: Photon Energy [eV]
+Data Units: Counts [a.u.]
+Size: 117989669 bytes
+Modified:   Since Last Saved: No
+Note:
+[SES]
+Version=1.2.5
+Region Name=kz
+Lens Mode=Angular30S
+Pass Energy=20
+Number of Sweeps=1
+Excitation Energy=49.991606
+Energy Scale=Binding
+Acquisition Mode=Fixed
+Energy Unit=Kinetic
+Center Energy=44.841606
+Low Energy=44.015066
+High Energy=45.624762
+Energy Step=0.001496
+Step Time=30000
+Detector First X-Channel=127
+Detector Last X-Channel=1203
+Detector First Y-Channel=159
+Detector Last Y-Channel=826
+Number of Slices=668
+File=E:\Users\Chen\202512\Raw Data\NIS\NIS1_0013.ibw
+Sequence=E:\Users\Chen\202512\sequence.seq
+Spectrum Name=w013_kz
+Instrument=R8000-8ES202
+Location=ARPES 1^2
+User=Chen
+Sample=NIS
+Comments=
+Date=2025-12-19
+Time=15:14:29
+Time per Spectrum Channel=30
+DetectorMode=ADC
+ThetaX=0
+ThetaY=0
+[Run Mode Information]
+Name=CIS
+Point 1=50 eV
+Point 2=52 eV
+Point 3=54 eV
+Point 4=56 eV
+Point 5=58 eV
+Point 6=60 eV
+Point 7=62 eV
+Point 8=64 eV
+Point 9=66 eV
+Point 10=68 eV
+Point 11=70 eV
+Point 12=72 eV
+Point 13=74 eV
+Point 14=76 eV
+Point 15=78 eV
+Point 16=80 eV
+Point 17=82 eV
+Point 18=84 eV
+Point 19=86 eV
+Point 20=88 eV
+Point 21=90 eV
+Point 22=92 eV
+Point 23=94 eV
+Point 24=96 eV
+Point 25=98 eV
+Point 26=100 eV
+Point 27=102 eV
+Point 28=104 eV
+Point 29=106 eV
+Point 30=108 eV
+Point 31=110 eV
+Point 32=112 eV
+Point 33=114 eV
+Point 34=116 eV
+Point 35=118 eV
+Point 36=120 eV
+Point 37=122 eV
+Point 38=124 eV
+Point 39=126 eV
+Point 40=128 eV
+Point 41=130 eV
+
+[User Interface Information]
+[Manipulator]
+P-Axis=0.000
+R-Axis=0.000
+Z-Axis=90.603
+
+

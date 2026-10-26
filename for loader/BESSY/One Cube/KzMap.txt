@@ -1,0 +1,106 @@
+Wave: kz
+Type: Single Float 32 bit
+Rows: 985  Start: 5.7628  Delta: -0.001368  Units: Binding Energy [eV]
+Columns: 405  Start: -19.2308  Delta: 0.0904977  Units: Y-Scale [deg]
+Layers: 51  Start: 20  Delta: 2  Units: Photon Energy [eV]
+Data Units: Counts [a.u.]
+Size: 81383022 bytes
+Modified:   Since Last Saved: No
+Note:
+[SES]
+Version=1.2.5
+Region Name=kz
+Lens Mode=DA30L_01
+Pass Energy=20
+Number of Sweeps=2
+Excitation Energy=19.998297
+Energy Scale=Binding
+Acquisition Mode=Fixed
+Energy Unit=Kinetic
+Center Energy=14.898297
+Low Energy=14.235501
+High Energy=15.581613
+Energy Step=0.001368
+Step Time=10000
+Detector First X-Channel=48
+Detector Last X-Channel=1032
+Detector First Y-Channel=75
+Detector Last Y-Channel=884
+Number of Slices=405
+File=D:\Users\YLChen\202512\CoCaFeAsF\CCFAF_0009.ibw,.txt,.zip
+Sequence=D:\Users\YLChen\Seq.seq
+Spectrum Name=kz
+Instrument=DA30L_8000-11623
+Location=Scienta
+User=Scienta
+Sample=CCFAF
+Comments=
+Date=2025-12-17
+Time=16:14:07
+Time per Spectrum Channel=20
+DetectorMode=ADC
+ThetaX=0
+ThetaY=1.2
+[Run Mode Information]
+Name=CIS
+Point 1=20 eV
+Point 2=22 eV
+Name=CIS
+Point 1=20 eV
+Point 2=22 eV
+Point 3=24 eV
+Point 4=26 eV
+Point 5=28 eV
+Point 6=30 eV
+Point 7=32 eV
+Point 8=34 eV
+Point 9=36 eV
+Point 10=38 eV
+Point 11=40 eV
+Point 12=42 eV
+Point 13=44 eV
+Point 14=46 eV
+Point 15=48 eV
+Point 16=50 eV
+Point 17=52 eV
+Point 18=54 eV
+Point 19=56 eV
+Point 20=58 eV
+Point 21=60 eV
+Point 22=62 eV
+Point 23=64 eV
+Point 24=66 eV
+Point 25=68 eV
+Point 26=70 eV
+Point 27=72 eV
+Point 28=74 eV
+Point 29=76 eV
+Point 30=78 eV
+Point 31=80 eV
+Point 32=82 eV
+Point 33=84 eV
+Point 34=86 eV
+Point 35=88 eV
+Point 36=90 eV
+Point 37=92 eV
+Point 38=94 eV
+Point 39=96 eV
+Point 40=98 eV
+Point 41=100 eV
+Point 42=102 eV
+Point 43=104 eV
+Point 44=106 eV
+Point 45=108 eV
+Point 46=110 eV
+Point 47=112 eV
+Point 48=114 eV
+Point 49=116 eV
+Point 50=118 eV
+Point 51=120 eV
+
+[User Interface Information]
+[Manipulator]
+Z=0.929
+Polar=0.000
+
+

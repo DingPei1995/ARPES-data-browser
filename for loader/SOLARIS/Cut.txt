@@ -1,0 +1,54 @@
+Wave: cut_60eV
+Type: Single Float 32 bit
+Rows: 181  Start: 55  Delta: 0.005  Units: Kinetic Energy [eV]
+Columns: 548  Start: -15.0363  Delta: 0.0550779  Units: Y-Scale [deg]
+Data Units: Counts [a.u.]
+Size: 398290 bytes
+Modified:   Since Last Saved: No
+Note:
+[SES]
+Version=1.2.5
+Region Name=cut 60eV
+Lens Mode=DA30L
+Pass Energy=20
+Number of Sweeps=1
+Excitation Energy=59.9995089294559
+Energy Scale=Kinetic
+Acquisition Mode=Swept
+Energy Unit=Kinetic
+Center Energy=55.45
+Low Energy=55
+High Energy=55.9
+Energy Step=0.005
+Step Time=250
+Detector First X-Channel=70
+Detector Last X-Channel=995
+Detector First Y-Channel=230
+Detector Last Y-Channel=777
+Number of Slices=548
+File=P:\PROPOSALS\252056\Ga1\Ga1_0049.pxt,.ibw,.zip
+Sequence=P:\PROPOSALS\252056\sequence.seq
+Spectrum Name=cut 60eV
+Instrument=VLeed-12609
+Location=URANOS
+User=user
+Sample=Ga1
+Comments=3nd anneal @ 300 C
+Date=2026-06-13
+Time=11:10:40
+Time per Spectrum Channel=77.5
+DetectorMode=ADC
+ThetaX=0
+ThetaY=0
+[Run Mode Information]
+
+[User Interface Information]
+[Manipulator]
+X:=1.971
+Y:=1.830
+Z:=0.520
+R1:=89.300
+R2:=33.700
+R3:=-17.999
+
+
