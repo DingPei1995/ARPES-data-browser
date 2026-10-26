@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (QSizePolicy, QWidget, QMainWindow, QVBoxLayout, QHB
 
 import tools.processing.process as P
 import tools.processing.volume as V
-from ui.viewers.widgets import (add_button, MemoryData, apply_colormap,
+from ui.viewers.widgets import (add_button, ButtonRow, MemoryData, apply_colormap,
                                 separator, section_label, COLORMAP_NAMES,
                                 strip_stock_menu, plain_image_view, show_frame,
                                 fit_frame_view)
@@ -487,7 +487,11 @@ class ProcessDialog(QDialog):
                 "gradient": "_grad", "background": "_bg", "fermi": "_fd",
                 "despike": "_fix", "symmetry": "_symm"}
 
-    def __init__(self, datasets, parent=None, colormap="gray", flip=False):
+    #: the tabs, by the name the launcher's tool buttons open them with
+    TABS = ("smooth", "derivative", "curvature", "background", "symmetry")
+
+    def __init__(self, datasets, parent=None, colormap="gray", flip=False,
+                 start=None):
         super().__init__(parent)
         self.datasets = list(datasets)          # [(label, data), ...]
         self.colormap, self.flip = colormap, flip
@@ -522,6 +526,10 @@ class ProcessDialog(QDialog):
         self.tabs.addTab(self._curvature_tab(), "Curvature")
         self.tabs.addTab(self._background_tab(), "Background")
         self.tabs.addTab(self._symmetry_tab(), "Symmetrise")
+        # Opened on the operation whose button was pressed. The other tabs
+        # stay, so a chain (smooth, then curvature) is still one window.
+        if start in self.TABS:
+            self.tabs.setCurrentIndex(self.TABS.index(start))
         self.tabs.currentChanged.connect(self.refresh)
         self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self.tabs, 0)
@@ -531,7 +539,7 @@ class ProcessDialog(QDialog):
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
 
-        buttons = QDialogButtonBox()
+        buttons = ButtonRow()
         self.live = QCheckBox("Live preview")
         self.live.setChecked(True)
         self.live.setToolTip(

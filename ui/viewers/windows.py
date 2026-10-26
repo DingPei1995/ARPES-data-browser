@@ -58,7 +58,8 @@ from ui.viewers.widgets import (SpatialImageView, FrameImageView, ImagePanel,
                                 FrameWindow, KMapData, MemoryData,
                                 _SliceControl, ViewOptionsBar, apply_colormap,
                                 separator, section_label, scroll_strip,
-                                strip_stock_menu, AXIS_COLORS, COLORMAP_NAMES)
+                                strip_stock_menu, add_button, ButtonRow,
+                                AXIS_COLORS, COLORMAP_NAMES)
 
 
 #: Windows that must stay open after the window that made them has closed:
@@ -146,7 +147,7 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
         """The one control row along the top of every viewer.
 
         Left to right: the few buttons a window keeps in sight (a map's
-        Deflector cut and Slit cut), the **Functions** menu with everything
+        Scan-axis cut and Slit cut), the **Functions** menu with everything
         else this window can do, the colormap, and the view controls (axis
         ranges, invert, grid). Vertical rules separate the blocks.
 
@@ -3507,9 +3508,13 @@ class ContourWindow(ViewerWindow):
         self.cut_windows = {}
 
         # Kept on the window itself: the two cuts are how a map is navigated.
-        self.defl_cut_button = QPushButton("Deflector cut")
+        # "Scan-axis", not "deflector": the map's first axis is whatever was
+        # scanned -- a deflector angle, a manipulator rotation, or a photon
+        # energy in a kz map -- and the tooltip names the one this map has.
+        self.defl_cut_button = QPushButton("Scan-axis cut")
         self.defl_cut_button.setToolTip(
-            "Open the deflector-vs-energy cut, integrated over the slit-angle window.")
+            f"Open the cut along the scanned axis ({self.defl_label}) against "
+            f"energy, integrated over the slit-angle window.")
         self.slit_cut_button = QPushButton("Slit cut")
         self.slit_cut_button.setToolTip(
             "Open the slit-vs-energy cut, integrated over the deflector-angle window.")
@@ -5815,7 +5820,12 @@ class DataOperationsDialog(QDialog):
     #: the datasets this dialog produced, for the launcher to list
     datasetsCreated = pyqtSignal(list)
 
-    def __init__(self, datasets, parent=None):
+    #: operation -> (the tab it is, the window's title)
+    OPERATIONS = {"truncate": (0, "Truncate (crop)"),
+                  "normalise": (1, "Self-normalise"),
+                  "compress": (2, "Compress (bin)")}
+
+    def __init__(self, datasets, parent=None, operation=None):
         super().__init__(parent)
         self.datasets = list(datasets)          # [(name, data), ...]
         self.setWindowTitle("Crop / bin / normalise")
@@ -5840,18 +5850,34 @@ class DataOperationsDialog(QDialog):
         layout.addWidget(header)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._truncate_tab(), "Crop (truncate)")
-        self.tabs.addTab(self._normalise_tab(), "Normalise")
-        self.tabs.addTab(self._compress_tab(), "Bin (compress)")
+        # Kept: a page left out of the tabs belongs to nothing else.
+        self._pages = pages = ((self._truncate_tab(), "Crop (truncate)"),
+                               (self._normalise_tab(), "Normalise"),
+                               (self._compress_tab(), "Bin (compress)"))
+        # Each operation has its own button under the main list, so the
+        # window it opens is that operation alone: the other two tabs would
+        # only be a second, hidden way to the other buttons. (All three
+        # pages are still built; the settings live on them.)
+        self.operation = None
+        if operation is None:
+            for page, text in pages:
+                self.tabs.addTab(page, text)
+        else:
+            self.operation, title = self.OPERATIONS[operation]
+            self.tabs.addTab(*pages[self.operation])
+            self.tabs.tabBar().hide()
+            self.setWindowTitle(title)
         layout.addWidget(self.tabs)
 
         self.note = QLabel("")
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Close)
-        buttons.button(QDialogButtonBox.Apply).clicked.connect(self.apply)
-        buttons.button(QDialogButtonBox.Close).clicked.connect(self.reject)
+        buttons = ButtonRow()
+        add_button(buttons, "Apply", QDialogButtonBox.ApplyRole).clicked.connect(
+            self.apply)
+        add_button(buttons, "Close", QDialogButtonBox.RejectRole).clicked.connect(
+            self.reject)
         layout.addWidget(buttons)
 
     # -- tabs -------------------------------------------------------------
@@ -6100,7 +6126,7 @@ class DataOperationsDialog(QDialog):
         return np.asarray(values, dtype=float), axes
 
     def apply(self):
-        tab = self.tabs.currentIndex()
+        tab = self.tabs.currentIndex() if self.operation is None else self.operation
         try:
             if tab == 0:
                 operation, suffix, prefix = self._apply_truncate, "_tk", "trunc"
@@ -6110,7 +6136,7 @@ class DataOperationsDialog(QDialog):
                 operation, suffix, prefix = self._apply_compress, "_comb", "compress"
             settings = operation(None, probe=True)
         except ValueError as exc:
-            QMessageBox.warning(self, "Crop / bin / normalise", str(exc))
+            QMessageBox.warning(self, self.windowTitle(), str(exc))
             return
 
         if not self._confirm_size():
@@ -6125,7 +6151,7 @@ class DataOperationsDialog(QDialog):
                     new_values, new_axes = operation((values, axes))
                 except Exception as exc:
                     QApplication.restoreOverrideCursor()
-                    QMessageBox.warning(self, "Crop / bin / normalise",
+                    QMessageBox.warning(self, self.windowTitle(),
                                         f"{name}: {exc}")
                     return
                 by_name = dict(zip(self.axis_names, new_axes))
@@ -6158,7 +6184,7 @@ class DataOperationsDialog(QDialog):
         if gigabytes < 2.0:
             return True
         answer = QMessageBox.question(
-            self, "Crop / bin / normalise",
+            self, self.windowTitle(),
             f"This reads about {gigabytes:.1f} GB of cube into memory "
             f"({len(self.datasets)} spatial scan(s)). Continue?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)

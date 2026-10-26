@@ -1,4 +1,6 @@
-"""Which entries of the main list's right-click menu apply to a selection.
+"""Which of the main list's actions apply to a selection: the entries of
+its right-click menu, the buttons under it, and the buttons of the tool
+panel beside it.
 
 Decided from the list's own records -- the kind each row was listed as --
 without reading any data, so the menu opens instantly however large the
@@ -26,6 +28,11 @@ LABEL_KINDS = {
 CUBES = frozenset({"map", "k_map", "kz_map", "kz_map_k"})
 CURVES = frozenset({"edc", "mdc", "spin_edc"})
 KNOWN = frozenset(LABEL_KINDS.values())
+PLANES = frozenset({"cut"}) | CUBES
+
+#: The filters that work on a cut and on a map alike, but through two
+#: different panels -- so a selection has to be one or the other.
+PROCESSING = frozenset({"smooth", "derivative", "curvature", "symmetry"})
 
 #: action -> (how many rows: "one", "two", "many" (two or more) or "any", the kinds it takes
 #: (None = every known kind), what to call those kinds in a tooltip)
@@ -43,6 +50,14 @@ RULES = {
     "arithmetic": ("two", frozenset({"cut"}), "two cuts"),
     "combine": ("many", frozenset({"cut"}) | CUBES,
                 "two or more cuts or maps of one kind"),
+    "truncate": ("any", PLANES | {"spem"}, "cuts, maps or spatial scans"),
+    "normalise": ("any", PLANES | {"spem"}, "cuts, maps or spatial scans"),
+    "compress": ("any", PLANES | {"spem"}, "cuts, maps or spatial scans"),
+    "smooth": ("any", PLANES, "cuts or maps"),
+    "derivative": ("any", PLANES, "cuts or maps"),
+    "curvature": ("any", PLANES, "cuts or maps"),
+    "symmetry": ("any", PLANES, "cuts or maps"),
+    "background": ("any", frozenset({"cut"}), "cuts"),
     "save": ("any", None, "datasets"),
     "remove": ("any", "all", "datasets"),
     "log": ("none", "all", ""),
@@ -86,4 +101,8 @@ def availability(action: str, rows):
     if action == "combine" and len({kind_of(label) for _, label in rows}) > 1:
         return False, ("Combines datasets of one kind: cuts with cuts, maps "
                        "with maps, kz maps with kz maps.")
+    if action in PROCESSING and len({kind_of(label) == "cut"
+                                     for _, label in rows}) > 1:
+        return False, ("Cuts and maps are processed in different panels: "
+                       "select cuts only, or maps only.")
     return True, ""

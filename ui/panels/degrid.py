@@ -37,7 +37,7 @@ from scipy.ndimage import gaussian_filter
 
 from tools.processing import degrid as DG
 from tools.processing import process as P
-from ui.viewers.widgets import (add_button, MemoryData, apply_colormap,
+from ui.viewers.widgets import (add_button, ButtonRow, MemoryData, apply_colormap,
                                 plain_image_view, show_frame)
 
 __all__ = ["DegridDialog", "grid_candidates", "default_source"]
@@ -264,7 +264,7 @@ class DegridDialog(QDialog):
         self.report.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.report)
 
-        buttons = QDialogButtonBox()
+        buttons = ButtonRow()
         self.to_list = add_button(buttons,"Result to list", QDialogButtonBox.ActionRole)
         self.to_list.clicked.connect(self.export)
         self.to_list.setEnabled(False)

@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import (QSizePolicy, QWidget, QMainWindow, QVBoxLayout, QHB
 from tools.output import colormaps
 import tools.processing.process as P
 import tools.processing.volume as V
-from ui.viewers.widgets import add_button, MemoryData, COLORMAP_NAMES
+from ui.viewers.widgets import add_button, ButtonRow, MemoryData, COLORMAP_NAMES
 from ui.panels.process import spin, whole, _decimate
 
 
@@ -840,7 +840,13 @@ class VolumeProcessDialog(QDialog):
     SUFFIXES = {"smooth": "_sm", "derivative": "_d2", "curvature": "_cur",
                 "normalise": "_nor", "symmetry": "_symm", "despike": "_fix"}
 
-    def __init__(self, datasets, parent=None, colormap="gray", flip=False):
+    #: where each of the launcher's tool buttons opens this panel: the tab,
+    #: and on the plane-wise tab the operation (an index of PLANE_OPERATIONS)
+    STARTS = {"smooth": (0, 0), "derivative": (0, 3),
+              "curvature": (0, 5), "symmetry": (1, None)}
+
+    def __init__(self, datasets, parent=None, colormap="gray", flip=False,
+                 start=None):
         super().__init__(parent)
         self.datasets = list(datasets)
         self.colormap, self.flip = colormap, flip
@@ -886,6 +892,15 @@ class VolumeProcessDialog(QDialog):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._plane_tab(), "Plane-wise")
         self.tabs.addTab(self._symmetry_tab(), "Symmetrise")
+        if start in self.STARTS:
+            tab, operation = self.STARTS[start]
+            self.tabs.setCurrentIndex(tab)
+            if operation is not None:
+                # Quietly: the preview timer is not made yet, and the
+                # first refresh below shows this operation anyway.
+                self.plane_operation.blockSignals(True)
+                self.plane_operation.setCurrentIndex(operation)
+                self.plane_operation.blockSignals(False)
         self.tabs.currentChanged.connect(self.refresh)
         self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self.tabs, 0)
@@ -896,14 +911,12 @@ class VolumeProcessDialog(QDialog):
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
 
-        buttons = QDialogButtonBox()
+        buttons = ButtonRow()
         preview = add_button(buttons,"Preview", QDialogButtonBox.ActionRole)
         preview.clicked.connect(self.refresh)
         apply_button = add_button(buttons,"Apply to the whole cube",
                                          QDialogButtonBox.AcceptRole)
         apply_button.clicked.connect(self.apply)
-        view = add_button(buttons,"Open the 3D view", QDialogButtonBox.ActionRole)
-        view.clicked.connect(self.open_view)
         add_button(buttons,"Close", QDialogButtonBox.RejectRole).clicked.connect(
             self.reject)
         layout.addWidget(buttons)
@@ -1266,22 +1279,3 @@ class VolumeProcessDialog(QDialog):
             self.datasetsCreated.emit(created)
             self.note.setText(f"Added {len(created)} dataset(s) to the list.")
         return created
-
-    def open_view(self):
-        label, data = self.datasets[0]
-        chooser = VolumeRangeDialog(self.values, self.axes, self.labels, self)
-        if chooser.exec_() != QDialog.Accepted:
-            return None
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            values, axes = chooser.result()
-        except Exception as exc:
-            QMessageBox.warning(self, "3D view", str(exc))
-            return None
-        finally:
-            QApplication.restoreOverrideCursor()
-        window = VolumeWindow(values, axes, self.labels, label, self,
-                              self.colormap, self.flip)
-        window.show()
-        self._view = window
-        return window

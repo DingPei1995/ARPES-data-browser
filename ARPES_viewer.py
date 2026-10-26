@@ -463,64 +463,43 @@ def show_list_menu(position):
         actions[action] = name
         return action
 
+    # Only what is done *to the rows*: opening them, keeping or dropping
+    # them, naming and describing them. Analysis and filters are buttons of
+    # the tool panel, and the operations that change the data are buttons
+    # under the list -- both always in sight, so nothing is only here.
     add("open", "Open", "Open the dataset in its own viewer window "
         "(the same as double-clicking the row).")
     add("slit_cut", "Open slit cut" if len(keys) <= 1
         else f"Open {len(keys)} slit cuts",
         "The map's slit-angle vs energy cut, in a window of its own, "
         "without opening the map's constant-energy contour.")
-    add("deflector_cut", "Open deflector cut" if len(keys) <= 1
-        else f"Open {len(keys)} deflector cuts",
-        "The map's deflector-angle vs energy cut, in a window of its own, "
-        "without opening the map's constant-energy contour.")
-    add("info", "Show information",
-        "The dataset's kind, axes and metadata, in the information panel.")
-    add("rename", "Rename...", "Change the name the dataset is listed "
-        "(and saved) under. The file on disk keeps its name.")
+    # The map's other axis is whatever was scanned -- a deflector angle, a
+    # manipulator rotation, a photon energy -- so it is named for that.
+    add("deflector_cut", "Open scan-axis cut" if len(keys) <= 1
+        else f"Open {len(keys)} scan-axis cuts",
+        "The cut along the map's scanned axis (deflector angle, manipulator "
+        "rotation, or photon energy for a kz map) vs energy, in a window of "
+        "its own, without opening the map's constant-energy contour.")
     menu.addSeparator()
-    add("figure", "Open in figure composer..." if len(keys) <= 1
-        else f"Open {len(keys)} in one figure composer...",
-        "One panel per selected dataset, in the figure composer.")
-    add("stack", "Stack plot (EDC / MDC)...",
-        "A waterfall of EDCs or MDCs across the cut.")
-    add("fit", "MDC / EDC fit...",
-        "Fit peaks line by line, then read the band off the fitted centres: "
-        "Fermi velocity, effective mass, self-energy. Converted cuts only.")
-    add("corelevel", "Core-level check...",
-        "Which element and orbital each peak of the angle-integrated EDC "
-        "is: the sample's elements against tabulated binding energies, after "
-        "checking E_F and the photon energy; unexplained peaks get possible "
-        "contaminants.")
-    add("view3d", "3D view...",
-        "Orthogonal slices, the notched cube, an isosurface and the volume "
-        "projections.")
-    # Was "Compare the two...", which already computed A - B, A / B and
-    # (A - B)/(A + B) and put the result in the list -- arithmetic under a
-    # name that promised a look. It is now the same window as a cut viewer's
-    # "Cut arithmetic..." entry, named for what it does.
-    add("arithmetic", "Cut arithmetic on the two...",
-        "Combine two cuts: linear or circular dichroism, dividing by a "
-        "reference, A \u2212 B, A / B, (A \u2212 B)/(A + B), A + B. The first "
-        "selected is A; the window can swap them.")
     add("combine", "Combine datasets..." if len(keys) <= 1
         else f"Combine {len(keys)} datasets...",
         "Stack cuts into one map along an axis of your own (temperature, "
         "gate voltage, photon energy -> a kz map...), or join the pieces of "
         "a measurement taken in segments -- a map's deflector range, a kz "
         "map's photon-energy range, a cut's energy window -- end to end.")
-    # Processing is the Smooth / derivative... button under the list, not in here: one
-    # way in, where it is always visible.
-    menu.addSeparator()
     add("save", "Save dataset..." if len(keys) <= 1
         else f"Save {len(keys)} datasets...",
         "Write the selected datasets to a .nxs file of your own, which this "
         "program opens again.")
-    menu.addSeparator()
     add("remove", "Remove from list" if len(keys) <= 1
         else f"Remove {len(keys)} from list",
         "Take the rows out of the list (after asking). Files on disk are not "
         "deleted.")
     menu.addSeparator()
+    add("rename", "Rename...", "Change the name the dataset is listed "
+        "(and saved) under. The file on disk keeps its name.")
+    add("info", "Show information",
+        "The dataset's kind, axes and metadata, in the information panel.")
     add("log", "Session log...",
         "What has been auto-saved, saved and deleted this session, and "
         "where each of it is -- the file to look at after a crash.")
@@ -537,8 +516,26 @@ def show_list_menu(position):
 last_list_menu = None
 
 
+def update_tool_buttons():
+    """Light up the buttons under the list and in the tool panel that the
+    selection can take, and grey out the rest -- with the reason in the
+    tooltip, under what the button does. From the list's records only, like
+    the right-click menu, so it costs nothing on every click."""
+    from ui.launcher.list_actions import availability
+
+    rows = [(label_for(k), loaded_items.get(k, {}).get("kind"))
+            for k in selected_keys()]
+    for name, button in {**ui.ListButtons, **ui.ToolButtons}.items():
+        enabled, reason = availability(name, rows)
+        button.setEnabled(enabled)
+        description = button.property("description") or ""
+        button.setToolTip(description if enabled
+                          else f"{description}\n\n{reason}".strip())
+
+
 def run_list_action(name):
-    """Do what a right-click menu entry names."""
+    """Do what a right-click menu entry, or a button under the list or in
+    the tool panel, names."""
     handlers = {
         "open": open_selected,
         "slit_cut": lambda: open_map_cuts("slit"),
@@ -552,6 +549,14 @@ def run_list_action(name):
         "view3d": open_volume_view,
         "arithmetic": open_cut_arithmetic,
         "combine": combine_selected,
+        "truncate": lambda: open_data_operations("truncate"),
+        "compress": lambda: open_data_operations("compress"),
+        "normalise": lambda: open_data_operations("normalise"),
+        "smooth": lambda: open_processing("smooth"),
+        "derivative": lambda: open_processing("derivative"),
+        "curvature": lambda: open_processing("curvature"),
+        "symmetry": lambda: open_processing("symmetry"),
+        "background": lambda: open_processing("background"),
         "save": save_selected,
         "log": show_operations_log,
         "remove": remove_selected,
@@ -1093,7 +1098,9 @@ def open_map_cuts(which: str):
             cut.raise_()
             opened.append(cut)
     if opened:
-        ui.statusbar.showMessage(f"Opened {len(opened)} {which} cut(s)")
+        ui.statusbar.showMessage(
+            f"Opened {len(opened)} {'slit' if which == 'slit' else 'scan-axis'} "
+            f"cut(s)")
     return opened
 
 
@@ -1252,18 +1259,21 @@ def open_dataset(data):
     return window
 
 
-def open_data_operations():
-    """Truncate / self-normalise / compress the selected datasets.
+def open_data_operations(operation="truncate"):
+    """Truncate / self-normalise / compress the selected datasets --
+    ``operation`` is which: ``"truncate"``, ``"normalise"`` or
+    ``"compress"``, the one whose button under the list was pressed.
 
     All of them at once, which is the point -- but only if they really are
     the same shape, since one set of bounds or factors cannot describe two
     different axes. Datasets that disagree are refused here with a list of
     what they are, rather than producing a batch of quietly wrong results.
     """
+    title = viewer_windows_module.DataOperationsDialog.OPERATIONS[operation][1]
     keys = selected_keys()
     if not keys:
         ui.statusbar.showMessage("Select one or more datasets first")
-        QMessageBox.information(win, "Crop / bin / normalise",
+        QMessageBox.information(win, title,
                                  "Select the dataset(s) to work on first.")
         return None
 
@@ -1291,7 +1301,7 @@ def open_data_operations():
         datasets.append((label_for(key), data))
 
     if problems or not datasets:
-        QMessageBox.warning(win, "Crop / bin / normalise",
+        QMessageBox.warning(win, title,
                              "These cannot be operated on:\n" + "\n".join(problems or
                              ["nothing usable was selected"]))
         return None
@@ -1305,14 +1315,14 @@ def open_data_operations():
         listing = "\n".join(f"  {name}: {kind} {' x '.join(str(n) for n in shape)}"
                              for (name, _), (kind, shape) in zip(datasets, shapes))
         QMessageBox.warning(
-            win, "Crop / bin / normalise",
+            win, title,
             "The selected datasets are not the same format, so one set of "
             "bounds or factors cannot describe them all. Select datasets with "
             "the same kind and the same number of points on every axis:\n\n"
             + listing)
         return None
 
-    dialog = viewer_windows_module.DataOperationsDialog(datasets, win)
+    dialog = viewer_windows_module.DataOperationsDialog(datasets, win, operation)
     dialog.datasetsCreated.connect(_list_computed)
     dialog.show()
     dialog.raise_()
@@ -1321,8 +1331,9 @@ def open_data_operations():
     return dialog
 
 
-def open_processing():
-    """Smooth / differentiate / curvature / symmetrise / fit the selection.
+def open_processing(start=None):
+    """Smooth / differentiate / curvature / symmetrise / fit the selection,
+    on the operation ``start`` names (the tool-panel button pressed).
 
     Two panels rather than one, and which opens is decided by what is
     selected: a 2-D dataset goes to the plane panel, a 3-D one to the volume
@@ -1374,9 +1385,11 @@ def open_processing():
         return None
 
     if kinds == {"cut"}:
-        dialog = ProcessDialog(datasets, win, default_colormap, default_flip)
+        dialog = ProcessDialog(datasets, win, default_colormap, default_flip,
+                               start=start)
     else:
-        dialog = VolumeProcessDialog(datasets, win, default_colormap, default_flip)
+        dialog = VolumeProcessDialog(datasets, win, default_colormap,
+                                     default_flip, start=start)
     dialog.datasetsCreated.connect(_list_computed)
     dialog.finished.connect(release)
     dialog.show()
@@ -2220,12 +2233,16 @@ def SetConnect():
     # click. Double-click still opens a viewer.
     ui.FilePathListWidget.itemDoubleClicked.connect(open_selected)
     ui.FilePathListWidget.customContextMenuRequested.connect(show_list_menu)
-    ui.CombineDataButton.clicked.connect(lambda: combine_selected())
-
     # The metadata filter and its CSV export live in the information
     # window now, and are wired when that window is first made.
-    ui.DataOpsButton.clicked.connect(open_data_operations)
-    ui.ProcessButton.clicked.connect(open_processing)
+
+    # The buttons under the list and in the tool panel are named by their
+    # list action, so the right-click menu, the buttons and the rules for
+    # greying them out (ui.launcher.list_actions) cannot drift apart.
+    for name, button in {**ui.ListButtons, **ui.ToolButtons}.items():
+        button.clicked.connect(lambda _=False, name=name: run_list_action(name))
+    ui.FilePathListWidget.itemSelectionChanged.connect(update_tool_buttons)
+    update_tool_buttons()
 
     ui.FreeMemoryButton.clicked.connect(free_memory)
     ui.CloseViewersButton.clicked.connect(close_all_viewers)

@@ -34,7 +34,7 @@ from tools.crystal.lattice import LatticeParams, validate_lattice_parameters
 from tools.processing.process import Step, record_step
 from ui.common import jobs as nxs_jobs
 from tools.output import colormaps
-from ui.viewers.widgets import add_button, MemoryData
+from ui.viewers.widgets import add_button, ButtonRow, MemoryData
 
 __all__ = ["KzConversionDialog"]
 
@@ -73,7 +73,7 @@ class KzConversionDialog(QDialog):
         body.addWidget(self._preview_panel(), stretch=1)
         layout.addLayout(body, stretch=1)
 
-        buttons = QDialogButtonBox()
+        buttons = ButtonRow()
         self.convert_button = add_button(buttons,"Convert the whole cube",
                                                  QDialogButtonBox.AcceptRole)
         self.convert_button.clicked.connect(self.convert)

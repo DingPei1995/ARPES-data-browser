@@ -345,6 +345,42 @@ def add_button(box, text: str, role):
     return button
 
 
+class ButtonRow(QWidget):
+    """A dialog's row of buttons, in the order they were added.
+
+    Takes the place of a ``QDialogButtonBox``, which sorts its buttons by
+    role in the platform's own order -- on Windows that put **Close** to the
+    left of **Apply**, and on GNOME Close before every action. Here the
+    buttons stand right-aligned in the order they are added, so the window
+    reads its actions left to right and Close, added last, ends the row on
+    every system. A ``ResetRole`` widget (a "Live preview" tick) goes to the
+    far left instead. ``accepted``/``rejected`` fire like the box's do.
+    """
+
+    accepted = pyqtSignal()
+    rejected = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.addStretch(1)
+        self._leading = 0
+
+    def addButton(self, button, role):
+        from PyQt5.QtWidgets import QDialogButtonBox
+        if role == QDialogButtonBox.ResetRole:
+            self._layout.insertWidget(self._leading, button)
+            self._leading += 1
+            return button
+        self._layout.addWidget(button)
+        if role in (QDialogButtonBox.AcceptRole, QDialogButtonBox.YesRole):
+            button.clicked.connect(self.accepted)
+        elif role in (QDialogButtonBox.RejectRole, QDialogButtonBox.NoRole):
+            button.clicked.connect(self.rejected)
+        return button
+
+
 class AspectBox(QWidget):
     """Holds a plot and gives it the *shape* the data needs.
 

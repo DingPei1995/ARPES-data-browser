@@ -12,7 +12,47 @@ file is the record of how it got that way.
 
 ## Unreleased
 
-(nothing yet)
+- **Every tool is in sight: a tool panel beside the list, and one button
+  per data operation under it.** Several tools were only reachable through
+  the list's right-click menu or as a tab of a window opened by a button
+  whose name did not mention them, so a user who had not read the guide
+  would never find them.
+  - The launcher is now two boxes side by side. The left one, the tool
+    panel, holds every tool that analyses or processes the selection,
+    grouped by the dimension of data it takes: *1D & 2D* (figure
+    composer), *2D & 3D* (smooth, second derivative, curvature,
+    symmetrise), *2D only* (background, stack plot, MDC/EDC fit,
+    core-level check, cut arithmetic), *3D only* (3D view). Under them:
+    the memory meter, Free memory, Close all viewers and Open auto-save
+    folder. The panel is part of the launcher window -- no title bar or
+    buttons of its own.
+  - A tool's button is greyed out until the list's selection is something
+    it can take, with the reason in its tooltip -- the same rules as the
+    right-click menu (`ui/launcher/list_actions.py`), from the list's
+    records, so it costs nothing per click.
+  - Under the list, one button for each operation that changes the data
+    itself: **Combine...**, **Truncate...**, **Compress...**,
+    **Self-normalise...**. The last three were the tabs of one
+    "Crop / bin / normalise" window; each now opens that operation alone.
+  - The smooth / derivative / ... buttons open the 2D or 3D processing
+    window on their own operation; the other tabs stay, so a chain of
+    filters is still one window. "Open the 3D view" left the 3D processing
+    window for the tool panel's **3D view...**.
+  - The right-click menu keeps only what is done to the rows: Open, Open
+    slit cut, Open scan-axis cut | Combine datasets, Save dataset, Remove
+    from list | Rename, Show information, Session log.
+  - **"Deflector cut" is now "scan-axis cut"**, in the menu and on a map's
+    own window: the map's first axis is whatever was scanned -- a
+    deflector angle, a manipulator rotation, or the photon energy of a kz
+    map. The tooltip names the axis this map has.
+- **Close is always the last button of a dialog's row.** The buttons were
+  laid out by `QDialogButtonBox`, which orders them by role in the
+  platform's own way; on Windows that put *Close* to the left of *Apply*
+  in Crop / bin / normalise, and on GNOME before every action. The dialogs
+  with an action and a Close (the data operations, both processing
+  windows, the cut arithmetic, de-grid, kz alignment and conversion, and
+  the curve viewer's fit and spin windows) now use `widgets.ButtonRow`,
+  which keeps the order the buttons are added in.
 
 ## 1.0.8 — 2026-10-26
 

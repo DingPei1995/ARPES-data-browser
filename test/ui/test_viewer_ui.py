@@ -71,7 +71,7 @@ def _toolbar_buttons(window):
 # -- layout -----------------------------------------------------------------
 def test_map_keeps_only_its_cut_buttons(app):
     window = W.ContourWindow(_map(), "m", "gray", False)
-    assert _toolbar_buttons(window) == ["Deflector cut", "Slit cut", "Plot tools"]
+    assert _toolbar_buttons(window) == ["Scan-axis cut", "Slit cut", "Plot tools"]
     texts = _visible_texts(window)
     for expected in ("Arbitrary cut...", "Convert to momentum (k)...", "Remove detector grid...",
                      "Multi-slice figure...", "Save slice to the main list",

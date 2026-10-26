@@ -5,6 +5,13 @@ The launcher window's layout: a file picker, the global colormap controls,
 and the metadata table for whichever file is selected. Hand-written PyQt5,
 no Qt-Designer ``.ui``/``.qrc`` needed.
 
+Two boxes side by side in one window: the tool panel on the left
+(``ToolPanel``: everything that analyses or processes the selected datasets,
+grouped by what dimension of data it takes, then the memory controls), and
+the main panel on the right (the list, the operations that change the data
+directly, and its summary). The tool panel is part of the window, so it
+moves, resizes and closes with it and has no title bar of its own.
+
 Visualisation is NOT here -- double-clicking a file in the list opens a
 viewer window from ``ui/viewers/windows.py``. Keeping the launcher small
 means several files (and several cuts of one file) can be open side by side
@@ -22,7 +29,7 @@ import version
 class Ui_MainWindow:
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(560, 900)
+        MainWindow.resize(800, 900)
         MainWindow.setWindowTitle(version.title())
         # The panel's colours. The disabled rules are not optional: a colour
         # set for every widget is also the colour of a *disabled* widget and
@@ -41,11 +48,31 @@ class Ui_MainWindow:
             " color: rgb(175, 175, 188); }"
             "\nQMenu::separator { height: 1px; background: rgb(210, 214, 226);"
             " margin: 4px 8px; }"
+            # The two panels: each a box of its own, on a slightly darker
+            # ground so the gap between them reads as a gap.
+            "\nQWidget#centralwidget { background-color: rgb(232, 228, 240); }"
+            "\nQFrame#ToolPanel, QFrame#MainPanel {"
+            " border: 1px solid rgb(200, 204, 222); border-radius: 6px; }"
+            "\nQFrame#ToolPanel QGroupBox { font-weight: bold; }"
+            "\nQFrame#ToolPanel QPushButton { text-align: left;"
+            " padding: 3px 8px; font-weight: normal; }"
+            "\nQLabel#ToolPanelTitle { font-weight: bold; }"
         )
 
         self.centralwidget = QtWidgets.QWidget(MainWindow)
+        self.centralwidget.setObjectName("centralwidget")
         MainWindow.setCentralWidget(self.centralwidget)
-        menu_layout = QtWidgets.QVBoxLayout(self.centralwidget)
+        window_layout = QtWidgets.QHBoxLayout(self.centralwidget)
+        window_layout.setContentsMargins(6, 6, 6, 6)
+        window_layout.setSpacing(8)
+
+        self.ToolPanel = self._tool_panel(self.centralwidget)
+        window_layout.addWidget(self.ToolPanel)
+
+        self.MainPanel = QtWidgets.QFrame(self.centralwidget)
+        self.MainPanel.setObjectName("MainPanel")
+        window_layout.addWidget(self.MainPanel, stretch=1)
+        menu_layout = QtWidgets.QVBoxLayout(self.MainPanel)
 
         # -- folder + explicit file selection --
         folder_row = QtWidgets.QHBoxLayout()
@@ -77,9 +104,9 @@ class Ui_MainWindow:
         menu_layout.addLayout(pick_row)
 
         self.OpenHint = QtWidgets.QLabel(
-            "<b>Double-click a file to open it</b> in its own window; right-click a "
-            "single file for \"Show information\". Map files open on the constant-energy "
-            "contour, with buttons there for the two cuts.",
+            "<b>Double-click a file to open it</b> in its own window; right-click "
+            "for its cuts, saving, renaming and its information. The tools on "
+            "the left light up for whatever the selection can take.",
             self.centralwidget)
         self.OpenHint.setWordWrap(True)
         menu_layout.addWidget(self.OpenHint)
@@ -99,40 +126,21 @@ class Ui_MainWindow:
             "selected datasets; Ctrl/Shift-click selects several.")
         menu_layout.addWidget(self.FilePathListWidget, stretch=1)
 
-        # -- what can be done to the selected rows. In a box of its own, so
-        # it reads as "acts on the selection" rather than as three unrelated
-        # buttons. Each name says what the window does, not a category:
-        # "Data operations" and "Process" were both true of all three.
-        self.SelectionBox = QtWidgets.QGroupBox(
-            "With the selected datasets", self.centralwidget)
-        button_row = QtWidgets.QHBoxLayout(self.SelectionBox)
-        button_row.setContentsMargins(6, 4, 6, 4)
-        # Opening is a double-click (or right-click -> Open); the button
-        # slot goes to combining several datasets into one, which has no
-        # gesture of its own.
-        self.CombineDataButton = QtWidgets.QPushButton("Combine datasets...", self.centralwidget)
-        self.CombineDataButton.setToolTip(
-            "Join or stack the selected datasets into one: cuts into a map "
-            "along an axis of your own (temperature, gate voltage, photon "
-            "energy...), or the pieces of a map or kz map measured in "
-            "segments back into one. The same as right-click -> Combine "
-            "datasets.")
-        self.DataOpsButton = QtWidgets.QPushButton("Crop / bin / normalise...", self.centralwidget)
-        self.DataOpsButton.setToolTip(
-            "Change the data's grid or scale: crop to a range, bin points "
-            "together, or normalise each spectrum to itself. Several "
-            "datasets at once, as long as they have the same kind and the "
-            "same axis lengths.")
-        self.ProcessButton = QtWidgets.QPushButton("Smooth / derivative...", self.centralwidget)
-        self.ProcessButton.setToolTip(
-            "Filters that bring out the bands: smooth, second derivative, "
-            "curvature, background subtraction, symmetrise. Every result is "
-            "added to this list as a new dataset carrying the steps that "
-            "made it.")
-        button_row.addWidget(self.CombineDataButton, stretch=1)
-        button_row.addWidget(self.DataOpsButton, stretch=1)
-        button_row.addWidget(self.ProcessButton, stretch=1)
-        menu_layout.addWidget(self.SelectionBox)
+        # -- what can be done to the data itself: one button per operation,
+        # each producing a new dataset that is the old one combined, cut
+        # down, binned or rescaled. Analysis and filters are the tool
+        # panel's; these change the data and nothing else. Greyed out until
+        # the selection is something they take (see list_actions).
+        list_ops = QtWidgets.QHBoxLayout()
+        list_ops.setSpacing(4)
+        self.ListButtons = {}
+        for name, text, tooltip in LIST_OPERATIONS:
+            button = QtWidgets.QPushButton(text, self.centralwidget)
+            button.setToolTip(tooltip)
+            button.setProperty("description", tooltip)
+            list_ops.addWidget(button, stretch=1)
+            self.ListButtons[name] = button
+        menu_layout.addLayout(list_ops)
 
         # -- what the selected data is: extent, point count and step per
         # axis. It stays in the launcher because it is what you compare
@@ -165,48 +173,6 @@ class Ui_MainWindow:
                 self.DataInfoCells[(name, column)] = cell
         menu_layout.addWidget(self.DataInfoBox)
 
-        # -- memory: how much this program is holding, and a way to give
-        # some of it back. Several spatial scans open at once is where it
-        # adds up, so the numbers are always on show rather than in a menu.
-        # Refreshed by a timer in ARPES_viewer.py.
-        self.MemoryBox = QtWidgets.QGroupBox("Memory", self.centralwidget)
-        memory_layout = QtWidgets.QVBoxLayout(self.MemoryBox)
-        memory_layout.setContentsMargins(6, 4, 6, 4)
-        memory_layout.setSpacing(3)
-        self.MemoryUsageBar = QtWidgets.QProgressBar()
-        self.MemoryUsageBar.setRange(0, 100)
-        self.MemoryUsageBar.setTextVisible(True)
-        self.MemoryUsageBar.setFormat("n/a")
-        self.MemoryUsageBar.setToolTip(
-            "This program's resident memory, as a share of the machine's RAM.")
-        memory_layout.addWidget(self.MemoryUsageBar)
-        self.MemoryLabel = QtWidgets.QLabel("")
-        self.MemoryLabel.setWordWrap(True)
-        memory_layout.addWidget(self.MemoryLabel)
-        memory_row = QtWidgets.QHBoxLayout()
-        self.FreeMemoryButton = QtWidgets.QPushButton("Free memory")
-        self.FreeMemoryButton.setToolTip(
-            "Drop cached copies of computed datasets (they are re-read from "
-            "their auto-saved files when next opened) and give freed memory "
-            "back to the system. Open windows are not touched.")
-        self.CloseViewersButton = QtWidgets.QPushButton("Close all viewers")
-        self.CloseViewersButton.setToolTip(
-            "Close every open viewer window, then free memory. The file list "
-            "is kept, so anything can be reopened.")
-        memory_row.addWidget(self.FreeMemoryButton, stretch=1)
-        memory_row.addWidget(self.CloseViewersButton, stretch=1)
-        memory_layout.addLayout(memory_row)
-        menu_layout.addWidget(self.MemoryBox)
-
-        # -- the auto-saved working copies, for clearing out by hand.
-        self.OpenAutosaveButton = QtWidgets.QPushButton(
-            "Open auto-save folder", self.centralwidget)
-        self.OpenAutosaveButton.setToolTip(
-            "Open the folder where computed datasets are auto-saved, in the "
-            "system's file browser, to delete old working copies by hand. "
-            "The folder of the session now running is in use; leave it.")
-        menu_layout.addWidget(self.OpenAutosaveButton)
-
         # -- which build this is, and where to report a bug or get a newer
         # one. Updates come often; without this a user cannot tell which
         # version they are running, or whether a fix has reached them.
@@ -225,6 +191,154 @@ class Ui_MainWindow:
 
         self.statusbar = QtWidgets.QStatusBar(MainWindow)
         MainWindow.setStatusBar(self.statusbar)
+
+
+    def _tool_panel(self, parent):
+        """The tool panel: the tools for the selected datasets, then the
+        memory controls at the bottom.
+
+        One button per tool, so every one of them is in sight -- they used
+        to be behind a right-click or on a tab of a window the user had to
+        know to open. Grouped by the dimension of data a tool takes, and each
+        greyed out until the list's selection is something it can take; its
+        tooltip then says why (ARPES_viewer.update_tool_buttons()).
+        """
+        panel = QtWidgets.QFrame(parent)
+        panel.setObjectName("ToolPanel")
+        panel.setFixedWidth(210)
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        title = QtWidgets.QLabel("Tools")
+        title.setObjectName("ToolPanelTitle")
+        title.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(title)
+
+        self.ToolButtons = {}
+        self.ToolGroups = {}
+        for heading, tools in TOOL_GROUPS:
+            group = QtWidgets.QGroupBox(heading, panel)
+            box = QtWidgets.QVBoxLayout(group)
+            box.setContentsMargins(4, 4, 4, 4)
+            box.setSpacing(2)
+            for name, text, tooltip in tools:
+                button = QtWidgets.QPushButton(text, group)
+                button.setToolTip(tooltip)
+                button.setProperty("description", tooltip)
+                box.addWidget(button)
+                self.ToolButtons[name] = button
+            layout.addWidget(group)
+            self.ToolGroups[heading] = group
+        layout.addStretch(1)
+
+        # -- memory: how much this program is holding, and a way to give
+        # some of it back. Several spatial scans open at once is where it
+        # adds up, so the numbers are always on show rather than in a menu.
+        # Refreshed by a timer in ARPES_viewer.py.
+        self.MemoryBox = QtWidgets.QGroupBox("Memory", panel)
+        memory_layout = QtWidgets.QVBoxLayout(self.MemoryBox)
+        memory_layout.setContentsMargins(4, 4, 4, 4)
+        memory_layout.setSpacing(3)
+        self.MemoryUsageBar = QtWidgets.QProgressBar()
+        self.MemoryUsageBar.setRange(0, 100)
+        self.MemoryUsageBar.setTextVisible(True)
+        self.MemoryUsageBar.setFormat("n/a")
+        self.MemoryUsageBar.setToolTip(
+            "This program's resident memory, as a share of the machine's RAM.")
+        memory_layout.addWidget(self.MemoryUsageBar)
+        self.MemoryLabel = QtWidgets.QLabel("")
+        self.MemoryLabel.setWordWrap(True)
+        self.MemoryLabel.setStyleSheet("font-weight: normal;")
+        memory_layout.addWidget(self.MemoryLabel)
+        self.FreeMemoryButton = QtWidgets.QPushButton("Free memory")
+        self.FreeMemoryButton.setToolTip(
+            "Drop cached copies of computed datasets (they are re-read from "
+            "their auto-saved files when next opened) and give freed memory "
+            "back to the system. Open windows are not touched.")
+        self.CloseViewersButton = QtWidgets.QPushButton("Close all viewers")
+        self.CloseViewersButton.setToolTip(
+            "Close every open viewer window, then free memory. The file list "
+            "is kept, so anything can be reopened.")
+        # -- the auto-saved working copies, for clearing out by hand.
+        self.OpenAutosaveButton = QtWidgets.QPushButton("Open auto-save folder")
+        self.OpenAutosaveButton.setToolTip(
+            "Open the folder where computed datasets are auto-saved, in the "
+            "system's file browser, to delete old working copies by hand. "
+            "The folder of the session now running is in use; leave it.")
+        for button in (self.FreeMemoryButton, self.CloseViewersButton,
+                       self.OpenAutosaveButton):
+            memory_layout.addWidget(button)
+        layout.addWidget(self.MemoryBox)
+        return panel
+
+
+#: The operations under the main list: (action, button text, tooltip). The
+#: action names are list_actions' and ARPES_viewer.run_list_action()'s.
+LIST_OPERATIONS = (
+    ("combine", "Combine...",
+     "Join or stack the selected datasets into one: cuts into a map along an "
+     "axis of your own (temperature, gate voltage, photon energy...), or the "
+     "pieces of a map or kz map measured in segments back into one. Two or "
+     "more datasets of one kind."),
+    ("truncate", "Truncate...",
+     "Crop the selected datasets to a range on each axis, by value or by "
+     "index. Several at once, if they have the same kind and axis lengths."),
+    ("compress", "Compress...",
+     "Bin the selected datasets: sum every N points of an axis into one, "
+     "which keeps the counts and improves the noise."),
+    ("normalise", "Self-normalise...",
+     "Divide each spectrum (each EDC, each cut...) by its own total or peak, "
+     "optionally over a window of your own."),
+)
+
+#: The tool panel: (group heading, [(action, button text, tooltip), ...]).
+#: Grouped by the dimension of the data a tool takes -- 1D curves (EDC,
+#: MDC), 2D cuts, 3D maps (angle maps, kz maps, k-maps).
+TOOL_GROUPS = (
+    ("1D && 2D \u2014 curves, cuts", (
+        ("figure", "Figure composer...",
+         "One panel per selected dataset, in the figure composer."),
+    )),
+    ("2D && 3D \u2014 cuts, maps", (
+        ("smooth", "Smooth...",
+         "Gaussian, Savitzky-Golay or moving-average smoothing, with spike "
+         "removal. A map is smoothed plane by plane, on the plane you pick."),
+        ("derivative", "Second derivative...",
+         "-d\u00b2I/dE\u00b2 or -d\u00b2I/dk\u00b2 after a pre-smooth, to "
+         "sharpen the bands."),
+        ("curvature", "Curvature...",
+         "The 1D or 2D curvature (Zhang et al.), which follows the band "
+         "better than a second derivative."),
+        ("symmetry", "Symmetrise...",
+         "Mirror a cut about a line; for a map, mirror or rotate its "
+         "constant-energy planes."),
+    )),
+    ("2D only \u2014 cuts", (
+        ("background", "Background...",
+         "Shirley, Tougaard, angle-independent or polynomial background, or "
+         "divide out the Fermi cut-off."),
+        ("stack", "Stack plot (EDC / MDC)...",
+         "A waterfall of EDCs or MDCs across the cut."),
+        ("fit", "MDC / EDC fit...",
+         "Fit peaks line by line, then read the band off the fitted centres: "
+         "Fermi velocity, effective mass, self-energy. Converted cuts only."),
+        ("corelevel", "Core-level check...",
+         "Which element and orbital each peak of the angle-integrated EDC is: "
+         "the sample's elements against tabulated binding energies, after "
+         "checking E_F and the photon energy; unexplained peaks get possible "
+         "contaminants."),
+        ("arithmetic", "Cut arithmetic (two cuts)...",
+         "Combine two cuts: linear or circular dichroism, dividing by a "
+         "reference, A \u2212 B, A / B, (A \u2212 B)/(A + B), A + B. The first "
+         "selected is A; the window can swap them."),
+    )),
+    ("3D only \u2014 maps", (
+        ("view3d", "3D view...",
+         "Orthogonal slices, the notched cube, an isosurface and the volume "
+         "projections."),
+    )),
+)
 
 
 class InfoWindow(QtWidgets.QWidget):

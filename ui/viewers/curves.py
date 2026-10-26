@@ -50,7 +50,7 @@ from tools.spectra import curves as C
 from tools.processing import process as P
 from tools.spectra import spin as S
 from ui.viewers.functions_menu import FunctionsMenuMixin
-from ui.viewers.widgets import (add_button, MemoryData, _is_energy_label,
+from ui.viewers.widgets import (add_button, ButtonRow, MemoryData, _is_energy_label,
                                 section_label, separator)
 
 __all__ = ["CurveWindow", "CurveFitDialog", "SpinAnalysisDialog",
@@ -730,7 +730,7 @@ class CurveFitDialog(QDialog):
         self.report.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.report)
 
-        box = QDialogButtonBox()
+        box = ButtonRow()
         fit = add_button(box,"Fit", QDialogButtonBox.ActionRole)
         fit.clicked.connect(lambda: self.run_fit())
         self.to_list = add_button(box,"Fit to list", QDialogButtonBox.ActionRole)
@@ -1194,7 +1194,7 @@ class SpinAnalysisDialog(QDialog):
         self.report.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.report)
 
-        box = QDialogButtonBox()
+        box = ButtonRow()
         self.p_button = add_button(box,"P to list", QDialogButtonBox.ActionRole)
         self.p_button.clicked.connect(self.export_polarisation)
         self.ud_button = add_button(box,"I↑ / I↓ to list",

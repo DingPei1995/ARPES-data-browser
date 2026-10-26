@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (QComboBox, QDialog, QDialogButtonBox,
 from tools.processing import cutops
 from tools.processing import process as P
 from ui.panels.process import PreviewPair
-from ui.viewers.widgets import (add_button, MemoryData, apply_colormap,
+from ui.viewers.widgets import (add_button, ButtonRow, MemoryData, apply_colormap,
                                 fit_frame_view, plain_image_view, show_frame)
 
 __all__ = ["CutArithmeticDialog"]
@@ -130,7 +130,7 @@ class CutArithmeticDialog(QDialog):
         self.report.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.report)
 
-        buttons = QDialogButtonBox()
+        buttons = ButtonRow()
         self.to_list = add_button(buttons,"Result to list",
                                          QDialogButtonBox.ActionRole)
         self.to_list.clicked.connect(self.export_result)

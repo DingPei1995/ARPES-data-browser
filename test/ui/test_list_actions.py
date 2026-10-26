@@ -52,3 +52,17 @@ def test_save_remove_log():
 
 def test_no_process_entry():
     assert "process" not in RULES
+
+
+def test_direct_operations_take_cuts_maps_and_spatial_scans():
+    for action in ("truncate", "compress", "normalise"):
+        assert ok(action, CUT) and ok(action, MAP, MAP) and ok(action, SPEM)
+        assert not ok(action, EDC) and not ok(action)
+
+
+def test_filters_take_cuts_or_maps_but_not_both_at_once():
+    for action in ("smooth", "derivative", "curvature", "symmetry"):
+        assert ok(action, CUT, CUT) and ok(action, MAP, KZ)
+        enabled, reason = availability(action, [CUT, MAP])
+        assert not enabled and "different panels" in reason
+    assert ok("background", CUT) and not ok("background", MAP)

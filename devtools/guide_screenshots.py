@@ -494,8 +494,7 @@ class Shots:
 
     def data_operations(self):
         self._select("Gamma_cut_LH")
-        dialog = self.av.open_data_operations()
-        dialog.tabs.setCurrentIndex(1)          # Normalise: the tab with choices
+        dialog = self.av.open_data_operations("normalise")  # the one with choices
         pump()
         shot(dialog, "data_operations")
         dialog.close()
