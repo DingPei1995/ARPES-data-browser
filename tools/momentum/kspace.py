@@ -56,6 +56,11 @@ piecewise-linear approximation of it. :func:`convert_map_forward_reference`
 implements the .m file's forward-and-scatter route so the tests can check
 the two against each other.
 
+An output grid coarser than the measurement is averaged rather than
+sampled: each angle plane is box-averaged over one output pixel's
+footprint before it is read, and fewer energy points are bin averages
+(:mod:`tools.momentum.rebin`). At the measured sampling nothing changes.
+
 Points with ``kx^2 + ky^2 > |k|^2`` are outside the light cone and points
 whose angles fall outside the measured range were never recorded; both come
 back as NaN rather than as extrapolated values.
@@ -63,6 +68,8 @@ back as NaN rather than as extrapolated values.
 from __future__ import annotations
 
 import numpy as np
+
+from tools.momentum import rebin
 
 # sqrt(2 m_e e) * 2 pi / h, divided by 1e10 m^-1 per A^-1.
 # The .m file's constants: ce=1.6021892e-19, me=9.109534e-31, h=6.626176e-34.
@@ -306,7 +313,13 @@ def storage_dtype(cube, precision: str = None) -> np.dtype:
 
 
 def _resample_energy(cube: np.ndarray, energy: np.ndarray, n_energy: int):
-    """Linearly resample the cube along its energy axis.
+    """Resample the cube along its energy axis.
+
+    Fewer points than measured (a step more than ``rebin.REDUCTION_THRESHOLD``
+    times the measured one) are *bin averages* (:func:`rebin.bin_average`):
+    each output point stands for every channel in its bin, so no counts are
+    thrown away. Otherwise -- as many points or more -- the cube is
+    interpolated linearly.
 
     Vectorised: every spectrum shares the same sample and target energies,
     so the bracketing indices and weights are worked out once and applied to
@@ -318,6 +331,11 @@ def _resample_energy(cube: np.ndarray, energy: np.ndarray, n_energy: int):
     if n_energy < 2:
         raise ValueError("n_energy must be at least 2")
     target = np.linspace(float(energy[0]), float(energy[-1]), int(n_energy))
+    measured_step = abs(float(energy[-1] - energy[0])) / max(energy.size - 1, 1)
+    target_step = abs(float(target[1] - target[0]))
+    if measured_step > 0 and rebin.is_reduction(target_step / measured_step):
+        return (rebin.bin_average(cube, energy, target, axis=2,
+                                  dtype=result_dtype(cube.dtype)), target)
     # interp needs an ascending sample axis
     order = np.argsort(energy)
     src_e = energy[order]
@@ -416,23 +434,50 @@ def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
 
     out = np.full((int(n_kx), int(n_ky), energy.size), np.nan,
                   dtype=storage_dtype(cube, precision))
+    def angles(kx, ky, k):
+        """Emission angles (deg) of momenta ``(kx, ky)`` at ``|k| = k``."""
+        kx_u, ky_u = kx / k, ky / k
+        kz_u = np.sqrt(np.clip(1.0 - kx_u ** 2 - ky_u ** 2, 0.0, None))
+        vx = Rt[0, 0] * kx_u + Rt[0, 1] * ky_u + Rt[0, 2] * kz_u
+        vy = Rt[1, 0] * kx_u + Rt[1, 1] * ky_u + Rt[1, 2] * kz_u
+        vz = Rt[2, 0] * kx_u + Rt[2, 1] * ky_u + Rt[2, 2] * kz_u
+        return (np.degrees(np.arctan2(vx, vz)),
+                np.degrees(np.arcsin(np.clip(vy, -1.0, 1.0))))
+
+    # The measured sampling of each angle axis: its mean step, which is the
+    # step for the regular axes a Map has.
+    theta_step = (theta_sorted[-1] - theta_sorted[0]) / max(theta_sorted.size - 1, 1)
+    phi_step = (phi_sorted[-1] - phi_sorted[0]) / max(phi_sorted.size - 1, 1)
+
+    def footprint(k):
+        """How many measured (theta, phi) steps one output step spans at
+        ``|k| = k``, per angle axis.
+
+        Both sides of an output pixel are mapped back into angles at the
+        middle of the grid, and each angle axis takes the *larger* of the
+        two projections, not their sum. A sample rotation turns the pixel
+        against the angle axes, and the sum would add a sliver of the
+        coarse side to the fine one -- at 2 degrees, a fifth of a 0.2 deg
+        deflector step lands on a 0.045 deg slit step and would have the
+        slit direction averaged at the measured sampling. The larger
+        projection follows whichever output axis runs along that angle
+        axis, so a quarter turn still swaps them correctly."""
+        cx, cy = 0.5 * (kx_grid[0] + kx_grid[-1]), 0.5 * (ky_grid[0] + ky_grid[-1])
+        dx, dy = 0.5 * (kx_grid[1] - kx_grid[0]), 0.5 * (ky_grid[1] - ky_grid[0])
+        t, p = angles(np.array([cx - dx, cx + dx, cx, cx]),
+                      np.array([cy, cy, cy - dy, cy + dy]), k)
+        return (max(abs(t[1] - t[0]), abs(t[3] - t[2])) / theta_step if theta_step > 0 else 0.0,
+                max(abs(p[1] - p[0]), abs(p[3] - p[2])) / phi_step if phi_step > 0 else 0.0)
+
     for m in range(energy.size):
         if k0[m] <= 0:
             continue                      # no momentum to speak of at E<=0
-        kx_u = KX / k0[m]
-        ky_u = KY / k0[m]
-        radial = kx_u ** 2 + ky_u ** 2
+        radial = (KX / k0[m]) ** 2 + (KY / k0[m]) ** 2
         inside = radial <= 1.0            # outside is beyond the light cone
         if not inside.any():
             continue
 
-        kz_u = np.sqrt(np.clip(1.0 - radial, 0.0, None))
-        vx = Rt[0, 0] * kx_u + Rt[0, 1] * ky_u + Rt[0, 2] * kz_u
-        vy = Rt[1, 0] * kx_u + Rt[1, 1] * ky_u + Rt[1, 2] * kz_u
-        vz = Rt[2, 0] * kx_u + Rt[2, 1] * ky_u + Rt[2, 2] * kz_u
-
-        phi_q = np.degrees(np.arcsin(np.clip(vy, -1.0, 1.0)))
-        theta_q = np.degrees(np.arctan2(vx, vz))
+        theta_q, phi_q = angles(KX, KY, k0[m])
 
         # Bilinear interpolation on the (possibly unevenly spaced) angle
         # grid: each angle is turned into a fractional index by the same
@@ -443,6 +488,9 @@ def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
         if not ascending:
             source = source[np.ix_(t_order, p_order)]
         source = np.asarray(source, dtype=float)
+        # A grid coarser than the measurement averages over each output
+        # pixel instead of picking the samples nearest its centre.
+        source = rebin.box_filter(source, footprint(k0[m]))
         tq, pq = theta_q[inside], phi_q[inside]
         reach = ((tq >= theta_sorted[0]) & (tq <= theta_sorted[-1])
                  & (pq >= phi_sorted[0]) & (pq <= phi_sorted[-1]))

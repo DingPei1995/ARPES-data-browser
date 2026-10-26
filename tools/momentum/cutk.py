@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from tools.momentum import rebin
 from tools.momentum.kspace import (K0_PER_SQRT_EV, angle_grid_to_directions,
                                    k0_of_energy, origin_rotation)
 
@@ -151,12 +152,18 @@ def cut_extent(slit_deg, energy_eV, *, radial: bool = False, trim: bool = False,
 # Conversion
 # --------------------------------------------------------------------------
 def _resample_energy(values: np.ndarray, energy: np.ndarray, n_energy):
-    """Linearly resample ``(n_slit, n_E)`` along its energy axis."""
+    """Resample ``(n_slit, n_E)`` along its energy axis: bin averages when
+    there are fewer points than measured (:func:`rebin.bin_average`),
+    linear interpolation otherwise."""
     if n_energy is None or int(n_energy) == energy.size:
         return values, energy
     if int(n_energy) < 2:
         raise ValueError("n_energy must be at least 2")
     target = np.linspace(float(energy[0]), float(energy[-1]), int(n_energy))
+    measured_step = abs(float(energy[-1] - energy[0])) / max(energy.size - 1, 1)
+    if measured_step > 0 and rebin.is_reduction(
+            abs(float(target[1] - target[0])) / measured_step):
+        return rebin.bin_average(values, energy, target, axis=1), target
     order = np.argsort(energy)
     src_e, src = energy[order], values[:, order]
     out = np.empty((values.shape[0], target.size), dtype=float)
@@ -243,9 +250,15 @@ def convert_cut(slit_deg, energy_eV, value, *, deflector_deg: float,
     tolerance = 1e-9 * max(abs(lo), abs(hi), 1.0)
 
     out = np.full((k_axis.size, energy.size), np.nan, dtype=float)
+    k_step = float(k_axis[1] - k_axis[0])
     for j in range(energy.size):
         column = source[:, j]
         row = values[:, j]
+        # Fewer k points than slit channels: average each output step's
+        # worth of channels instead of interpolating between two of them.
+        measured = float(np.median(np.abs(np.diff(column))))
+        if measured > 0:
+            row = rebin.box_filter(row[:, None], (k_step / measured, 1.0))[:, 0]
         if column[0] > column[-1]:
             column, row = column[::-1], row[::-1]
         out[:, j] = np.interp(k_axis, column, row)

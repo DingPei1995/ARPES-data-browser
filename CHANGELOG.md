@@ -38,6 +38,7 @@ file is the record of how it got that way.
     dozen planes of counts summed in float16 would reach inf. A float16
     k-map saved to a file and opened again reads the same way.
   - The default grid (as many points as were measured) is unchanged.
+- **A k conversion onto a grid coarser than the measurement now averages instead of picking samples** (Map and Cut, in energy and in k; `tools/momentum/rebin.py`), so a reduced grid keeps every count and no longer aliases; at the measured sampling the result is bit-for-bit what it was.
 
 ## 1.0.7 — 2026-10-26
 

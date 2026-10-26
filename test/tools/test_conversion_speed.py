@@ -62,8 +62,10 @@ def test_convert_map_matches_the_interpolator(descending):
     cube[4, 6, 2] = np.nan
     if descending:
         theta, cube = theta[::-1], cube[::-1]
+    # A grid at least as fine as the data in both directions: coarser
+    # grids average first (tested below), which no plain interpolator does.
     kw = dict(theta_offset_deg=1.5, phi_offset_deg=-2.0, azimuth_deg=12.0,
-              n_kx=40, n_ky=44)
+              n_kx=60, n_ky=70)
     got = kspace.convert_map(theta, phi, energy, cube, **kw)[3]
     want = _reference_convert_map(theta, phi, energy, cube, **kw)
     assert np.array_equal(np.isnan(got), np.isnan(want))
@@ -178,3 +180,99 @@ def test_no_precision_keeps_following_the_measurement():
     assert kspace.convert_map(theta, phi, energy, cube, n_kx=4, n_ky=4)[3].dtype == np.float64
     with pytest.raises(ValueError, match="precision"):
         kspace.convert_map(theta, phi, energy, cube, n_kx=4, n_ky=4, precision="int8")
+
+
+# -- reducing conversions average instead of picking samples ---------------
+from tools.momentum import rebin
+
+
+def test_box_kernel_covers_its_width():
+    np.testing.assert_allclose(rebin.box_kernel(3.0), [1 / 3] * 3)
+    # 2.5 wide: the centre sample whole, three quarters of each neighbour
+    np.testing.assert_allclose(rebin.box_kernel(2.5), np.array([0.75, 1, 0.75]) / 2.5)
+    np.testing.assert_allclose(rebin.box_kernel(4.0), np.array([0.5, 1, 1, 1, 0.5]) / 4)
+    assert rebin.box_kernel(1.0).tolist() == [1.0]
+
+
+def test_bin_average_conserves_the_mean_and_averages_whole_bins():
+    energy = np.arange(12, dtype=float)                   # step 1
+    values = np.arange(12, dtype=float)[None, :] * np.ones((2, 1))
+    target = np.linspace(0.5, 10.5, 6)                    # step 2: pairs
+    out = rebin.bin_average(values, energy, target, axis=1)
+    np.testing.assert_allclose(out[0], [0.5, 2.5, 4.5, 6.5, 8.5, 10.5])
+    flat = rebin.bin_average(np.full((3, 50), 7.0), np.linspace(1, 2, 50),
+                             np.linspace(1, 2, 17), axis=1)
+    np.testing.assert_allclose(flat, 7.0)
+
+
+def test_bin_average_leaves_nan_out():
+    values = np.array([[1.0, np.nan, 3.0, 5.0]])
+    out = rebin.bin_average(values, np.arange(4.0), np.array([0.5, 2.5]), axis=1)
+    np.testing.assert_allclose(out[0], [1.0, 4.0])
+
+
+def test_fewer_energy_points_are_bin_averages_not_samples():
+    rng = np.random.default_rng(7)
+    energy = np.linspace(40.0, 41.0, 301)
+    cube = rng.poisson(100.0, (3, 4, energy.size)).astype(float)
+    out, target = kspace._resample_energy(cube, energy, 101)    # 3x fewer
+    # three channels per point: the noise drops by about sqrt(3)
+    assert out.std() < 0.7 * cube.std()
+    assert abs(out.mean() - cube.mean()) < 0.01 * cube.mean()
+    # within the threshold of the measured step it is still plain interpolation
+    same, target = kspace._resample_energy(cube, energy, 290)
+    np.testing.assert_allclose(same[1, 2], np.interp(target, energy, cube[1, 2]))
+
+
+def test_a_coarse_k_grid_averages_and_the_measured_grid_does_not():
+    rng = np.random.default_rng(8)
+    theta, phi = np.linspace(-10, 10, 101), np.linspace(-12, 12, 121)
+    energy = np.linspace(60.0, 60.1, 2)
+    cube = rng.poisson(100.0, (theta.size, phi.size, energy.size)).astype(float)
+    coarse = kspace.convert_map(theta, phi, energy, cube, n_kx=34, n_ky=40)[3]
+    fine = kspace.convert_map(theta, phi, energy, cube, n_kx=101, n_ky=121)[3]
+    ok = np.isfinite(coarse)
+    # three steps per pixel each way: about nine samples per point
+    assert np.nanstd(coarse) < 0.5 * np.nanstd(fine)
+    assert abs(np.nanmean(coarse) - 100.0) < 1.0
+    # the measured sampling is not touched: same as with averaging disabled
+    original = rebin.box_filter
+    try:
+        rebin.box_filter = lambda plane, widths: plane
+        plain = kspace.convert_map(theta, phi, energy, cube, n_kx=101, n_ky=121)[3]
+    finally:
+        rebin.box_filter = original
+    np.testing.assert_array_equal(np.isnan(plain), np.isnan(fine))
+    np.testing.assert_allclose(fine[np.isfinite(fine)], plain[np.isfinite(plain)])
+    assert ok.any()
+
+
+def test_a_cut_on_fewer_k_points_averages():
+    rng = np.random.default_rng(9)
+    slit = np.linspace(-15, 15, 601)
+    energy = np.linspace(60.0, 60.2, 3)
+    values = rng.poisson(100.0, (slit.size, energy.size)).astype(float)
+    coarse = convert_cut(slit, energy, values, deflector_deg=0.0, n_k=150)[2]
+    fine = convert_cut(slit, energy, values, deflector_deg=0.0, n_k=601)[2]
+    assert np.nanstd(coarse) < 0.6 * np.nanstd(fine)
+    assert abs(np.nanmean(coarse) - 100.0) < 1.0
+
+
+def test_a_small_rotation_does_not_average_the_fine_slit_direction():
+    # A deflector Map: 0.2 deg deflector steps against 0.045 deg slit steps.
+    # Rotated by 2 deg, a fifth of the coarse step projects onto the slit
+    # axis; that must not count as a reduction at the measured sampling.
+    rng = np.random.default_rng(10)
+    theta, phi = np.linspace(-4, 4, 41), np.linspace(-9, 9, 401)
+    energy = np.linspace(50.0, 50.1, 2)
+    cube = rng.poisson(100.0, (theta.size, phi.size, energy.size)).astype(float)
+    kw = dict(azimuth_deg=-2.0, theta_offset_deg=0.6, phi_offset_deg=-0.95,
+              n_kx=theta.size, n_ky=phi.size)
+    got = kspace.convert_map(theta, phi, energy, cube, **kw)[3]
+    original = rebin.box_filter
+    try:
+        rebin.box_filter = lambda plane, widths: plane
+        plain = kspace.convert_map(theta, phi, energy, cube, **kw)[3]
+    finally:
+        rebin.box_filter = original
+    np.testing.assert_array_equal(got, plain)
