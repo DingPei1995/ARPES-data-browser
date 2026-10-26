@@ -60,7 +60,7 @@ BLOCKS_IN_BUDGET = 4
 def default_budget() -> int:
     """How many bytes a cached cube may take on this machine, now."""
     try:
-        from tools.memory import system_memory
+        from tools.runtime.memory import system_memory
         _total, available = system_memory()
     except Exception:                                       # noqa: BLE001
         available = None

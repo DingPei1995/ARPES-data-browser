@@ -94,9 +94,11 @@ def test_no_local_variable_shadows_an_imported_module():
 
 
 def test_packages_are_never_referenced_by_their_bare_name():
-    """``from tools import kspace`` rather than ``import tools.kspace``.
+    """``from tools.momentum import kspace`` rather than ``import
+    tools.momentum.kspace``.
 
-    The second binds ``tools``, so every use reads ``tools.kspace.X`` and
+    The second binds ``tools``, so every use reads ``tools.momentum.kspace.X``
+    and
     any variable called ``tools`` shadows it. Binding the module name
     instead makes a collision a plain NameError at import time rather than
     an UnboundLocalError down one branch.
@@ -132,10 +134,11 @@ def test_every_module_imports_cleanly():
         sys.path.insert(0, ROOT)
     failures = []
     for package in PACKAGES:
-        for info in pkgutil.iter_modules([os.path.join(ROOT, package)]):
-            name = f"{package}.{info.name}"
-            if package == "devtools":
-                continue          # needs spglib / the lab's .mat file
+        if package == "devtools":
+            continue              # needs spglib / the lab's .mat file
+        for info in pkgutil.walk_packages([os.path.join(ROOT, package)],
+                                          prefix=f"{package}."):
+            name = info.name
             try:
                 importlib.import_module(name)
             except Exception as exc:                        # noqa: BLE001
@@ -167,7 +170,16 @@ def test_the_qt_free_packages_really_are():
     assert not offenders, "\n".join(offenders)
 
 
-@pytest.mark.parametrize("package", PACKAGES + ("test",))
+def _package_folders():
+    for package in PACKAGES + ("test",):
+        yield package
+        for folder, dirs, files in os.walk(os.path.join(ROOT, package)):
+            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            for d in dirs:
+                yield os.path.relpath(os.path.join(folder, d), ROOT)
+
+
+@pytest.mark.parametrize("package", list(_package_folders()))
 def test_every_package_says_what_it_is_for(package):
     init = os.path.join(ROOT, package, "__init__.py")
     assert os.path.isfile(init), f"{package} is not a package"

@@ -7,7 +7,7 @@ the original ``h5Loader.py``.
 
 The main window is deliberately just a browser: pick a folder, pick the
 file(s) you care about, click one to read its metadata, and **double-click**
-it to open it in its own viewer window (``ui/windows.py``):
+it to open it in its own viewer window (``ui/viewers/windows.py``):
 
 - a real-space scan opens the spatial map together with the E-vs-k spectrum
   at the cursor;
@@ -23,7 +23,7 @@ file rather than any one view, and each viewer exports what it itself shows.
 
 Differences from ``h5Loader.py`` worth knowing about if you maintain both:
 no dependency on ``pyNanoScanSystem``/``tools_packages`` or ``win32*`` (see
-``tools/system.py`` and ``ui/notify.py`` for the stand-ins), and no "Sync with running scan" button,
+``tools/runtime/system.py`` and ``ui/common/notify.py`` for the stand-ins), and no "Sync with running scan" button,
 which talked to the live acquisition software rather than to the file format.
 """
 import csv
@@ -47,21 +47,21 @@ QApplication.setHighDpiScaleFactorRoundingPolicy(QtCore.Qt.HighDpiScaleFactorRou
 # default locale when it is made.
 QtCore.QLocale.setDefault(QtCore.QLocale.c())
 
-from tools import system
-from tools import memory as memory_tools
-from ui import notify
+from tools.runtime import system
+from tools.runtime import memory as memory_tools
+from ui.common import notify
 import numpy as np
 
 from loader.nxs_file import list_datasets, save_dataset, CUBE_KINDS, CURVE_KINDS
-from tools.dataops import axis_summary, same_format, ARRAY_AXES
-from ui.widgets import NxsData, MemoryData, DEFAULT_COLORMAP
-# Imported under short names, not as `import ui.jobs`: the launcher's own
+from tools.processing.dataops import axis_summary, same_format, ARRAY_AXES
+from ui.viewers.widgets import NxsData, MemoryData, DEFAULT_COLORMAP
+# Imported under short names, not as `import ui.common.jobs`: the launcher's own
 # global `ui` (the built main window, used on nearly every line below) would
 # otherwise shadow the `ui` package the moment it is assigned, and
-# `ui.main_window` would start looking for an attribute on a window.
-from ui import jobs as nxs_jobs
-from ui import main_window as main_window_ui
-from ui import windows as viewer_windows_module
+# `ui.launcher.main_window` would start looking for an attribute on a window.
+from ui.common import jobs as nxs_jobs
+from ui.launcher import main_window as main_window_ui
+from ui.viewers import windows as viewer_windows_module
 from loader import registry as nxs_loaders
 from loader import session as nxs_session
 from loader import nxs_file
@@ -124,7 +124,7 @@ def BrowseFolder():
 def PickFiles():
     """Explicitly choose which data files to list, rather than scanning and
     loading a whole folder (slow when it holds multi-GB scans)."""
-    from ui.loader_dialog import LoaderDialog
+    from ui.launcher.loader_dialog import LoaderDialog
 
     start = ui.FilePathLE.displayText() or os.path.expanduser("~")
     if not os.path.isdir(start):
@@ -142,7 +142,7 @@ def PickFiles():
 def open_loader():
     """The Loader window: files, which beamline's reader, and the axis
     options, all before anything reaches the list."""
-    from ui.loader_dialog import LoaderDialog
+    from ui.launcher.loader_dialog import LoaderDialog
 
     dialog = LoaderDialog(win, ui.FilePathLE.displayText())
     if dialog.exec_() != QDialog.Accepted:
@@ -441,14 +441,14 @@ def show_list_menu(position):
 
     An entry that does not fit the selection -- the wrong kind of dataset,
     or the wrong number of rows -- is greyed out, with a tooltip saying why
-    (see ui.list_actions). With several rows selected, one that does not fit
+    (see ui.launcher.list_actions). With several rows selected, one that does not fit
     is enough.
     """
-    from ui.list_actions import availability
+    from ui.launcher.list_actions import availability
 
     keys = selected_keys()
     rows = [(label_for(k), loaded_items.get(k, {}).get("kind")) for k in keys]
-    from ui.functions_menu import instant_tooltips
+    from ui.viewers.functions_menu import instant_tooltips
 
     menu = instant_tooltips(QMenu(ui.FilePathListWidget))
     actions = {}
@@ -567,7 +567,7 @@ def plot_selected_as_figure():
     its own axes and labels, and anything that is not a plain 2-D dataset is
     reported rather than silently squeezed into one.
     """
-    from ui.figure import FigureWindow, panel_from_dataset
+    from ui.panels.figure import FigureWindow, panel_from_dataset
 
     keys = selected_keys()
     if not keys:
@@ -613,7 +613,7 @@ figure_windows = []
 
 
 def figure_window(panels):
-    from ui.figure import FigureWindow
+    from ui.panels.figure import FigureWindow
 
     window = FigureWindow(panels, "Figure",
                           dataset_source={"entries": listed_datasets,
@@ -1055,7 +1055,7 @@ def open_map_cuts(which: str):
     A map whose contour is already open gets the cut from that contour.
     Returns the cut windows opened.
     """
-    from ui.list_actions import availability
+    from ui.launcher.list_actions import availability
 
     keys = selected_keys()
     rows = [(label_for(k), loaded_items.get(k, {}).get("kind")) for k in keys]
@@ -1171,7 +1171,7 @@ def _acquire(path, entry, options):
     report or to wait for. A few genuinely take a while -- assembling a
     CASSIOPEE folder means parsing a hundred text files -- and those are the
     ones that declare a ``progress`` argument. Those go through
-    :func:`ui.jobs.run_blocking`, so the window keeps painting and there is a
+    :func:`ui.common.jobs.run_blocking`, so the window keeps painting and there is a
     bar and a Cancel instead of a frozen panel.
 
     The distinction is the reader's own: a loader that can report progress is
@@ -1331,8 +1331,8 @@ def open_processing():
     of a dispersion are different quantities that share a formula -- and
     that question has no place on a 2-D panel.
     """
-    from ui.process import ProcessDialog
-    from ui.volume import VolumeProcessDialog
+    from ui.panels.process import ProcessDialog
+    from ui.panels.volume import VolumeProcessDialog
 
     keys = selected_keys()
     if not keys:
@@ -1390,7 +1390,7 @@ def open_processing():
 
 def open_stack_plot():
     """A waterfall of EDCs or MDCs across the selected dataset."""
-    from ui.process import StackWindow
+    from ui.panels.process import StackWindow
 
     key = selected_key()
     if key is None:
@@ -1430,7 +1430,7 @@ def open_curve_fit():
     number carries its units around to say so. Converting first is one
     button, and it is the honest order of operations.
     """
-    from ui.fit import FitPanel, momentum_cut_reason
+    from ui.panels.fit import FitPanel, momentum_cut_reason
 
     key = selected_key()
     if key is None:
@@ -1460,11 +1460,11 @@ def open_core_level_check():
 
     Asks for the sample's elements, then for the energy reference (E_F
     found from the data where the window holds the edge, else hν − W), and
-    opens the results window; see ui.corelevel. The window keeps its own
+    opens the results window; see ui.panels.corelevel. The window keeps its own
     copy of the EDC, so the dataset is released straight away.
     """
-    from ui.corelevel import start
-    from ui.windows import metadata_temperature
+    from ui.panels.corelevel import start
+    from ui.viewers.windows import metadata_temperature
 
     key = selected_key()
     if key is None:
@@ -1521,7 +1521,7 @@ def open_volume_view():
 
 
 def _open_volume_view(key, data):
-    from ui.volume import VolumeWindow, VolumeRangeDialog
+    from ui.panels.volume import VolumeWindow, VolumeRangeDialog
 
     x, k, z, cube = data.angle_cube
     scan = data.scan
@@ -1557,10 +1557,10 @@ def open_cut_arithmetic():
     """Two cuts from the list, combined: dichroism, ratios, differences.
 
     The same window a cut viewer opens from its own "Cut arithmetic..."
-    button (see :mod:`ui.cutops`); this is the route for when both cuts are
+    button (see :mod:`ui.panels.cutops`); this is the route for when both cuts are
     already picked in the list.
     """
-    from ui.cutops import CutArithmeticDialog
+    from ui.panels.cutops import CutArithmeticDialog
 
     keys = selected_keys()[:2]
     pair = []
@@ -1598,7 +1598,7 @@ def open_cut_arithmetic():
 def combine_selected(ask=None, dialog_hook=None):
     """Combine the selected datasets into one.
 
-    Two ways (see :mod:`ui.stackcuts`): cuts can be *stacked* into a map
+    Two ways (see :mod:`ui.panels.stackcuts`): cuts can be *stacked* into a map
     along an axis the user names, and cuts or cubes of one kind (maps, kz
     maps, k-maps) can be *joined* end to end along one of their own axes --
     the pieces of a measurement taken in segments. For a stack of cuts on
@@ -1609,8 +1609,9 @@ def combine_selected(ask=None, dialog_hook=None):
     ``ask`` and ``dialog_hook`` stand in for the order question and for
     running the dialog, for the tests.
     """
-    from tools import stackcuts
-    from ui.stackcuts import CombineCutsDialog, combined_dataset, joined_dataset
+    from tools.processing import stackcuts
+    from ui.panels.stackcuts import (CombineCutsDialog, combined_dataset,
+                                     joined_dataset)
 
     keys = selected_keys()
     title = "Combine datasets"
@@ -2261,8 +2262,8 @@ def DumpUIWidgets(values):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     # Cyclic garbage collection from the event loop only, never inside a Qt
-    # call -- see ui/gcguard.py for the crash this prevents.
-    from ui import gcguard
+    # call -- see ui/common/gcguard.py for the crash this prevents.
+    from ui.common import gcguard
     gcguard.install(app)
     win = _MainWindow()
     ui = main_window_ui.Ui_MainWindow()

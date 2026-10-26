@@ -1,7 +1,7 @@
 """Make ``python -m pytest`` work from this folder.
 
 The tests live in ``test/`` and import the packages beside it (``from
-tools.bz3d import ...``). pytest puts the *test file's* directory on
+tools.crystal.bz3d import ...``). pytest puts the *test file's* directory on
 sys.path, not the project root, so without this every test would fail on
 its first import. Putting this file at the root is the documented way to
 say "the project root is here".

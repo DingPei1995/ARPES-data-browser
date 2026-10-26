@@ -1,6 +1,6 @@
 """
 loader/native.py
-====================
+================
 The loader for the program's own saved format -- the one every derived
 dataset is written in (see :mod:`loader.session`) and the one "Save..."
 produces.

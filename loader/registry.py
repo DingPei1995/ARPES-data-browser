@@ -1,6 +1,6 @@
 """
 loader/registry.py
-==============
+==================
 Which beamline a file came from, and who knows how to read it.
 
 Until now "reading a file" meant one function, ``load_soleil_nxs``, whose
@@ -11,7 +11,7 @@ function and hoping not to break the first.
 
 This module makes the reader a choice instead. A loader is a small object
 that answers three questions -- *can you open this?*, *what is in it?*, *read
-this entry* -- and each one lives in its own file (``loader/soleil.py``,
+this entry* -- and each one lives in its own file (``loader/beamlines/soleil.py``,
 ``loader/native.py``), so a new beamline is a new file plus one
 ``register()`` call, touching nothing that already worked.
 
@@ -328,11 +328,11 @@ def _install_default_loaders():
     """Import the loaders that ship with the program, so that importing this
     module is enough to have them. Kept in a function so the import order is
     explicit and a broken third-party loader cannot stop the rest loading."""
-    for module in ("loader.native", "loader.soleil", "loader.cassiopee",
-                   "loader.cassiopee_spin", "loader.maestro_loader",
-                   "loader.alba_loader", "loader.diamond_loader",
-                   "loader.maxiv_loader", "loader.ape_loader",
-                   "loader.sgm4_loader"):
+    for module in ("loader.native", "loader.beamlines.soleil", "loader.beamlines.cassiopee",
+                   "loader.beamlines.cassiopee_spin", "loader.beamlines.maestro",
+                   "loader.beamlines.alba", "loader.beamlines.diamond",
+                   "loader.beamlines.maxiv", "loader.beamlines.ape",
+                   "loader.beamlines.sgm4"):
         try:
             __import__(module)
         except Exception as exc:                        # noqa: BLE001

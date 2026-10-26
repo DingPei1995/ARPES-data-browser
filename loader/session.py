@@ -1,6 +1,6 @@
 """
 loader/session.py
-==============
+=================
 Where a dataset computed in this session actually lives.
 
 The problem this solves

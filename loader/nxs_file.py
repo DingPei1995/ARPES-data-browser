@@ -541,7 +541,7 @@ class LazyArray:
     through to h5py, so slicing code cannot tell the difference. The one
     addition that makes it safe to drop in everywhere is ``__array__``:
     ``np.asarray(lazy)`` reads the whole thing, so any routine that really
-    does need every point -- an operation in ``tools.process``, a save, a
+    does need every point -- an operation in ``tools.processing.process``, a save, a
     fit -- keeps working unchanged, and only pays for what it asked for.
 
     The file handle belongs to the owning :class:`NxsScan`; once that is
@@ -622,7 +622,7 @@ def deflector_angle_to_k(angle_deg: np.ndarray, kinetic_energy_eV) -> np.ndarray
 #: **in the array's own order**, and which slot holds its constructor's.
 #:
 #: This is the one authority for the question "what are this dataset's
-#: axes?". It used to be answered in five places -- ``tools.dataops``'s two
+#: axes?". It used to be answered in five places -- ``tools.processing.dataops``'s two
 #: tables, the loader's ``_axis_slots``, ``loader.session.scan_to_dict``, the
 #: launcher's ``_dataset_for_saving`` and ``_MemScan.__init__`` -- which is
 #: four chances for a new kind to be half-supported, and exactly the kind of
@@ -630,7 +630,7 @@ def deflector_angle_to_k(angle_deg: np.ndarray, kinetic_energy_eV) -> np.ndarray
 #: survey of the whole program rather than an edit.
 #:
 #: ``array`` is the order the dimensions are stored in; ``constructor`` is
-#: the order :class:`ui.widgets.MemoryData` takes them in. They differ
+#: the order :class:`ui.viewers.widgets.MemoryData` takes them in. They differ
 #: for a 4-D spatial scan, whose cube is stored (y, x, k, E) because that is
 #: the order the file's own dataset is in, and constructed (x, y, k, E).
 AXIS_SLOTS = {
@@ -646,7 +646,7 @@ AXIS_SLOTS = {
     # or angle/momentum for an MDC), ``y`` numbers the channels -- one for a
     # plain EDC, one per spin channel, or a curve with its uncertainty
     # beside it. Channel names travel in ``info["curve.channels"]``; see
-    # :mod:`tools.curves`.
+    # :mod:`tools.spectra.curves`.
     "edc": {"array": ("x", "y"), "constructor": ("x", "y")},
     "mdc": {"array": ("x", "y"), "constructor": ("x", "y")},
     "spin_edc": {"array": ("x", "y"), "constructor": ("x", "y")},

@@ -133,7 +133,7 @@ the first entry, which holds only the beamline state, is skipped.
 
 ### ALS MAESTRO (BL 7.0.2)
 
-MAESTRO's `.h5` files are read by **ALS MAESTRO** (`loader/maestro_loader.py`),
+MAESTRO's `.h5` files are read by **ALS MAESTRO** (`loader/beamlines/maestro.py`),
 ported from the MAESTRO reader in
 [TensorSpec](https://github.com/fawkesdx/TensorSpec) (MIT). A file is
 recognised by its three top-level groups (`0D_Data`, `2D_Data`, `Headers`).
@@ -161,16 +161,16 @@ and over what range:
 
 ### ALBA LOREA, Diamond I05 and I05-1 (NeXus)
 
-Three NeXus readers share one module, `loader/nexus_arpes.py`, and differ
+Three NeXus readers share one module, `loader/formats/nexus_arpes.py`, and differ
 only in where the spectra are and how the scanned axes are named. Each was
 written against `h5info` dumps of a cut, a deflector map, a photon-energy
 scan and a spatial scan from that beamline.
 
 | loader | file | spectra | scanned axes come from |
 |---|---|---|---|
-| **ALBA LOREA** (`loader/alba_loader.py`) | `NNN_<sample>.nxs` | `entry1/data/data` | the group's `@axes` list |
-| **Diamond I05 HR-ARPES** (`loader/diamond_loader.py`) | `i05-NNNNNN.nxs` | `entry1/analyser/data` | `@axis` on each vector |
-| **Diamond I05-1 nano-ARPES** (`loader/diamond_loader.py`) | `i05-1-NNNNN.nxs` | `entry1/analyser/data` | `@axis` on each vector |
+| **ALBA LOREA** (`loader/beamlines/alba.py`) | `NNN_<sample>.nxs` | `entry1/data/data` | the group's `@axes` list |
+| **Diamond I05 HR-ARPES** (`loader/beamlines/diamond.py`) | `i05-NNNNNN.nxs` | `entry1/analyser/data` | `@axis` on each vector |
+| **Diamond I05-1 nano-ARPES** (`loader/beamlines/diamond.py`) | `i05-1-NNNNN.nxs` | `entry1/analyser/data` | `@axis` on each vector |
 
 All three are recognised by structure. ALBA has an `NXdata` group with
 `@signal`/`@axes` and no `entry1/analyser`. Diamond has `entry1/analyser`.
@@ -207,7 +207,7 @@ name, then the I05-1 zone plate and `sm*` motors.
 
 ### MAX IV Bloch (Scienta SES `.ibw` and `.zip`)
 
-`loader/maxiv_loader.py` reads what the Scienta SES software saves at the
+`loader/beamlines/maxiv.py` reads what the Scienta SES software saves at the
 Bloch A branch (DA30-L). It was written against the headers of a cut, a
 photon-energy scan, a spatial scan and a deflector-map zip
 (`for loader/MaxIV`), and checked against the SES reader in
@@ -253,7 +253,7 @@ These two were ported from the readers in
 without files from either beamline. The tests build files the way those
 readers expect them. Open a real file and check it before relying on it.
 
-- **Elettra APE** (`loader/ape_loader.py`) writes the same SES files as
+- **Elettra APE** (`loader/beamlines/ape.py`) writes the same SES files as
   Bloch. `.ibw` and `.zip` go through the Bloch reader, and a `.txt`
   spectrum through the CASSIOPEE Scienta text parser. The run-mode table
   knows APE's motor names (`polar tilt X Y Z`). Because the format is the
@@ -261,7 +261,7 @@ readers expect them. Open a real file and check it before relying on it.
   whose `Location` says APE or Elettra opens as APE, and anything else stays
   with Bloch (or CASSIOPEE for `.txt`). Choose the reader in the Loader
   window when `Location` was left blank. Spin data is not read, as in peaks.
-- **ASTRID2 SGM4** (`loader/sgm4_loader.py`): `Entry/Data/ScanDetails`
+- **ASTRID2 SGM4** (`loader/beamlines/sgm4.py`): `Entry/Data/ScanDetails`
   gives each slow and fast axis as start, step and length. The spectra in
   `Entry/Data/TransformedData` are one row per point, with the first slow
   axis fastest. They are read lazily through a grid view, and a scan
@@ -451,7 +451,7 @@ history is easier to follow with them.
 **Plot tools** (every viewer and every frozen slice, on the top row) draws
 on the live plot: vertical, horizontal or angled guide lines and text
 labels, each in its own colour, width and style, draggable on the plot and
-drawn into the panel's image export too (`ui/plot_tools.py`). It is not the
+drawn into the panel's image export too (`ui/viewers/plot_tools.py`). It is not the
 figure composer's **Figure tools...**, which dresses up a figure for a paper;
 the two used to share the name *Plot tools*. A frozen slice's
 **Figure composer...** button is the way from one to the other.
@@ -528,7 +528,7 @@ mouse to pause; a map held in memory follows it live.
 - **Combining datasets** -- *Stack* cuts into a map along a new axis (a
   photon-energy series of angle cuts becomes a kz map), or *Join* cuts,
   maps, kz maps or k-maps of one kind end to end along one of their own
-  axes (`tools/combine.py`). Pieces on one grid are copied as measured;
+  axes (`tools/processing/combine.py`). Pieces on one grid are copied as measured;
   a different step or offset is interpolated onto the first piece's step;
   other axes that differ are resampled onto the range all pieces cover;
   overlaps are averaged (or the earlier / later piece kept); gaps are left
@@ -614,7 +614,7 @@ the peaks are. Three steps, each correctable before the next:
    and the level picked in the peak table.
 
 The table is Table 1-1 of the X-ray Data Booklet (`Table_1-1.pdf` at the
-top of the repository), turned once into `tools/corelevel_table.py` by
+top of the repository), turned once into `tools/spectra/corelevel_table.py` by
 `devtools/gen_corelevels.py` -- the PDF is never read at run time. What
 the check adds beyond a lookup:
 
@@ -985,7 +985,7 @@ thread-safe. A job that finishes within 400 ms never shows a dialog.
 
 ## Adding a beamline
 
-Copy `loader/soleil.py` (HDF5) or `loader/cassiopee.py` (text), implement
+Copy `loader/beamlines/soleil.py` (HDF5) or `loader/beamlines/cassiopee.py` (text), implement
 four things, and add the module to `_install_default_loaders()` in
 `loader/registry.py`. Nothing else changes.
 
@@ -1033,57 +1033,57 @@ you what it may depend on.
 | `ARPES_viewer.py` | The launcher: the dataset list, the session folder, and the wiring between them. Run this. |
 | **`loader/`** | |
 | `loader/registry.py` | Which beamline wrote a file and who reads it, plus the load-time axis order and scanned-axis role. |
-| `loader/soleil.py` | The SOLEIL/ANTARES reader. **Copy this file to add an HDF5 beamline.** |
-| `loader/cassiopee.py` | The SOLEIL/CASSIOPEE reader: Scienta text spectra, and folders of them assembled into a map or a kz map. |
-| `loader/cassiopee_spin.py` | CASSIOPEE's spin end station: MBS A-1 `.krx` and `.txt` files, as a cut, a map or a spin EDC. |
-| `loader/maestro_loader.py` | ALS MAESTRO (BL 7.0.2) `.h5` files: cuts, deflector maps, XY spatial scans, two-motor lines and focus scans, read lazily. |
-| `loader/nexus_arpes.py` | What the NeXus readers share: the layout, the kind it opens as, kz-map energy referencing, the lazy `NexusView`, the metadata. |
-| `loader/alba_loader.py` | ALBA LOREA (BL20) `.nxs` files: cuts, deflector maps, photon-energy scans and spatial scans. |
-| `loader/diamond_loader.py` | Diamond I05 (HR-ARPES) and I05-1 (nano-ARPES) `.nxs` files, as two loaders: cuts, deflector maps, photon-energy scans and spatial scans. |
-| `loader/maxiv_loader.py` | MAX IV Bloch (Scienta SES): `.ibw` cuts, photon-energy scans and manipulator scans, and `.zip` deflector maps, read lazily. |
-| `loader/ape_loader.py` | Elettra APE (Scienta SES), recognised by the header's `Location`: `.ibw`/`.zip` via the Bloch reader, `.txt` via the CASSIOPEE text parser. Ported from peaks. |
-| `loader/sgm4_loader.py` | ASTRID2 SGM4 `.h5` files: cuts, deflector maps, photon-energy scans and spatial scans, read lazily. Ported from peaks. |
+| `loader/beamlines/soleil.py` | The SOLEIL/ANTARES reader. **Copy this file to add an HDF5 beamline.** |
+| `loader/beamlines/cassiopee.py` | The SOLEIL/CASSIOPEE reader: Scienta text spectra, and folders of them assembled into a map or a kz map. |
+| `loader/beamlines/cassiopee_spin.py` | CASSIOPEE's spin end station: MBS A-1 `.krx` and `.txt` files, as a cut, a map or a spin EDC. |
+| `loader/beamlines/maestro.py` | ALS MAESTRO (BL 7.0.2) `.h5` files: cuts, deflector maps, XY spatial scans, two-motor lines and focus scans, read lazily. |
+| `loader/formats/nexus_arpes.py` | What the NeXus readers share: the layout, the kind it opens as, kz-map energy referencing, the lazy `NexusView`, the metadata. |
+| `loader/beamlines/alba.py` | ALBA LOREA (BL20) `.nxs` files: cuts, deflector maps, photon-energy scans and spatial scans. |
+| `loader/beamlines/diamond.py` | Diamond I05 (HR-ARPES) and I05-1 (nano-ARPES) `.nxs` files, as two loaders: cuts, deflector maps, photon-energy scans and spatial scans. |
+| `loader/beamlines/maxiv.py` | MAX IV Bloch (Scienta SES): `.ibw` cuts, photon-energy scans and manipulator scans, and `.zip` deflector maps, read lazily. |
+| `loader/beamlines/ape.py` | Elettra APE (Scienta SES), recognised by the header's `Location`: `.ibw`/`.zip` via the Bloch reader, `.txt` via the CASSIOPEE text parser. Ported from peaks. |
+| `loader/beamlines/sgm4.py` | ASTRID2 SGM4 `.h5` files: cuts, deflector maps, photon-energy scans and spatial scans, read lazily. Ported from peaks. |
 | `loader/native.py` | This program's own saved format -- detected, never chosen. |
 | `loader/nxs_file.py` | The SOLEIL parser, the saved format's reader and writer, `NxsScan`, the axis-slot table, and the lazy arrays that keep a measurement on disk. Start here. |
 | `loader/cubecache.py` | `CubeCache`: a map cube read into memory once it is being browsed, so the energy slider and the cut sliders slice an array rather than the file. |
 | `loader/session.py` | Where a computed dataset lives: the folder it is written to as soon as it exists, the memory budget, and the operations log. |
 | **`tools/`** | |
-| `tools/kspace.py`, `tools/cutk.py` | Angle-to-momentum conversion, for a map and for a single cut, and the rotation read off a picked direction. |
-| `tools/analysis.py` | Arbitrary-direction cut and Fermi-surface correction. |
-| `tools/dataops.py` | Truncate / self-normalise / compress, and the axis tables derived from `loader/nxs_file.py`. |
-| `tools/stackcuts.py`, `tools/combine.py` | Combining datasets: stacking cuts along a new axis, and joining pieces end to end along one of their own axes. |
-| `tools/process.py`, `tools/volume.py` | Smoothing, derivatives, curvature, backgrounds, symmetrisation -- in 2-D and over a cube. |
-| `tools/kzmap.py` | Calibrating a photon-energy scan against its own Fermi edges: fit per spectrum, align, crop, normalise. |
-| `tools/kzconv.py` | The k_z conversion: the analytic forward and inverse maps, the resampling, and the inner-potential scan. |
-| `tools/curves.py` | One-dimensional data as tables: channel names, the σ convention, and the σ-aware crop / bin / normalise / background operations. |
-| `tools/spin.py` | Spin channels from their labels, the cross ratio, the instrumental asymmetry, polarisation and spin-resolved spectra with counting errors. |
-| `tools/degrid.py` | Removing the detector grid: the map's own grid estimate, the per-slice contrast / shift / local fit, the single-cut paths, and the pixel-lock check. |
-| `tools/cutops.py` | Arithmetic between two cuts: scaling, resampling, dichroism, reference division, Poisson uncertainty, and which recorded conditions differ. |
-| `tools/cleavage.py` | From a measured k_z period to which lattice planes could have produced it. |
-| `tools/corelevel.py`, `tools/corelevel_table.py` | The core-level check: the integrated EDC, the energy reference, peak finding, assignment against Table 1-1 and typical chemical states, contaminants, higher-order light, the rigid-shift test. The table is generated. |
-| `tools/fermi.py`, `tools/peaks.py`, `tools/dispersion.py` | The Fermi-edge model, MDC/EDC peak fitting, and what the fitted band says (`v_F`, `m*`, self-energy). |
-| `tools/lattice.py`, `tools/spacegroups.py`, `tools/bz3d.py`, `tools/bz2d.py`, `tools/moire.py`, `tools/highsym.py` | The Brillouin-zone geometry: lattices and point groups, the 3-D and 2-D zones and their irreducible wedges, the moiré zone, and the named high-symmetry points (a static table per Bravais lattice, after Setyawan & Curtarolo 2010). |
-| `tools/figure.py`, `tools/export.py` | What a publication figure *is*, and what leaves the program. |
-| `tools/colormaps.py`, `tools/system.py` | Generated colormap tables; the stand-ins for the lab's `tools_packages`. |
+| `tools/momentum/kspace.py`, `tools/momentum/cutk.py` | Angle-to-momentum conversion, for a map and for a single cut, and the rotation read off a picked direction. |
+| `tools/processing/analysis.py` | Arbitrary-direction cut and Fermi-surface correction. |
+| `tools/processing/dataops.py` | Truncate / self-normalise / compress, and the axis tables derived from `loader/nxs_file.py`. |
+| `tools/processing/stackcuts.py`, `tools/processing/combine.py` | Combining datasets: stacking cuts along a new axis, and joining pieces end to end along one of their own axes. |
+| `tools/processing/process.py`, `tools/processing/volume.py` | Smoothing, derivatives, curvature, backgrounds, symmetrisation -- in 2-D and over a cube. |
+| `tools/momentum/kzmap.py` | Calibrating a photon-energy scan against its own Fermi edges: fit per spectrum, align, crop, normalise. |
+| `tools/momentum/kzconv.py` | The k_z conversion: the analytic forward and inverse maps, the resampling, and the inner-potential scan. |
+| `tools/spectra/curves.py` | One-dimensional data as tables: channel names, the σ convention, and the σ-aware crop / bin / normalise / background operations. |
+| `tools/spectra/spin.py` | Spin channels from their labels, the cross ratio, the instrumental asymmetry, polarisation and spin-resolved spectra with counting errors. |
+| `tools/processing/degrid.py` | Removing the detector grid: the map's own grid estimate, the per-slice contrast / shift / local fit, the single-cut paths, and the pixel-lock check. |
+| `tools/processing/cutops.py` | Arithmetic between two cuts: scaling, resampling, dichroism, reference division, Poisson uncertainty, and which recorded conditions differ. |
+| `tools/crystal/cleavage.py` | From a measured k_z period to which lattice planes could have produced it. |
+| `tools/spectra/corelevel.py`, `tools/spectra/corelevel_table.py` | The core-level check: the integrated EDC, the energy reference, peak finding, assignment against Table 1-1 and typical chemical states, contaminants, higher-order light, the rigid-shift test. The table is generated. |
+| `tools/spectra/fermi.py`, `tools/spectra/peaks.py`, `tools/spectra/dispersion.py` | The Fermi-edge model, MDC/EDC peak fitting, and what the fitted band says (`v_F`, `m*`, self-energy). |
+| `tools/crystal/lattice.py`, `tools/crystal/spacegroups.py`, `tools/crystal/bz3d.py`, `tools/crystal/bz2d.py`, `tools/crystal/moire.py`, `tools/crystal/highsym.py` | The Brillouin-zone geometry: lattices and point groups, the 3-D and 2-D zones and their irreducible wedges, the moiré zone, and the named high-symmetry points (a static table per Bravais lattice, after Setyawan & Curtarolo 2010). |
+| `tools/output/figure.py`, `tools/output/export.py` | What a publication figure *is*, and what leaves the program. |
+| `tools/output/colormaps.py`, `tools/runtime/system.py` | Generated colormap tables; the stand-ins for the lab's `tools_packages`. |
 | **`ui/`** | |
-| `ui/main_window.py` | The launcher window's layout. |
+| `ui/launcher/main_window.py` | The launcher window's layout. |
 | `version.py` | The version number and date shown in the launcher. |
-| `ui/stackcuts.py` | The Combine datasets window (stack or join). |
-| `ui/plot_tools.py` | Plot tools: guide lines and labels on a live viewer, and drawing them into an image export. |
-| `ui/windows.py`, `ui/widgets.py` | The per-file viewers, and the image panels they are built from. |
-| `ui/list_actions.py` | Which right-click entries of the main list fit a selection (by kind and row count), Qt-free. |
-| `ui/functions_menu.py` | The Functions menu shared by every viewer (`add_function`). |
-| `ui/gcguard.py` | Cyclic garbage collection from the event loop only, never inside a Qt call (prevents random crashes on opening and closing windows). |
-| `ui/cursorlink.py` | The readout cursor shared by a map's contour and its cut windows (positions only; widths stay in each window). |
-| `ui/loader_dialog.py` | The Load-data window: files, reader, axis options. |
-| `ui/kzmap.py` | The Align Fermi levels (kz map) window. |
-| `ui/kzconv.py` | The kz-to-momentum window: V0, the zone lines, the period tool. |
-| `ui/cutops.py` | The cut arithmetic window. |
-| `ui/corelevel.py` | The core-level check: elements, energy reference, results window. |
-| `ui/degrid.py` | The Remove detector grid window. |
-| `ui/curves.py` | The curve viewer, its curve fit panel and the spin analysis panel. |
-| `ui/jobs.py` | Running one long operation at a time off the GUI thread. |
-| `ui/figure.py`, `ui/fit.py`, `ui/process.py`, `ui/volume.py` | The figure composer, the MDC/EDC fit panel, and the 2-D and 3-D processing panels. |
+| `ui/panels/stackcuts.py` | The Combine datasets window (stack or join). |
+| `ui/viewers/plot_tools.py` | Plot tools: guide lines and labels on a live viewer, and drawing them into an image export. |
+| `ui/viewers/windows.py`, `ui/viewers/widgets.py` | The per-file viewers, and the image panels they are built from. |
+| `ui/launcher/list_actions.py` | Which right-click entries of the main list fit a selection (by kind and row count), Qt-free. |
+| `ui/viewers/functions_menu.py` | The Functions menu shared by every viewer (`add_function`). |
+| `ui/common/gcguard.py` | Cyclic garbage collection from the event loop only, never inside a Qt call (prevents random crashes on opening and closing windows). |
+| `ui/viewers/cursorlink.py` | The readout cursor shared by a map's contour and its cut windows (positions only; widths stay in each window). |
+| `ui/launcher/loader_dialog.py` | The Load-data window: files, reader, axis options. |
+| `ui/panels/kzmap.py` | The Align Fermi levels (kz map) window. |
+| `ui/panels/kzconv.py` | The kz-to-momentum window: V0, the zone lines, the period tool. |
+| `ui/panels/cutops.py` | The cut arithmetic window. |
+| `ui/panels/corelevel.py` | The core-level check: elements, energy reference, results window. |
+| `ui/panels/degrid.py` | The Remove detector grid window. |
+| `ui/viewers/curves.py` | The curve viewer, its curve fit panel and the spin analysis panel. |
+| `ui/common/jobs.py` | Running one long operation at a time off the GUI thread. |
+| `ui/panels/figure.py`, `ui/panels/fit.py`, `ui/panels/process.py`, `ui/panels/volume.py` | The figure composer, the MDC/EDC fit panel, and the 2-D and 3-D processing panels. |
 | **`devtools/`, `test/`** | |
 | `devtools/gen_colormaps.py`, `devtools/gen_spacegroups.py`, `devtools/gen_corelevels.py` | Generate the tables in `tools/`; need scipy + the lab's `.mat`, `spglib`, and poppler's `pdftotext` with `Table_1-1.pdf`, none of which the program itself does. |
 | `devtools/demo_data.py`, `devtools/guide_screenshots.py`, `devtools/build_guide_pdfs.py` | Synthetic data to try the program on, the script that re-takes the user guides' screenshots from it (offscreen), and the one that prints the guides to PDF (pandoc + Playwright). |
@@ -1164,4 +1164,4 @@ python -m pytest
 from this folder. 774 of them, no display needed -- `conftest.py` puts the
 project root on `sys.path` and pins `QT_QPA_PLATFORM=offscreen`, and
 `test/conftest.py` runs garbage collection only between tests, the rule
-`ui/gcguard.py` applies in the program.
+`ui/common/gcguard.py` applies in the program.

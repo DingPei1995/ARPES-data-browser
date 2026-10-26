@@ -101,11 +101,11 @@ def main():
     app = QApplication(sys.argv[:1])
     _quiet_message_boxes()
     app.setFont(QFont("DejaVu Sans", 9))
-    from ui import gcguard
+    from ui.common import gcguard
     gcguard.install(app)
 
     import ARPES_viewer as av
-    from ui import main_window as main_window_ui
+    from ui.launcher import main_window as main_window_ui
     from devtools import demo_data
 
     data_dir = os.path.join(_HOME, "demo_data")
@@ -174,7 +174,7 @@ class Shots:
         return window
 
     def loader(self):
-        from ui.loader_dialog import LoaderDialog
+        from ui.launcher.loader_dialog import LoaderDialog
         dialog = LoaderDialog(self.av.win, self.data_dir)
         dialog.set_paths([p for p in self.paths if "map" in p or "cuts" in p])
         shot(dialog, "loader_dialog", (640, 720))
@@ -261,7 +261,7 @@ class Shots:
         shot(self.k_cut, "cut_in_k", (1000, 760))
 
     def mdc_fit(self):
-        from tools import peaks as PK
+        from tools.spectra import peaks as PK
         panel = self.k_cut.open_mdc_edc_fit()
         pump()
         right = panel.bands[0] if panel.bands else panel.add_band()
@@ -514,7 +514,7 @@ class Shots:
         shot(window, "slice_figure", (1250, 760))
 
     def plot_tools(self):
-        from ui.plot_tools import open_plot_tools
+        from ui.viewers.plot_tools import open_plot_tools
         cut = self.cut
         cut.view.set_readout_cursor_visible(False)
         dialog = open_plot_tools(cut)
@@ -544,7 +544,7 @@ class Shots:
         dialog.close()
 
     def combine(self):
-        from ui.stackcuts import CombineCutsDialog
+        from ui.panels.stackcuts import CombineCutsDialog
         contour = self.contour
         x, k, z, _cube = contour.data.angle_cube
         x = np.asarray(x, dtype=float)

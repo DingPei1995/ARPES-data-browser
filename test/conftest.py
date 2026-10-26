@@ -1,7 +1,7 @@
 """Shared test setup.
 
 Cyclic garbage collection runs only between tests, never in the middle of
-one -- the same rule the program applies with ui.gcguard (collection from
+one -- the same rule the program applies with ui.common.gcguard (collection from
 the event loop only, never inside a Qt call). With automatic collection the
 window tests crash the interpreter at random, exactly as the program did.
 """
