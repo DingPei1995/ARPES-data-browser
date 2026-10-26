@@ -1,6 +1,6 @@
 # ARPES viewer
 
-**Version 1.0.4** (last modified 26 October 2026) — see
+**Version 1.0.5** (last modified 26 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
@@ -16,8 +16,8 @@ files, and reading those is now one loader among several rather than the
 whole program. It currently reads **SOLEIL ANTARES** (NeXus/HDF5), **SOLEIL
 CASSIOPEE** (Scienta SES text, single spectra and whole folders), **ALS
 MAESTRO** (BL 7.0.2 HDF5), **ALBA LOREA** (BL20 NeXus), **Diamond I05**
-(HR-ARPES) and **I05-1** (nano-ARPES) NeXus, and its own
-saved format. Adding a beamline is a new file in `loader/`.
+(HR-ARPES) and **I05-1** (nano-ARPES) NeXus, **MAX IV Bloch** (Scienta
+SES `.ibw` and `.zip`), and its own saved format. Adding a beamline is a new file in `loader/`.
 
 The round-by-round history, and the reasoning behind the choices below, is in
 [CHANGELOG.md](CHANGELOG.md).
@@ -204,6 +204,47 @@ name, then the I05-1 zone plate and `sm*` motors.
   kept in `info["axis0_measured"]`.
 - Everything except a kz map stays in the file and is read as it is looked
   at. Integer counts are read as float32.
+
+### MAX IV Bloch (Scienta SES `.ibw` and `.zip`)
+
+`loader/maxiv_loader.py` reads what the Scienta SES software saves at the
+Bloch A branch (DA30-L). It was written against the headers of a cut, a
+photon-energy scan, a spatial scan and a deflector-map zip
+(`for loader/MaxIV`), and checked against the SES reader in
+[peaks](https://github.com/phrgab/peaks). Nothing in it is specific to Bloch
+except the manipulator axis names (`A P T X Y Z`), so other SES files of the
+same kind open the same way.
+
+| file | SES dimensions | opens as |
+|---|---|---|
+| `.ibw`, 2-D | energy, `Y-Scale [deg]` | `cut` |
+| `.ibw`, 3-D | + `Photon Energy [eV]` (CIS) | `kz map` |
+| `.ibw`, 3-D | + `Point` (one manipulator axis) | `map` of that motor |
+| `.ibw`, 4-D | + `Point`, `Position` (manipulator scan) | `spem_4d` |
+| `.zip` | `Energy`, `Thetax`, `Thetay` per region | `map`, convertible to k |
+
+- **`.ibw`** is a version-5 Igor wave, little- or big-endian, read with a
+  small reader of our own (no `igor2` needed). Igor stores it
+  column-major, so the file is already `(*scanned, angle, energy)` and is
+  memory-mapped, not read. Each axis is the wave's own `start + i * delta`.
+  The wave note is the SES header. `[SES]` goes into `info` as `ses.*`,
+  `[Manipulator]` as `manipulator.*`, and the photon energy as
+  `photon_energy_eV`.
+- **Manipulator scans.** `Point` and `Position` are named from the
+  run-mode table, which lists every point's `Position, Point, A, P, T, X, Y,
+  Z`. The motor whose column repeats `Point` is the one the layers step. At
+  Bloch, `Point` is X (fast) and `Position` is Y (slow).
+- **Binding energy.** SES's `Energy Scale=Binding` axis (positive below
+  E_F) is negated into `E - E_F`, with no work function added. A CIS on a
+  kinetic scale is referred by each hv (`E_kin - hv + W`).
+- **`.zip`** is SES's map format. `viewer.ini` lists the regions, and each
+  region has `Spectrum_<name>.bin` (float32, energy fastest, then the slit
+  angle `Thetax`, then the deflector `Thetay`), `Spectrum_<name>.ini` (the
+  axes) and `<name>.ini` (the SES header). A zip with several regions lists
+  one dataset per region. A `.bin` stored uncompressed is read in place,
+  and a compressed one is read into memory.
+- The energy of a cut, map or spatial scan is the analyser's kinetic
+  energy. Set E_F from the data, as for MAESTRO.
 
 ### CASSIOPEE spin end station (MBS)
 
@@ -970,6 +1011,7 @@ you what it may depend on.
 | `loader/nexus_arpes.py` | What the NeXus readers share: the layout, the kind it opens as, kz-map energy referencing, the lazy `NexusView`, the metadata. |
 | `loader/alba_loader.py` | ALBA LOREA (BL20) `.nxs` files: cuts, deflector maps, photon-energy scans and spatial scans. |
 | `loader/diamond_loader.py` | Diamond I05 (HR-ARPES) and I05-1 (nano-ARPES) `.nxs` files, as two loaders: cuts, deflector maps, photon-energy scans and spatial scans. |
+| `loader/maxiv_loader.py` | MAX IV Bloch (Scienta SES): `.ibw` cuts, photon-energy scans and manipulator scans, and `.zip` deflector maps, read lazily. |
 | `loader/native.py` | This program's own saved format -- detected, never chosen. |
 | `loader/nxs_file.py` | The SOLEIL parser, the saved format's reader and writer, `NxsScan`, the axis-slot table, and the lazy arrays that keep a measurement on disk. Start here. |
 | `loader/cubecache.py` | `CubeCache`: a map cube read into memory once it is being browsed, so the energy slider and the cut sliders slice an array rather than the file. |

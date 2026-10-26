@@ -14,6 +14,28 @@ file is the record of how it got that way.
 
 (nothing yet)
 
+## 1.0.5 — 2026-10-26
+
+- **MAX IV Bloch files open.** `loader/maxiv_loader.py` reads the Scienta
+  SES files that Bloch's DA30-L writes. It was written against the headers
+  of a cut, a photon-energy scan and a spatial scan (`.ibw`), and the `.ini`
+  files of a deflector-map `.zip` (`for loader/MaxIV`). It was checked
+  against the SES reader in peaks.
+  - `.ibw` files are read by a small version-5 Igor reader written here, so
+    `igor2` is not a dependency. The wave's column-major layout is already
+    `(*scanned, angle, energy)`, so it is memory-mapped and nothing is read
+    until it is looked at. The SPEM file is 1 GB, so this matters.
+  - A cut opens as a cut, and a CIS (photon-energy) scan as a kz map. A
+    manipulator scan opens as a spatial scan (`spem_4d`), or as a map when
+    it steps one motor. `Point` and `Position` are named after the motor
+    whose column repeats them in the run-mode table, which is X and Y at
+    Bloch.
+  - SES's binding-energy axis is negated into `E - E_F`, with no work
+    function added, because SES has already referred it.
+  - A `.zip` deflector map opens as a map that converts to k. Each region
+    in `viewer.ini` is its own dataset. Its `.bin` is mapped in place when
+    stored and read into memory when compressed.
+
 ## 1.0.4 — 2026-10-26
 
 - **ALBA LOREA, Diamond I05 and Diamond I05-1 files open.** Three new
