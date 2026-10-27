@@ -315,7 +315,11 @@ class Shots:
         pump()
         panel.try_line()
         pump()
-        shot(panel, "mdc_fit_panel", (1250, 800))
+        guide = panel.start_guide()             # the guided fit, at its seeds
+        guide.go(4)
+        pump()
+        shot(panel, "mdc_fit_panel", (1250, 900))
+        guide.stop()
         self.fit_panel = panel
         disp = panel.open_dispersion()
         pump()
@@ -549,7 +553,20 @@ class Shots:
         if window is None:
             window = [w for w in QApplication.topLevelWidgets()
                       if type(w).__name__ == "FigureWindow" and w.isVisible()][-1]
-        shot(window, "figure_composer", (1250, 860))
+        # A page laid out by hand: a zoom-in inset on (a), an arrow and a note.
+        import tools.output.figure as nf
+        window.figure.freeze()
+        x, y, w, h = window.figure.panels[0].frame
+        window.canvas._make_zoom(x + 0.35 * w, y + 0.1 * h, 0.3 * w, 0.3 * h)
+        window.figure.shapes.append(nf.Shape(kind="arrow", x0=x + 0.1 * w,
+                                             y0=y + 0.8 * h, x1=x + 0.3 * w,
+                                             y1=y + 0.55 * h, color="#ffd400"))
+        window.figure.shapes.append(nf.Shape(kind="text", x0=x + 0.05 * w,
+                                             y0=y + 0.92 * h, text="band",
+                                             color="#ffd400"))
+        window.canvas.select("shape", 0)
+        window.refresh()
+        shot(window, "figure_composer", (1320, 860))
 
     def export(self):
         view = self.cut.view

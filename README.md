@@ -982,13 +982,20 @@ the scale applied to B and the settings in its processing history.
 
 ## Figures and export
 
-The **figure composer** lays panels out for a paper: shared colour scales,
-labels only on the outer edges, and a slice-series page (a row of
-constant-energy contours, or of cuts) from one cube. It is reached from the
-list (tool panel → Advanced → **Figure composer...**), from a frozen slice's
-**Figure composer...** button, or from a map's **Slice series figure...**;
-its **Figure tools...** set sizes, fonts, ticks, colour bars and
-annotations.
+The **figure composer** is laid out like a manuscript page. With nothing
+selected it opens a blank page of empty panels (a)–(d); each panel can be
+dragged and resized on the page (snapping to the others' edges), filled
+from the main list or with a picture from a file, and given an inset -- a
+magnified region of itself (*Zoom-in inset*) or another panel drawn inside
+it. Arrows, lines, boxes, ellipses and text are drawn straight on the page
+with the tools on its left, and edited (colour, width, fill, text) when
+selected; Undo/Redo covers it all. The figure tools beside the page set
+the selected panel's axes, fonts, colours and the export; shared colour
+scales, labels only on the outer edges and a slice-series page (a row of
+constant-energy contours, or of cuts) from one cube work as before. It is
+reached from the list (tool panel → Advanced → **Figure composer...**),
+from a frozen slice's **Figure composer...** button, or from a map's
+**Slice series figure...**. Empty slots are never written to a file.
 
 Export gives what the panel actually shows, in the formats that make sense
 for it -- image, data, or both.

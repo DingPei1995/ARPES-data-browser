@@ -650,7 +650,11 @@ def plot_selected_as_figure():
 
     keys = selected_keys()
     if not keys:
-        return None
+        # A blank page of empty panels, (a) to (d), to fill one by one.
+        window = figure_window([])
+        ui.statusbar.showMessage("A blank figure: select a panel and load "
+                                 "a dataset or a picture into it")
+        return window
     panels, problems = [], []
     QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
     try:

@@ -324,7 +324,9 @@ LIST_OPERATIONS = (
 #: action names are list_actions' and ARPES_viewer.run_list_action()'s.
 TOOLS = {
     "figure": ("Figure composer...",
-             "One panel per selected dataset, in the figure composer."),
+             "A figure laid out like a manuscript page: one panel per "
+             "selected dataset, or, with nothing selected, a blank page of "
+             "empty panels to fill from the list or with pictures."),
     "fermi": ("Fermi edge fit...",
              "Fit the Fermi edge: E_F and the resolution, then offset the "
              "energy axis to E - E_F. A cut opens with its viewer; a map "
