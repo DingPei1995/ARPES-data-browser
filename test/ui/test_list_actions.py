@@ -73,3 +73,8 @@ def test_the_mdc_fit_wants_a_cut_in_momentum():
     enabled, reason = availability("mdcfit", [("c", "Cut", False)])
     assert not enabled and "EDC fit" in reason
     assert ok("edcfit", ("c", "Cut", False)) and not ok("edcfit", MAP)
+
+
+def test_degrid_wants_data_still_on_the_detector_pixels():
+    assert ok("degrid", CUT) and ok("degrid", MAP) and ok("degrid", KZ)
+    assert not ok("degrid", KMAP) and not ok("degrid", CUT, CUT)

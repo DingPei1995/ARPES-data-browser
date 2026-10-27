@@ -10,10 +10,8 @@ difference, a ratio and an asymmetry under a name that promised only a
 look; two implementations of the same arithmetic would sooner or later have
 disagreed about a scale factor.
 
-It is reached two ways and is the same window either way: the
-**Cut arithmetic...** button in a cut's own viewer (that cut is A,
-and the next cut clicked in the main list is B), or the main list's
-right-click menu with two cuts selected.
+It is reached from the launcher's tool panel, **Cut arithmetic (two
+cuts)...**, with the two cuts selected in the main list: the first is A.
 
 The arithmetic is :mod:`tools.processing.cutops`, which imports no Qt; this file shows
 A and B on a common scale, the result on a scale centred on zero where the
@@ -260,8 +258,11 @@ class CutArithmeticDialog(QDialog):
             "A region above E_F, or a band known not to be dichroic, makes a "
             "better reference than the whole cut.")
         self.from_box.clicked.connect(self._region_from_viewer)
-        self.from_box.setEnabled(self.region_source is not None)
         middle.addRow("", self.from_box)
+        # Only when a caller hands over a viewer's selection box; from the
+        # launcher there is none, and a button that can never be pressed
+        # would only puzzle.
+        self.from_box.setVisible(self.region_source is not None)
         columns.addLayout(middle, stretch=1)
 
         right = QFormLayout()

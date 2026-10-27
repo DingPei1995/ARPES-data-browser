@@ -195,3 +195,33 @@ def test_each_filter_opens_alone(launcher, operation, title):
         dialog.refresh()
         assert "<span style='color:#b00'>" not in dialog.note.text()
     dialog.close()
+
+
+def test_degrid_is_a_tool_for_cuts_and_angle_maps(launcher):
+    lv = launcher
+    _select(lv, "c")
+    assert lv.ui.ToolButtons["degrid"].isEnabled()
+    lv.ui.ToolButtons["degrid"].click()
+    dialog = lv.degrid_dialog
+    assert dialog.windowTitle().startswith("De-grid") and not dialog.is_map
+    dialog.close()
+    _select(lv, "m")
+    lv.ui.ToolButtons["degrid"].click()
+    assert lv.degrid_dialog.is_map
+    lv.degrid_dialog.close()
+    _select(lv, "c", "m")
+    assert not lv.ui.ToolButtons["degrid"].isEnabled()
+
+
+def test_degrid_says_why_not_for_a_map_in_momentum(app, monkeypatch):
+    from PyQt5.QtWidgets import QMessageBox
+    from ui.panels.degrid import open_degrid
+    said = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda parent, title, text, *a: said.append(text)))
+    kmap = MemoryData("k_map", (DEFL, SLIT, EKIN),
+                      np.ones((DEFL.size, SLIT.size, EKIN.size)),
+                      {"x": "kx (Å⁻¹)", "k": "ky (Å⁻¹)", "z": "E (eV)"},
+                      source_label="k")
+    assert open_degrid(None, kmap, "k") is None
+    assert said and "momentum" in said[0]

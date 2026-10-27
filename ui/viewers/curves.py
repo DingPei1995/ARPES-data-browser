@@ -228,10 +228,7 @@ class CurveWindow(FunctionsMenuMixin, QMainWindow):
                 "Opens the Operations strip under the plot on this operation: "
                 "set it up there and press Apply. Each makes a new dataset in "
                 "the list.")
-        self.figure_action = self.add_function(
-            "Figure composer...", self.to_figure,
-            "The channels shown, as a figure to adjust and export.",
-            section="Visualization")
+        # The figure composer is the launcher tool panel's.
         bar.addWidget(self.make_functions_button())
         from ui.viewers.plot_tools import plot_tools_button
         self.plot_tools_button = plot_tools_button(self)

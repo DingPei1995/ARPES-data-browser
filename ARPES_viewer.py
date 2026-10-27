@@ -595,6 +595,7 @@ def run_list_action(name):
         "curvature": lambda: open_processing("curvature"),
         "symmetry": lambda: open_processing("symmetry"),
         "background": lambda: open_processing("background"),
+        "degrid": open_degrid,
         "save": save_selected,
         "log": show_operations_log,
         "remove": remove_selected,
@@ -1158,11 +1159,9 @@ def _adopt_viewer(window, key=None):
     # correction fits a gold reference, which is a different measurement.
     window._dataset_entries = listed_datasets
     window._dataset_loader = load_dataset
-    # So a cut viewer can say "now click the other cut in the list" -- and
-    # recognise its own row when it is clicked. The row, not the object: a
-    # cut read from a file is re-read on every load, so the same row hands
-    # back a different object each time.
-    window._await_selection = await_list_selection
+    # The row it came from -- the row, not the object: a cut read from a
+    # file is re-read on every load, so the same row hands back a different
+    # object each time.
     window._list_key = key
     if hasattr(window, "kMapCreated"):
         window.kMapCreated.connect(
@@ -1439,6 +1438,40 @@ def open_processing(start=None):
     return dialog
 
 
+def open_degrid():
+    """The De-grid window for the selected cut, map or kz map (see
+    ui.panels.degrid). A cut can take its grid from a ``[grid]`` pattern in
+    the list. The window keeps the dataset until it is closed."""
+    from ui.panels.degrid import open_degrid as degrid_window
+
+    key = selected_key()
+    if key is None:
+        return None
+    try:
+        data = load_dataset(key)
+    except Exception as exc:                                # noqa: BLE001
+        QMessageBox.warning(win, "De-grid", str(exc))
+        return None
+    dialog = degrid_window(win, data, label_for(key), entries=listed_datasets,
+                           loader=load_dataset, existing_names=listed_names,
+                           colormap=default_colormap, flip=default_flip)
+    release = release_once(data)
+    if dialog is None:
+        release()
+        return None
+    dialog.datasetsCreated.connect(_list_computed)
+    dialog.finished.connect(release)
+    dialog.show()
+    dialog.raise_()
+    global degrid_dialog
+    degrid_dialog = dialog
+    return dialog
+
+
+#: the De-grid window opened from the tool panel, kept alive
+degrid_dialog = None
+
+
 def open_stack_plot():
     """A waterfall of EDCs or MDCs across the selected dataset."""
     from ui.panels.process import StackWindow
@@ -1602,9 +1635,8 @@ def open_volume_view(mode: str = "slices"):
 def open_cut_arithmetic():
     """Two cuts from the list, combined: dichroism, ratios, differences.
 
-    The same window a cut viewer opens from its own "Cut arithmetic..."
-    button (see :mod:`ui.panels.cutops`); this is the route for when both cuts are
-    already picked in the list.
+    The tool panel's Cut arithmetic (see :mod:`ui.panels.cutops`): the two
+    cuts selected in the list, the first as A.
     """
     from ui.panels.cutops import CutArithmeticDialog
 
@@ -1758,65 +1790,6 @@ def combine_selected(ask=None, dialog_hook=None):
 
 #: The old name, from when only cuts could be combined.
 combine_selected_cuts = combine_selected
-
-
-def await_list_selection(on_chosen, *, kind: str = "cut", exclude=None,
-                         exclude_key=None, on_rejected=None):
-    """Call ``on_chosen(label, data)`` with the next dataset clicked in the
-    list that is a ``kind``.
-
-    How a viewer asks for "another" dataset without opening a picker of its
-    own: the list is where the datasets are, so that is where the choice is
-    made. Clicks on the wrong kind, or on ``exclude`` itself, are reported
-    through ``on_rejected(message)`` and the wait goes on. ``exclude`` is
-    matched by identity and ``exclude_key`` by list row; a viewer passes
-    both, since a cut read from a file is a new object on every load. The kind is
-    checked from the list's own record *before* anything is loaded, so a
-    stray click on a sixty-spectrum map costs nothing.
-
-    Returns a function that cancels the wait.
-    """
-    widget = ui.FilePathListWidget
-
-    def changed():
-        key = selected_key()
-        record = loaded_items.get(key) if key is not None else None
-        if record is None:
-            return
-        label = label_for(key)
-        if exclude_key is not None and key == exclude_key:
-            if on_rejected:
-                on_rejected("That is the cut this was opened from. Pick "
-                            "another one.")
-            return
-        if str(record.get("kind", "")).lower() != kind:
-            if on_rejected:
-                on_rejected(f"\u201c{label}\u201d is a {record.get('kind')}, "
-                            f"not a {kind}. Pick a {kind}.")
-            return
-        try:
-            data = load_dataset(key)
-        except Exception as exc:                            # noqa: BLE001
-            if on_rejected:
-                on_rejected(f"\u201c{label}\u201d could not be read: {exc}")
-            return
-        if exclude is not None and data is exclude:
-            data.close()                    # our reference, not the viewer's
-            if on_rejected:
-                on_rejected("That is the cut this was opened from. Pick "
-                            "another one.")
-            return
-        cancel()
-        on_chosen(label, data)
-
-    def cancel():
-        try:
-            widget.itemSelectionChanged.disconnect(changed)
-        except TypeError:
-            pass                    # already disconnected
-
-    widget.itemSelectionChanged.connect(changed)
-    return cancel
 
 
 def release_once(*datasets):

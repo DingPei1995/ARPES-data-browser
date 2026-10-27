@@ -313,6 +313,12 @@ TOOL_GROUPS = (
         ("symmetry", "Symmetrise...",
          "Mirror a cut about a line; for a map, mirror or rotate its "
          "constant-energy planes."),
+        ("degrid", "Remove detector grid...",
+         "Remove the detector's grid pattern. From a whole map (or kz map), "
+         "using the map itself as the reference -- do this first, before a "
+         "k conversion or Fermi-surface correction. From a cut, with a grid "
+         "found on a map with the same settings if one is in the list, by "
+         "notching the cut's own grid peaks otherwise."),
     )),
     ("2D only \u2014 cuts", (
         ("background", "Background subtraction...",

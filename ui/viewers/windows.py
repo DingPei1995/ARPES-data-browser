@@ -685,6 +685,22 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
             if index < len(names):
                 view.export_title = names[index]
 
+    def _show_degrid(self, dialog):
+        """Show a De-grid window made for this viewer, or raise the one it
+        already has; its results go to the list."""
+        existing = getattr(self, "_degrid_dialog", None)
+        if dialog is None:
+            return None
+        if existing is not None and existing.isVisible():
+            dialog.deleteLater()
+            existing.raise_()
+            return existing
+        dialog.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        self._degrid_dialog = dialog
+        dialog.show()
+        return dialog
+
     def existing_names(self):
         """Names already in the launcher's list, so anything computed here
         can be given one that is free. Empty when no launcher is
@@ -1055,43 +1071,6 @@ class SpatialScanWindow(ViewerWindow):
 # --------------------------------------------------------------------------
 # Single cut
 # --------------------------------------------------------------------------
-class _PickOtherCutPrompt(QDialog):
-    """"Now click the other cut in the main list" -- and nothing else.
-
-    Non-modal on purpose: the whole point is that the user goes and clicks
-    in another window. It stays up, says what went wrong if the click was on
-    a map or on this cut itself, and closes itself once a cut is chosen.
-    Cancel (or closing it) stops the waiting.
-    """
-
-    def __init__(self, parent, name: str):
-        super().__init__(parent)
-        self.setWindowTitle("Cut arithmetic: choose B")
-        self.setModal(False)
-        layout = QVBoxLayout(self)
-        intro = QLabel(
-            f"<b>A</b> is \u201c{name}\u201d.<br><br>"
-            "Now click the other cut -- <b>B</b> -- in the main panel's list. "
-            "The arithmetic window opens as soon as you do; A and B can be "
-            "swapped there.")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-        self.message = QLabel("")
-        self.message.setWordWrap(True)
-        self.message.setStyleSheet("QLabel { color: #8a4b00; }")
-        layout.addWidget(self.message)
-        buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self.resize(380, 170)
-
-    def say(self, text: str):
-        self.message.setText(text)
-
-    def done_waiting(self):
-        self.accept()
-
-
 class CutWindow(ViewerWindow):
     """One E-vs-k spectrum (a scan taken at a single deflector position)."""
 
@@ -1107,29 +1086,9 @@ class CutWindow(ViewerWindow):
             "Fit the Fermi edge of this cut: E_F, the resolution, and -- in its "
             "Advanced corner -- dividing the cut-off out and fitting E_F channel "
             "by channel.", section="Analysis")
-        self.fit_action = self.add_function(
-            "MDC fit (k-cut only)...", lambda: self.open_mdc_edc_fit("mdc"),
-            "Fit the MDCs line by line and read the band off the fitted "
-            "centres: Fermi velocity, effective mass, self-energy.",
-            section="Analysis")
-        self.edc_fit_action = self.add_function(
-            "EDC fit...", lambda: self.open_mdc_edc_fit("edc"),
-            "Fit the EDCs line by line, optionally with the Fermi cut-off in "
-            "the model. Any cut; v_F and m* need a cut in momentum.",
-            section="Analysis")
-        # The MDC fit deliberately only for converted cuts. A band fitted in
-        # degrees has a slope in eV/degree, and every quantity built on it
-        # -- v_F, m*, the self-energy -- would silently be in the wrong
-        # units. The entry says why rather than disappearing, so the route
-        # to it is obvious.
-        from ui.panels.fit import momentum_cut_reason
-        reason = momentum_cut_reason(data)
-        if reason:
-            self.fit_action.setEnabled(False)
-            # Only the first sentence: the rest of the explanation is the
-            # message box's job, and a three-paragraph tooltip is unreadable.
-            self.fit_action.setToolTip(
-                f"Not available here: {reason.split(chr(10))[0]}")
+        # The MDC and EDC fits, cut arithmetic and de-gridding are buttons
+        # of the launcher's tool panel, so they are not repeated here: one
+        # way in for each, always in sight.
         self.fs_action = self.add_function(
             "Straighten bands (FS correction)...", self.open_fs_correction,
             "Straighten a curved feature: click along it, fit a polynomial, and "
@@ -1143,17 +1102,6 @@ class CutWindow(ViewerWindow):
         if blocked:
             self.kconv_action.setEnabled(False)
             self.kconv_action.setToolTip(f"Not available here: {blocked}.")
-        self.arith_action = self.add_function(
-            "Cut arithmetic...", lambda: self.open_cut_arithmetic(),
-            "Combine this cut (A) with another (B): linear or circular "
-            "dichroism, dividing by a reference, A \u2212 B, A / B, "
-            "(A \u2212 B)/(A + B). After choosing it, click the other cut in "
-            "the main list.")
-        self.degrid_action = self.add_function(
-            "Remove detector grid...", self.open_degrid,
-            "Remove the detector's grid from this cut -- with a grid found on "
-            "a map taken with the same settings if one is in the list, by "
-            "notching the cut's own grid peaks otherwise.")
         self.build_toolbar()
 
         self.view = FrameImageView()
@@ -1306,102 +1254,16 @@ class CutWindow(ViewerWindow):
 
     # -- the detector grid ----------------------------------------------------
     def open_degrid(self):
-        """The De-grid window for this cut (see :mod:`ui.panels.degrid`)."""
-        from tools.processing.degrid import not_pixel_locked
-        from ui.panels.degrid import DegridDialog, grid_candidates
-
-        reason = not_pixel_locked(self.data.scan.info)
-        if reason:
-            QMessageBox.information(
-                self, "De-grid",
-                f"This cut cannot be de-gridded: {reason}. The grid is only "
-                f"where the detector put it in data as measured -- de-grid "
-                f"the original, then do the rest.")
-            return None
-        existing = getattr(self, "_degrid_dialog", None)
-        if existing is not None and existing.isVisible():
-            existing.raise_()
-            return existing
-        candidates = grid_candidates(getattr(self, "_dataset_entries", None),
-                                     getattr(self, "_dataset_loader", None),
-                                     np.shape(self.data.cut_frame),
-                                     self.data.scan.info)
-        dialog = DegridDialog(self, self.data, self.filename,
-                              candidates=candidates, colormap=self.colormap,
-                              flip=self.flip, existing_names=self.existing_names)
-        dialog.datasetsCreated.connect(
-            lambda made: [self.datasetCreated.emit(one) for one in made])
-        self._degrid_dialog = dialog
-        dialog.show()
-        return dialog
-
-    # -- combining with another cut -----------------------------------------
-    def open_cut_arithmetic(self, other=None):
-        """This cut as A, and another as B, in the cut arithmetic window.
-
-        ``other`` is ``(name, data)`` to skip the asking (and how a test
-        drives it). Otherwise the main list is where B is chosen: a small
-        prompt says so, stays out of the way, and the window opens on the
-        next cut clicked there. The list is where the datasets are, so it
-        is where the choice belongs -- a second picker listing the same
-        rows would be the same list, worse.
-        """
-        if other is not None:
-            return self._open_arithmetic_with(*other)
-
-        existing = getattr(self, "_arith_prompt", None)
-        if existing is not None:
-            existing.raise_()
-            existing.activateWindow()
-            return existing
-        await_selection = getattr(self, "_await_selection", None)
-        if await_selection is None:
-            QMessageBox.information(
-                self, "Cut arithmetic",
-                "This viewer was not opened from the main panel, so there is "
-                "no list to choose the other cut from. Open the cut from the "
-                "main panel's list, or select both cuts there and use "
-                "\u201cCut arithmetic on the two...\u201d.")
-            return None
-
-        prompt = _PickOtherCutPrompt(self, self.filename)
-        self._arith_prompt = prompt
-
-        def chosen(name, data):
-            prompt.done_waiting()
-            self._open_arithmetic_with(name, data)
-
-        cancel = await_selection(chosen, kind="cut", exclude=self.data,
-                                 exclude_key=getattr(self, "_list_key", None),
-                                 on_rejected=prompt.say)
-        prompt.finished.connect(lambda *_: (cancel(),
-                                            setattr(self, "_arith_prompt", None)))
-        self.closed.connect(lambda *_: prompt.close())
-        prompt.show()
-        return prompt
-
-    def _open_arithmetic_with(self, name, data):
-        from ui.panels.cutops import CutArithmeticDialog
-
-        try:
-            dialog = CutArithmeticDialog(
-                (self.filename, self.data), (name, data), self,
-                self.colormap, self.flip,
-                region_source=self.view.selection_corners,
-                existing_names=self.existing_names)
-        except ValueError as exc:
-            data.close()        # the reference the list handed over
-            QMessageBox.information(self, "Cut arithmetic", str(exc))
-            return None
-        dialog.datasetsCreated.connect(
-            lambda made: [self.datasetCreated.emit(one) for one in made])
-        # The other cut was loaded for this dialog; its reference goes back
-        # when the dialog does (this cut's belongs to the viewer).
-        released = []
-        dialog.finished.connect(lambda *_: released or (released.append(1), data.close()))
-        dialog.show()
-        self._arith_dialog = dialog
-        return dialog
+        """The De-grid window for this cut (see :mod:`ui.panels.degrid`).
+        Not in this window's menu -- it is the tool panel's -- but kept for
+        scripts and tests."""
+        from ui.panels.degrid import open_degrid
+        return self._show_degrid(open_degrid(
+            self, self.data, self.filename,
+            entries=getattr(self, "_dataset_entries", None),
+            loader=getattr(self, "_dataset_loader", None),
+            existing_names=self.existing_names, colormap=self.colormap,
+            flip=self.flip))
 
     def fs_correction_target(self):
         """The cut itself: (angle, energy), corrected into a new cut."""
@@ -3567,15 +3429,7 @@ class ContourWindow(ViewerWindow):
             "analyser angle becomes a bend in k_z that looks like "
             "dispersion.",
             visible=data.kind == "kz_map")
-        # Only while the data are still on the detector's pixels; a map in
-        # momentum has been resampled and has no pattern left to find.
-        self.degrid_action = self.add_function(
-            "Remove detector grid...", self.open_degrid,
-            "Remove the detector's grid from the whole map, using the map "
-            "itself as the reference: the grid stays on the same pixels while "
-            "the photoemission moves. Do this first -- before the k or kz "
-            "conversion, a Fermi-surface correction or kz map processing.",
-            visible=data.kind in ("map", "kz_map"))
+        # De-gridding is the launcher tool panel's (Remove detector grid...).
         # A Brillouin zone is a statement about momentum-space periodicity,
         # so it only means something once the axes are actually k, not angle
         # -- the mirror image of the k conversion's own gating above.
@@ -3720,32 +3574,13 @@ class ContourWindow(ViewerWindow):
         return dialog
 
     def open_degrid(self):
-        """De-grid the whole map (see :mod:`ui.panels.degrid`)."""
-        from tools.processing.degrid import not_pixel_locked
-        from ui.panels.degrid import DegridDialog
-
-        reason = not_pixel_locked(self.data.scan.info)
-        if self.data.kind not in ("map", "kz_map"):
-            reason = reason or "it is in momentum, resampled off the detector's pixels"
-        if reason:
-            QMessageBox.information(
-                self, "De-grid",
-                f"This map cannot be de-gridded: {reason}. The grid is only "
-                f"where the detector put it in data as measured -- de-grid "
-                f"the original map, then do the rest.")
-            return None
-        existing = getattr(self, "_degrid_dialog", None)
-        if existing is not None and existing.isVisible():
-            existing.raise_()
-            return existing
-        dialog = DegridDialog(self, self.data, self.filename,
-                              colormap=self.colormap, flip=self.flip,
-                              existing_names=self.existing_names)
-        dialog.datasetsCreated.connect(
-            lambda made: [self.datasetCreated.emit(one) for one in made])
-        self._degrid_dialog = dialog
-        dialog.show()
-        return dialog
+        """De-grid the whole map (see :mod:`ui.panels.degrid`). Not in this
+        window's menu -- it is the tool panel's -- but kept for scripts and
+        tests."""
+        from ui.panels.degrid import open_degrid
+        return self._show_degrid(open_degrid(
+            self, self.data, self.filename, existing_names=self.existing_names,
+            colormap=self.colormap, flip=self.flip))
 
     def _cut_closed(self, which: str):
         """A cut window went. A contour that was never put on screen -- made
@@ -4194,11 +4029,6 @@ class MapCutWindow(ViewerWindow):
                 "Straighten bands (FS correction)...", self.open_fs_correction,
                 "Straighten a curved feature along the slit and apply the same "
                 "shift to the whole cube, giving a corrected map in the file list.")
-            self.degrid_action = self.add_function(
-                "Remove detector grid...", lambda: self.contour.open_degrid(),
-                "Remove the detector's grid from the whole map this cut belongs "
-                "to -- every slit cut of it at once.",
-                visible=contour.data.kind in ("map", "kz_map"))
         # A cut can be opened straight from the main list, with its contour
         # kept off screen; this brings the contour up.
         self.show_map_action = self.add_function(

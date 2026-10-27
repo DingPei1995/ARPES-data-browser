@@ -31,7 +31,7 @@ import pyqtgraph as pg
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QDoubleSpinBox, QFormLayout, QGridLayout,
-                             QGroupBox, QHBoxLayout, QLabel,
+                             QGroupBox, QHBoxLayout, QLabel, QMessageBox,
                              QPushButton, QSpinBox, QVBoxLayout, QWidget)
 from scipy.ndimage import gaussian_filter
 
@@ -132,6 +132,37 @@ def second_derivative(image, sigma=1.5):
     """−∂²I/∂E², energy along the second axis."""
     smooth = gaussian_filter(np.asarray(image, dtype=float), sigma)
     return -np.gradient(np.gradient(smooth, axis=1), axis=1)
+
+
+def open_degrid(parent, data, name, *, entries=None, loader=None,
+                existing_names=None, colormap="gray", flip=False):
+    """The De-grid window for ``data`` (a cut, or an angle map or kz map),
+    or None after saying why it cannot be de-gridded.
+
+    One way in for the launcher's tool panel and for scripts. ``entries``
+    and ``loader`` are the list's (``() -> [(label, key)]``, ``key ->
+    data``): a cut can then use a ``[grid]`` pattern listed there.
+    """
+    from tools.processing.degrid import not_pixel_locked
+
+    reason = not_pixel_locked(data.scan.info)
+    if data.kind not in ("cut", "map", "kz_map"):
+        reason = reason or "it is in momentum, resampled off the detector's pixels"
+    if reason:
+        what = "cut" if data.kind == "cut" else "map"
+        QMessageBox.information(
+            parent, "De-grid",
+            f"This {what} cannot be de-gridded: {reason}. The grid is only "
+            f"where the detector put it in data as measured -- de-grid the "
+            f"original {what}, then do the rest.")
+        return None
+    candidates = ()
+    if data.kind == "cut":
+        candidates = grid_candidates(entries, loader, np.shape(data.cut_frame),
+                                     data.scan.info)
+    return DegridDialog(parent, data, name, candidates=candidates,
+                        colormap=colormap, flip=flip,
+                        existing_names=existing_names)
 
 
 class DegridDialog(QDialog):

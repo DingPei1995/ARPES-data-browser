@@ -61,6 +61,10 @@ RULES = {
     "curvature": ("any", PLANES, "cuts or maps"),
     "symmetry": ("any", PLANES, "cuts or maps"),
     "background": ("any", frozenset({"cut"}), "cuts"),
+    # Only on the detector's own pixels: a map in momentum has been
+    # resampled, and the grid is no longer anywhere fixed to find.
+    "degrid": ("one", frozenset({"cut", "map", "kz_map"}),
+               "a cut, or a map or kz map before its k conversion"),
     "save": ("any", None, "datasets"),
     "remove": ("any", "all", "datasets"),
     "log": ("none", "all", ""),

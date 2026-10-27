@@ -73,10 +73,14 @@ def test_map_keeps_only_its_cut_buttons(app):
     window = W.ContourWindow(_map(), "m", "gray", False)
     assert _toolbar_buttons(window) == ["Scan-axis cut", "Slit cut", "Plot tools"]
     texts = _visible_texts(window)
-    for expected in ("Arbitrary cut...", "Convert to momentum (k)...", "Remove detector grid...",
+    for expected in ("Arbitrary cut...", "Convert to momentum (k)...",
                      "Multi-slice figure...", "Save slice to the main list",
                      "Freeze slice in a new window"):
         assert expected in texts
+    # the tool panel's, so not repeated here
+    assert "Remove detector grid..." not in texts
+    slit = window.open_cut("slit")
+    assert "Remove detector grid..." not in _visible_texts(slit)
     assert "Brillouin zone..." not in texts          # angle map: not offered
     assert "Align Fermi levels (kz map)..." not in texts
     window.close()
@@ -95,14 +99,13 @@ def test_cut_viewer_keeps_no_tool_buttons(app):
     window = W.CutWindow(_cut(), "c", "gray", False)
     assert _toolbar_buttons(window) == ["Plot tools"]
     texts = _visible_texts(window)
-    for expected in ("Fermi edge fit...", "MDC fit (k-cut only)...", "EDC fit...",
-                     "Straighten bands (FS correction)...",
-                     "Convert to momentum (k)...", "Cut arithmetic...", "Remove detector grid..."):
+    for expected in ("Fermi edge fit...", "Straighten bands (FS correction)...",
+                     "Convert to momentum (k)..."):
         assert expected in texts
-    # an angle cut cannot be band-fitted: the entry says why instead of vanishing
-    assert not window.fit_action.isEnabled()
-    assert window.fit_action.toolTip().startswith("Not available here")
-    assert window.edc_fit_action.isEnabled()          # an EDC fit takes any cut
+    # Tools of the launcher's tool panel are not repeated in a viewer.
+    for gone in ("MDC fit (k-cut only)...", "EDC fit...", "Cut arithmetic...",
+                 "Remove detector grid..."):
+        assert gone not in texts
     window.close()
 
 
@@ -116,7 +119,6 @@ def test_menu_sections_and_hidden_entries(app):
     assert shown.index("Slice") > shown.index("Visualization")
     k_map = W.ContourWindow(_map("k_map"), "k", "gray", False)
     assert "Brillouin zone..." in _visible_texts(k_map)
-    assert "Remove detector grid..." not in _visible_texts(k_map)
     window.close()
     k_map.close()
 
@@ -302,13 +304,14 @@ def test_curve_viewer_has_a_functions_menu(app):
                    if b.isVisibleTo(window)]
     assert "Curve fit..." not in bar_buttons and "Figure composer..." not in bar_buttons
     texts = _visible_texts(window)
-    for expected in ("Curve fit...", "Figure composer...", "Bin...", "Normalise...",
+    for expected in ("Curve fit...", "Bin...", "Normalise...",
                      "Crop to the range...", "Add counting errors (√N)"):
         assert expected in texts
+    assert "Figure composer..." not in texts             # the tool panel's
     assert "Spin analysis..." not in texts               # not a spin EDC
     window._rebuild_functions_menu()
     shown = [a.text() for a in window.functions_menu.actions()]
-    assert shown.index("Analysis") < shown.index("Transform") < shown.index("Visualization")
+    assert shown.index("Analysis") < shown.index("Transform")
     window.close()
 
 

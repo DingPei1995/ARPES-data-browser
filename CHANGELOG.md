@@ -10,10 +10,32 @@ file is the record of how it got that way.
 
 ---
 
-## Unreleased
+## 1.1.0 — 2026-10-27
 
-- **Fixed: Save the view and To figure composer failed when clicked** (1.0.9,
-  the 3-D views). A button's `clicked` signal passes its `checked` flag --
+A large rework of where things are: every tool is a button in sight, one
+window per tool. (The version number stays 1.1.0; later changes are added
+here.)
+
+- **Remove detector grid is a tool-panel button** (*2D & 3D*), for the
+  selected cut, map or kz map -- no longer in the viewers' Functions menus.
+  A cut still takes its grid from a `[grid]` pattern in the list when one
+  matches; a map in momentum is greyed out, since it has been resampled off
+  the detector's pixels (`degrid.open_degrid` is the one way in).
+- **A viewer's Functions menu no longer repeats a tool-panel tool.** Gone
+  from the cut viewer: MDC fit, EDC fit, Cut arithmetic, Remove detector
+  grid; from a map's contour and slit-cut windows: Remove detector grid;
+  from the curve viewer: Figure composer. What stays is what only the
+  viewer can do -- the Fermi edge fit, k conversions, the FS correction,
+  arbitrary cuts, the Brillouin zone, the multi-slice figure, saving or
+  freezing the slice on screen, and the curve viewer's own operations
+  (the tool panel's crop / bin / normalise do not take curves).
+  - Cut arithmetic is opened with both cuts selected in the list. The cut
+    viewer's way -- "now click the other cut in the list" -- went with its
+    menu entry (`_PickOtherCutPrompt`, `await_list_selection`), and with it
+    the arithmetic window's *Take the box from A's viewer* button (now
+    hidden, there being no viewer); the region is typed instead.
+- **Fixed: Save the view and To figure composer failed when clicked** (the
+  3-D views). A button's `clicked` signal passes its `checked` flag --
   False -- to the slot, and both methods took it as their optional argument
   (the file to write, the composer to add to). They are connected through a
   lambda now. The same mistake, older, is fixed in three more places:
@@ -23,8 +45,6 @@ file is the record of how it got that way.
   - `test_imports` now fails on any button connected straight to a method
     whose first argument is optional, and the 3-D view's test clicks the
     real buttons rather than calling the methods.
-
-## 1.0.9 — 2026-10-27
 
 - **MDC fit and EDC fit are two tools.** "MDC / EDC fit" was one window
   with a direction switch, and open only for a cut in momentum, though an
