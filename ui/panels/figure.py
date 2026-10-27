@@ -203,6 +203,9 @@ class FigurePainter:
         box = QRectF(rect["x"] * scale, rect["y"] * scale,
                      rect["w"] * scale, rect["h"] * scale)
 
+        if panel.data.kind == "scene3d":
+            self._paint_scene_panel(painter, panel, box, scale, levels)
+            return
         self._draw_image(painter, panel, box, (x0, x1), (y0, y1), levels, scale)
         painter.setClipRect(box)
         self._draw_overlays(painter, panel, box, (x0, x1), (y0, y1), scale)
@@ -216,6 +219,39 @@ class FigurePainter:
             self._draw_scale_bar(painter, panel, box, scale, (x0, x1))
         if panel.colorbar:
             self._draw_colorbar(painter, panel, rect, box, scale, levels)
+        self._draw_panel_label(painter, panel, box, scale)
+
+    def _paint_scene_panel(self, painter, panel, box, scale, levels):
+        """A 3-D view (ui.panels.volume) as a panel: drawn by the same code
+        as on screen, with this figure's font, sizes and line width, so its
+        axes are labelled like every other panel's. No frame -- the axes are
+        in the picture -- but notes, arrows, a colour bar, the title and the
+        panel letter as usual."""
+        from ui.panels.volume import paint_scene
+
+        style = self.figure.style
+        tick_pt = style.tick_pt or style.font_pt
+        label_pt = style.label_pt or style.font_pt
+        painter.save()
+        painter.setClipRect(box)
+        paint_scene(panel.data.scene, painter, box,
+                    font=self._font(tick_pt, scale),
+                    title_font=self._font(label_pt, scale),
+                    line_px=max(pt_to_mm(style.axis_width_pt) * scale, 0.5),
+                    tick_px=style.tick_len_mm * scale,
+                    color=QColor(style.axis_color))
+        painter.restore()
+        ranges = ((0.0, 1.0), (0.0, 1.0))
+        painter.setClipRect(box)
+        self._draw_overlays(painter, panel, box, *ranges, scale)
+        painter.setClipping(False)
+        if panel.title:
+            metrics = QFontMetricsF(self._font(label_pt, scale))
+            self._draw_markup(painter, box.center().x(),
+                              box.top() - metrics.descent(), panel.title,
+                              label_pt, scale, style.axis_color, anchor="center")
+        if panel.colorbar:
+            self._draw_colorbar(painter, panel, None, box, scale, levels)
         self._draw_panel_label(painter, panel, box, scale)
 
     #: no raster wider or taller than this, whatever the dpi asks for
@@ -2271,19 +2307,9 @@ class FigureWindow(QMainWindow):
 
     def write(self, path: str, fmt: str):
         """Write the figure. Returns every file written."""
-        if fmt == "pdf":
-            return [self.painter.to_pdf(path)]
-        if fmt == "svg":
-            return [self.painter.to_svg(path)]
-        if fmt in ("png", "tif"):
-            image = self.painter.to_image()
-            export.write_image(path, _qimage_array(image),
-                                   pil_format="PNG" if fmt == "png" else "TIFF",
-                                   keep_alpha=True, dpi=self.figure.style.dpi)
-            return [path]
         if fmt == "layers":
             return self._write_layers(path)
-        raise ValueError(f"unknown format {fmt!r}")
+        return write_figure(self.painter, path, fmt)
 
     def _write_layers(self, path: str):
         """The two-file route: the data as a raster and the axes as vector
@@ -2292,6 +2318,9 @@ class FigureWindow(QMainWindow):
         One panel only -- a page of panels is what the PDF is for.
         """
         panel = self.figure.panels[self.canvas.selected]
+        if panel.data.kind == "scene3d":
+            raise ValueError("a 3-D view has no separate data layer and axes; "
+                             "save it as PDF, SVG or PNG")
         (x0, x1), (y0, y1) = self.figure.panel_ranges(panel)
         _w, _h, rects = self.figure.layout()
         rect = rects[self.canvas.selected]
@@ -2323,6 +2352,30 @@ class FigureWindow(QMainWindow):
             self._tools.close()
         self.closed.emit(self)
         super().closeEvent(event)
+
+
+def write_figure(painter: FigurePainter, path: str, fmt: str):
+    """Write the figure ``painter`` draws as PDF, SVG, PNG or TIFF -- the
+    composer's own export, for a window that saves a figure without
+    opening one (a 3-D view's "Save the view..."). Returns the files."""
+    if fmt == "pdf":
+        return [painter.to_pdf(path)]
+    if fmt == "svg":
+        return [painter.to_svg(path)]
+    if fmt in ("png", "tif"):
+        image = painter.to_image()
+        export.write_image(path, _qimage_array(image),
+                           pil_format="PNG" if fmt == "png" else "TIFF",
+                           keep_alpha=True, dpi=painter.figure.style.dpi)
+        return [path]
+    raise ValueError(f"unknown format {fmt!r}")
+
+
+def open_figure_windows():
+    """The figure composers open now, newest last -- for a window that
+    offers to add its picture to one of them."""
+    return [w for w in QApplication.topLevelWidgets()
+            if isinstance(w, FigureWindow) and w.isVisible()]
 
 
 def _qimage_array(image: QImage) -> np.ndarray:

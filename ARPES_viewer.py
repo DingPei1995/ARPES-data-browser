@@ -546,7 +546,9 @@ def run_list_action(name):
         "stack": open_stack_plot,
         "fit": open_curve_fit,
         "corelevel": open_core_level_check,
-        "view3d": open_volume_view,
+        "slices3d": lambda: open_volume_view("slices"),
+        "notch3d": lambda: open_volume_view("notch"),
+        "projection3d": lambda: open_volume_view("projection"),
         "arithmetic": open_cut_arithmetic,
         "combine": combine_selected,
         "truncate": lambda: open_data_operations("truncate"),
@@ -1511,8 +1513,17 @@ def open_core_level_check():
     return window
 
 
-def open_volume_view():
-    """The 3-D views of the selected map, over a chosen region."""
+def open_volume_view(mode: str = "slices"):
+    """A 3-D view of the selected map: ``"slices"``, ``"notch"`` or
+    ``"projection"``.
+
+    Opened straight away at the "Balanced" sampling over the whole cube --
+    the window shows the sampling and can change it, once the data is in
+    sight. The window keeps the dataset open, so it can resample from the
+    full cube; it is released when the window closes.
+    """
+    from ui.panels.volume import VolumeWindow
+
     key = selected_key()
     if key is None:
         return None
@@ -1527,40 +1538,22 @@ def open_volume_view():
             win, "3D view",
             "The 3-D views need a cube: a Map or a converted k-map.")
         return None
-    try:
-        return _open_volume_view(key, data)
-    finally:
-        data.close()          # the 3-D window is built from a resampled copy
-
-
-def _open_volume_view(key, data):
-    from ui.panels.volume import VolumeWindow, VolumeRangeDialog
-
     x, k, z, cube = data.angle_cube
     scan = data.scan
     labels = (scan.labels.get("x", "x"), scan.labels.get("k", "y"),
               scan.labels.get("z", "z"))
-
-    # Ask what to show before anything is resampled. The 3-D views rebuild
-    # from the whole array on every frame, so the window and the sampling
-    # are what decide whether they keep up with the mouse.
-    chooser = VolumeRangeDialog(np.asarray(cube, dtype=float), (x, k, z),
-                                labels, win)
-    if chooser.exec_() != chooser.Accepted:
-        return None
     QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
     try:
-        values, axes = chooser.result()
-    except Exception as exc:
-        QApplication.restoreOverrideCursor()
+        window = VolumeWindow(cube, (x, k, z), labels, label_for(key), win,
+                              default_colormap, default_flip, mode=mode)
+    except Exception as exc:                                # noqa: BLE001
+        data.close()
         QMessageBox.warning(win, "3D view", str(exc))
         return None
     finally:
         QApplication.restoreOverrideCursor()
-
-    window = VolumeWindow(values, axes, labels,
-                          label_for(key), win, default_colormap, default_flip)
     window.closed.connect(_forget_viewer)
+    window.closed.connect(release_once(data))
     window.show()
     viewer_windows.append(window)
     return window

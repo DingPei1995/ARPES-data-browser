@@ -39,7 +39,7 @@ def test_counts():
     assert ok("stack", CUT) and not ok("stack", CUT, CUT)
     assert ok("arithmetic", CUT, CUT) and not ok("arithmetic", CUT)
     assert not ok("arithmetic", CUT, SPIN)
-    assert ok("view3d", MAP) and not ok("view3d", CUT)
+    assert ok("slices3d", MAP) and not ok("notch3d", CUT)
     assert not ok("open", CUT, MAP) and ok("open", SPEM)
     assert "select one row" in availability("rename", [CUT, CUT])[1]
 

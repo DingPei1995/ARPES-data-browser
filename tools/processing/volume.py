@@ -294,6 +294,84 @@ def notched_box(values, axes, notch, *, corner=(1, 1, 1), density: int = 400,
 
 
 # ==========================================================================
+# Coordinate axes drawn into the scene
+# ==========================================================================
+def edge_ends(bounds, axis: int, edge):
+    """The two ends of one of the four box edges that run along ``axis``,
+    low end first. ``edge`` is two signs for the other two axes, in their
+    natural order: ``-1`` puts the edge at that axis's low end, ``+1`` at
+    its high end."""
+    others = [d for d in range(3) if d != axis]
+    point = np.zeros(3)
+    for d, sign in zip(others, edge):
+        point[d] = float(bounds[d][1] if sign > 0 else bounds[d][0])
+    low, high = point.copy(), point.copy()
+    low[axis], high[axis] = float(bounds[axis][0]), float(bounds[axis][1])
+    return low, high
+
+
+#: the four edges along an axis, as the signs of the other two coordinates
+EDGES = ((-1, -1), (1, -1), (-1, 1), (1, 1))
+
+
+def auto_edges(camera: Camera, bounds):
+    """For each axis, the edge of the box its axis is best drawn on: one of
+    the box's outline edges as the camera sees it (one face beside it turned
+    towards the viewer, the other away), so the axis and its labels lie
+    outside the picture rather than across it. Of the outline edges, the
+    lowest on screen for an axis that runs across the view, the leftmost
+    for one that runs up it -- where a reader looks for an axis."""
+    view = camera.basis()[2]
+    out = []
+    for axis in range(3):
+        others = [d for d in range(3) if d != axis]
+
+        def facing(d, sign):
+            return sign * view[d] > 1e-9
+
+        outline = [edge for edge in EDGES
+                   if facing(others[0], edge[0]) != facing(others[1], edge[1])]
+        best, best_score = None, None
+        for edge in outline or list(EDGES):
+            low, high = edge_ends(bounds, axis, edge)
+            screen, _ = camera.project(np.array([low, high]), bounds)
+            along = screen[1] - screen[0]
+            middle = screen.mean(axis=0)
+            upright = abs(along[1]) > abs(along[0])
+            score = middle[0] if upright else middle[1]
+            if best_score is None or score < best_score:
+                best, best_score = edge, score
+        out.append(best)
+    return out
+
+
+def axis_segments(bounds, edges, directions, shown=(True, True, True),
+                  target: int = 4):
+    """Where each coordinate axis is drawn: one entry per shown axis,
+    ``(axis, start, end, ticks, step)``.
+
+    Each axis lies on the box edge ``edges[axis]`` names (see
+    :func:`edge_ends`) and starts at the end ``directions[axis]`` points
+    away from: ``+1`` runs from the low end up, ``-1`` from the high end
+    down. ``ticks`` are the round values on it, from the same rule as a
+    figure's.
+    """
+    from tools.output.export import tick_values
+
+    out = []
+    for d in range(3):
+        if not shown[d]:
+            continue
+        low, high = edge_ends(bounds, d, edges[d])
+        if abs(high[d] - low[d]) <= 0:
+            continue
+        start, end = (low, high) if directions[d] >= 0 else (high, low)
+        ticks, step = tick_values(low[d], high[d], target)
+        out.append((d, start, end, np.asarray(ticks, dtype=float), step))
+    return out
+
+
+# ==========================================================================
 # Projection
 # ==========================================================================
 @dataclass
@@ -598,11 +676,16 @@ def reduce_volume(values, axes, ranges=None, targets=None):
     dropped, which keeps every output point made of the same number of
     inputs.
 
+    ``values`` may be a lazy, file-backed cube (anything with ``shape``
+    that slices like an array): it is cropped *before* it is read, so a
+    window onto a large measurement reads only that window.
+
     Returns ``(values, axes)``.
     """
-    values = np.asarray(values, dtype=float)
+    if not hasattr(values, "shape"):
+        values = np.asarray(values, dtype=float)
     axes = [np.asarray(a, dtype=float) for a in axes]
-    if values.ndim != len(axes):
+    if len(values.shape) != len(axes):
         raise ValueError("one axis per dimension, please")
 
     if ranges is not None:
@@ -619,6 +702,7 @@ def reduce_volume(values, axes, ranges=None, targets=None):
             index.append(slice(int(keep[0]), int(keep[-1]) + 1))
         values = values[tuple(index)]
         axes = [axis[sl] for axis, sl in zip(axes, index)]
+    values = np.asarray(values, dtype=float)
 
     if targets is not None:
         for dim, target in enumerate(targets):

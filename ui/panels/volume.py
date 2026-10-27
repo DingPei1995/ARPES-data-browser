@@ -3,8 +3,9 @@ ui/panels/volume.py
 ===================
 The 3-D half of the data tools: :class:`VolumeProcessDialog`, which runs
 the plane-wise operations and the 3-D symmetrisation over a whole cube, and
-:class:`VolumeWindow`, which draws it -- orthogonal slices, the notched
-cube, an isosurface and the volume projections.
+:class:`VolumeWindow`, which draws it -- one window each for the
+orthogonal slices, the notched cube, and the volume projections (with the
+isosurface).
 
 The renderer is a plain ``QPainter``. Every surface in these views is flat,
 and the parallel projection of a rectangle is a parallelogram, which is
@@ -13,21 +14,27 @@ depth-sorted faces gives a pixel-exact picture with no OpenGL driver and no
 PyOpenGL dependency. It also means the view can be painted at any size,
 which is what lets a notched cube be exported as a 300-dpi figure instead
 of a screen-sized bitmap -- ``volume_3d_plot_w_notch.m``'s output could
-only ever be as large as the window it was drawn in.
+only ever be as large as the window it was drawn in. The figure composer
+draws a 3-D panel with the same function (:func:`paint_scene`), handing it
+the figure's font and line widths, so the axes of a 3-D panel are labelled
+like those of every other panel.
 """
 from __future__ import annotations
+
+import copy
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, QPointF, QRectF, pyqtSignal, QTimer
 from PyQt5.QtGui import (QImage, QPainter, QPixmap, QTransform, QColor, QPen,
-                         QPolygonF, QFont)
+                         QPolygonF, QFont, QFontMetricsF)
 from PyQt5.QtWidgets import (QSizePolicy, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QComboBox, QCheckBox, QDialog,
                              QFormLayout, QDoubleSpinBox, QSpinBox, QLineEdit,
                              QDialogButtonBox, QApplication, QTabWidget,
                              QGroupBox, QMessageBox, QProgressDialog, QSlider,
-                             QFileDialog, QScrollArea)
+                             QFileDialog, QScrollArea, QInputDialog)
 
 from tools.output import colormaps
 import tools.processing.process as P
@@ -39,25 +46,35 @@ from ui.panels.process import spin, whole, _decimate
 # ==========================================================================
 # Painting a set of faces
 # ==========================================================================
-def _colour_face(image, lut, levels, gamma: float = 1.0, shade: float = 1.0):
+def _colour_face(image, lut, levels, gamma: float = 1.0, shade: float = 1.0,
+                 opacity: float = 1.0, fade: float = 0.0):
     """One face's samples as an ARGB image, missing points transparent.
 
     Transparency rather than a background colour: a face that reaches past
     the measured volume should show the face behind it, not a block of grey
     that reads as data.
+
+    ``opacity`` (0..1) is the whole face's; ``fade`` (0..1 of the level
+    window) makes the weakest intensities transparent too, rising from
+    nothing at the low level to ``opacity`` at that fraction of the window
+    -- so a slice can be looked *through* where it holds only background.
     """
     values = np.asarray(image, dtype=float)
     lo, hi = float(levels[0]), float(levels[1])
     span = (hi - lo) or 1.0
     scaled = np.clip((values - lo) / span, 0.0, 1.0)
-    if gamma != 1.0:
-        scaled = np.power(scaled, 1.0 / max(float(gamma), 1e-6))
     # NaN casts to an arbitrary integer, so it is mapped to 0 first; those
     # pixels are then made transparent by the alpha channel below anyway.
-    index = np.clip(np.nan_to_num(scaled * (len(lut) - 1), nan=0.0)
-                    .astype(np.int32), 0, len(lut) - 1)
+    scaled = np.nan_to_num(scaled, nan=0.0)
+    coloured = scaled
+    if gamma != 1.0:
+        coloured = np.power(scaled, 1.0 / max(float(gamma), 1e-6))
+    index = np.clip((coloured * (len(lut) - 1)).astype(np.int32), 0, len(lut) - 1)
     rgb = (lut[index] * float(np.clip(shade, 0.0, 1.0))).astype(np.uint8)
-    alpha = np.where(np.isfinite(values), 255, 0).astype(np.uint8)
+    alpha = np.where(np.isfinite(values), float(np.clip(opacity, 0.0, 1.0)), 0.0)
+    if fade > 0:
+        alpha = alpha * np.clip(scaled / float(fade), 0.0, 1.0)
+    alpha = np.rint(alpha * 255.0).astype(np.uint8)
 
     # QImage wants (row, column) = (v, u), so the sampled (u, v) array is
     # transposed once here rather than at every call site.
@@ -67,6 +84,8 @@ def _colour_face(image, lut, levels, gamma: float = 1.0, shade: float = 1.0):
     buffer[..., 1] = rgb[..., 1].T
     buffer[..., 2] = rgb[..., 0].T
     buffer[..., 3] = alpha.T
+    # Premultiplied would be wrong here: the colour is straight, the alpha
+    # separate, which is what Format_ARGB32 means.
     qimage = QImage(buffer.data, width, height, 4 * width, QImage.Format_ARGB32)
     clone = qimage.copy()                    # own the memory, the buffer dies here
     return clone
@@ -85,6 +104,350 @@ def _face_transform(screen, nu: int, nv: int) -> QTransform:
     return QTransform(du[0], du[1], dv[0], dv[1], origin[0], origin[1])
 
 
+@dataclass
+class FaceStyle:
+    """How the faces normal to one axis are coloured.
+
+    One per axis rather than one for the scene, because the three planes of
+    a cube are different pictures -- a constant-energy map and two
+    dispersions -- and the window that brings out one is rarely right for
+    the others.
+    """
+    colormap: str = "gray"
+    flip: bool = False
+    levels: tuple = (0.0, 1.0)
+    gamma: float = 1.0
+    opacity: float = 1.0            # 0..1, the whole face
+    fade: float = 0.0               # 0..1 of the level window; 0 = off
+
+    def opaque(self) -> bool:
+        return self.opacity >= 0.999 and self.fade <= 0.0
+
+
+@dataclass
+class AxesSpec:
+    """The coordinate axes drawn into the scene: which, on which edge of the
+    box, which way. ``edges`` None places them automatically, on the
+    outline edges facing the viewer (:func:`V.auto_edges`), and they follow
+    the camera. See :func:`tools.processing.volume.axis_segments`."""
+    shown: list = field(default_factory=lambda: [True, True, True])
+    edges: list = None
+    directions: list = field(default_factory=lambda: [1, 1, 1])
+    titles: tuple = ("x", "y", "z")
+
+
+#: what a snapshot of a scene keeps: everything :func:`paint_scene` reads
+SCENE_FIELDS = ("faces", "bounds", "camera", "levels", "gamma", "colormap",
+                "flip", "show_edges", "show_axes", "axis_labels", "background",
+                "cull", "image", "styles", "axes")
+
+
+class SceneSnapshot:
+    """A 3-D view frozen as it is now, for a figure panel: what the view
+    shows, independent of the window, which can go on turning or close."""
+
+    def __init__(self, source):
+        for name in SCENE_FIELDS:
+            setattr(self, name, getattr(source, name, None))
+        self.faces = list(self.faces or [])
+        self.bounds = list(self.bounds)
+        self.camera = copy.deepcopy(self.camera)
+        self.styles = ({axis: replace(style) for axis, style in self.styles.items()}
+                       if self.styles else None)
+        self.axes = copy.deepcopy(self.axes)
+        if self.image is not None:
+            self.image = np.array(self.image, copy=True)
+
+
+def _fit_for(state, width, height, furniture: float = 0.0):
+    """Scale and offset that fit the box into a ``width`` x ``height`` view.
+
+    ``furniture`` is the room, in pixels, the axes' ticks, values and
+    titles take beyond the box's edges; it is kept free on every side, so
+    the labels stay inside the view (and the figure panel) at any size."""
+    bounds = state.bounds
+    corners = np.array([[bounds[0][i], bounds[1][j], bounds[2][k]]
+                        for i in (0, 1) for j in (0, 1) for k in (0, 1)],
+                       dtype=float)
+    screen, _ = state.camera.project(corners, bounds)
+    lo, hi = screen.min(axis=0), screen.max(axis=0)
+    span = np.maximum(hi - lo, 1e-9)
+    margin = 0.04 if furniture > 0 else 0.12
+    usable = np.array([max(width * (1 - 2 * margin) - 2 * furniture, 1.0),
+                       max(height * (1 - 2 * margin) - 2 * furniture, 1.0)])
+    scale = float(np.min(usable / span))
+    centre = (lo + hi) / 2.0
+    offset = np.array([width / 2.0, height / 2.0]) - centre * scale
+    return scale, offset
+
+
+def _shade(face):
+    """A little directional shading, so the three walls of a notch are
+    told apart even in a single-hue colormap."""
+    if not face.outward:
+        return 1.0
+    normal = face.normal()
+    light = np.array([0.35, 0.25, 0.90])
+    light /= np.linalg.norm(light)
+    return 0.78 + 0.22 * float(abs(np.dot(normal, light)))
+
+
+def _text_beside(painter, metrics, text, point, normal, angle: float = 0.0):
+    """Draw ``text`` just beyond ``point`` in the direction ``normal`` (a
+    unit screen vector), so it never overlaps the line it labels, turned by
+    ``angle`` degrees. Returns how far it reaches along ``normal``."""
+    width = metrics.horizontalAdvance(text)
+    height = metrics.height()
+    theta = np.radians(angle)
+    # the text box's extent along the normal, once turned
+    along_x = abs(np.cos(theta)) * width + abs(np.sin(theta)) * height
+    along_y = abs(np.sin(theta)) * width + abs(np.cos(theta)) * height
+    reach = abs(normal[0]) * along_x + abs(normal[1]) * along_y
+    centre = np.asarray(point, dtype=float) + normal * (reach / 2.0)
+    painter.save()
+    painter.translate(QPointF(*centre))
+    painter.rotate(angle)
+    painter.drawText(QRectF(-width / 2.0, -height / 2.0, width, height),
+                     Qt.AlignCenter, text)
+    painter.restore()
+    return reach
+
+
+def paint_scene(state, painter, rect, *, font=None, title_font=None,
+                line_px: float = 1.0, tick_px: float = None, color=None):
+    """Paint a 3-D scene into ``rect`` of any painter.
+
+    ``state`` is a :class:`SceneView` or a :class:`SceneSnapshot` -- the
+    window and a figure panel are drawn by this one function, so a figure
+    shows exactly what the window did. ``font``, ``title_font``,
+    ``line_px``, ``tick_px`` and ``color`` size and colour the axes and
+    their labels: screen defaults in the window, the figure's own style
+    (font, point sizes, axis line width, tick length) in a figure.
+    """
+    if not state.faces and state.image is None:
+        return
+    rect = QRectF(rect)
+    width, height = rect.width(), rect.height()
+    font = QFont(font) if font is not None else QFont()
+    title_font = QFont(title_font) if title_font is not None else QFont(font)
+    color = QColor(color) if color is not None else QColor("#202020")
+    furniture = 0.0
+    if getattr(state, "axes", None) is not None:
+        metrics = QFontMetricsF(font)
+        tick = float(tick_px) if tick_px else 0.45 * metrics.height()
+        furniture = (tick + 0.9 * metrics.height()
+                     + metrics.horizontalAdvance("-00.00")
+                     + QFontMetricsF(title_font).height())
+    scale, offset = _fit_for(state, width, height, furniture)
+
+    def to_pixels(screen):
+        out = np.asarray(screen, dtype=float) * scale + offset
+        out[:, 1] = height - out[:, 1]
+        out[:, 0] += rect.x()
+        out[:, 1] += rect.y()
+        return out
+
+    def world(points):
+        screen, _ = state.camera.project(np.atleast_2d(points), state.bounds)
+        return to_pixels(screen)
+
+    if state.image is not None:
+        values = np.asarray(state.image, dtype=float)
+        lut = colormaps.get_lut(state.colormap, flip=state.flip)
+        qimage = _colour_face(values, lut, state.levels, state.gamma)
+        side = min(width, height) * 0.86
+        painter.drawImage(QRectF(rect.x() + (width - side) / 2.0,
+                                 rect.y() + (height - side) / 2.0, side, side),
+                          qimage)
+
+    styles = state.styles or {}
+    # Faces turned away cannot be seen through an opaque solid, but they
+    # can through a translucent one.
+    opaque = all(style.opaque() for style in styles.values())
+    visible = V.visible(state.faces, state.camera, state.bounds,
+                        cull=bool(state.cull) and opaque)
+    # Which of each face's edges belong to the shape rather than to the
+    # way it was cut up for drawing. Computed over the visible set, so a
+    # seam whose other half is hidden is still recognised as a seam.
+    real_edges = dict(zip((id(f) for f in visible), V.outline_edges(visible)))
+    luts = {}
+    for face, screen in V.sort_faces(visible, state.camera, state.bounds):
+        pixels = to_pixels(screen)
+        nu, nv = face.image.shape
+        style = styles.get(face.axis)
+        if style is None:
+            style = FaceStyle(state.colormap, state.flip, tuple(state.levels),
+                              state.gamma)
+        key = (style.colormap, style.flip)
+        if key not in luts:
+            luts[key] = colormaps.get_lut(style.colormap, flip=style.flip)
+        qimage = _colour_face(face.image, luts[key], style.levels, style.gamma,
+                              _shade(face), style.opacity, style.fade)
+        painter.save()
+        painter.setTransform(_face_transform(pixels, nu, nv), True)
+        painter.drawImage(QRectF(0, 0, nu, nv), qimage)
+        painter.restore()
+        if state.show_edges:
+            painter.setPen(QPen(QColor(0, 0, 0, 0x33), line_px))
+            for i, draw in enumerate(real_edges[id(face)]):
+                if draw:
+                    painter.drawLine(QPointF(*pixels[i]),
+                                     QPointF(*pixels[(i + 1) % 4]))
+
+    if getattr(state, "axes", None) is not None:
+        _paint_data_axes(state, painter, world, font, title_font, line_px,
+                         tick_px, color)
+    if state.show_axes:
+        _paint_tripod(state, painter, rect, font)
+
+
+def _paint_data_axes(state, painter, world, font, title_font, line_px,
+                     tick_px, color):
+    """The coordinate axes, with round ticks and their values, along the
+    lines :attr:`state.axes` chooses. Ticks and labels go on the side of
+    each axis away from the middle of the box, where they cannot run into
+    the picture they label."""
+    from tools.output.export import tick_format
+
+    spec = state.axes
+    metrics = QFontMetricsF(font)
+    title_metrics = QFontMetricsF(title_font)
+    tick = float(tick_px) if tick_px else 0.45 * metrics.height()
+    gap = 0.3 * metrics.height()
+    centre = world([np.mean(b) for b in state.bounds])[0]
+    painter.setPen(QPen(color, line_px))
+    edges = spec.edges or V.auto_edges(state.camera, state.bounds)
+    for d, start, end, ticks, step in V.axis_segments(
+            state.bounds, edges, spec.directions, spec.shown):
+        p0, p1 = world(np.array([start, end]))
+        along = p1 - p0
+        length = float(np.hypot(*along))
+        if length < 2.0:
+            continue                         # pointing straight at the viewer
+        along /= length
+        normal = np.array([-along[1], along[0]])
+        middle = (p0 + p1) / 2.0
+        if np.dot(normal, middle - centre) < 0:
+            normal = -normal
+        painter.setFont(font)
+        painter.drawLine(QPointF(*p0), QPointF(*p1))
+        fmt = tick_format(step)
+        reach = 0.0
+        for value in ticks:
+            point = start.copy()
+            point[d] = value
+            p = world(point)[0]
+            painter.drawLine(QPointF(*p), QPointF(*(p + normal * tick)))
+            reach = max(reach, _text_beside(painter, metrics, fmt % value,
+                                            p + normal * (tick + gap), normal))
+        # The title runs along its axis, never upside down, so a long
+        # label beside an upright axis does not push out of the picture.
+        angle = float(np.degrees(np.arctan2(along[1], along[0])))
+        if angle > 90.0:
+            angle -= 180.0
+        elif angle < -90.0:
+            angle += 180.0
+        painter.setFont(title_font)
+        _text_beside(painter, title_metrics, spec.titles[d],
+                     middle + normal * (tick + 2 * gap + reach), normal, angle)
+
+
+def _paint_tripod(state, painter, rect, font):
+    """A small labelled tripod in the corner of the view, for orientation.
+
+    Anchored to the view rather than to a corner of the box on purpose: a
+    tripod drawn at a box corner is hidden inside the solid for half of all
+    viewing angles, and a notched cube is normally looked at from exactly
+    those angles.
+    """
+    width, height = rect.width(), rect.height()
+    basis = state.camera.basis()
+    arm = min(width, height) * 0.09
+    origin = np.array([rect.x() + width - arm * 1.9, rect.y() + height - arm * 1.5])
+    painter.setFont(font)
+    # Draw the axis pointing away from the viewer first, so the two in
+    # front overlap it rather than the other way round.
+    order = np.argsort([basis[2][d] for d in range(3)])
+    for d in order:
+        direction = np.zeros(3)
+        direction[d] = 1.0
+        tip = origin + np.array([float(direction @ basis[0]),
+                                 -float(direction @ basis[1])]) * arm
+        colour = ("#c0392b", "#27ae60", "#2471a3")[d]
+        painter.setPen(QPen(QColor(colour), 1.8))
+        painter.drawLine(QPointF(*origin), QPointF(*tip))
+        painter.drawText(QPointF(*(tip + np.sign(tip - origin) *
+                                   np.array([3.0, 4.0]))),
+                         state.axis_labels[d])
+
+
+class SceneView(QWidget):
+    """Draws a list of :class:`V.Face` objects, and lets the mouse
+    turn them."""
+
+    rotated = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.faces = []
+        self.bounds = [(0, 1)] * 3
+        self.camera = V.Camera()
+        self.levels = (0.0, 1.0)
+        self.gamma = 1.0
+        self.colormap = "gray"
+        self.flip = False
+        self.show_edges = True
+        self.show_axes = True                # the orientation tripod
+        self.axis_labels = ("x", "y", "z")
+        self.background = "#ffffff"
+        self.cull = True
+        self.image = None                    # a flat projected image, if any
+        self.styles = None                   # {axis: FaceStyle}, or one look
+        self.axes = None                     # AxesSpec, or no axes
+        self.setMinimumSize(360, 320)
+        self.setMouseTracking(True)
+        self._drag = None
+
+    def set_scene(self, faces, bounds):
+        self.faces = list(faces)
+        self.bounds = list(bounds)
+        self.update()
+
+    def snapshot(self) -> SceneSnapshot:
+        return SceneSnapshot(self)
+
+    # -- painting ----------------------------------------------------------
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.fillRect(self.rect(), QColor(self.background))
+        self.render_into(painter, self.width(), self.height())
+        painter.end()
+
+    def render_into(self, painter, width: int, height: int):
+        """Paint the scene into any painter at ``width`` x ``height``."""
+        paint_scene(self, painter, QRectF(0, 0, width, height), font=self.font())
+
+    # -- mouse -------------------------------------------------------------
+    def mousePressEvent(self, event):
+        self._drag = (event.pos(), self.camera.azimuth, self.camera.elevation)
+
+    def mouseMoveEvent(self, event):
+        if self._drag is None:
+            return
+        start, azimuth, elevation = self._drag
+        self.camera.azimuth = azimuth - 0.5 * (event.pos().x() - start.x())
+        self.camera.elevation = float(np.clip(
+            elevation + 0.5 * (event.pos().y() - start.y()), -89.0, 89.0))
+        self.update()
+        self.rotated.emit()
+
+    def mouseReleaseEvent(self, event):
+        self._drag = None
+
+
+
 class VolumeRangeDialog(QDialog):
     """What to load into the 3-D views, before anything is computed.
 
@@ -100,9 +463,12 @@ class VolumeRangeDialog(QDialog):
     shows the resulting array size as it is changed.
     """
 
-    def __init__(self, values, axes, labels, parent=None):
+    def __init__(self, values, axes, labels, parent=None, ranges=None,
+                 targets=None):
         super().__init__(parent)
-        self.values = np.asarray(values, dtype=float)
+        # Kept as given: a lazy cube is read only by result(), and only
+        # where the ranges ask.
+        self.values = values if hasattr(values, "shape") else np.asarray(values, float)
         self.axes = [np.asarray(a, dtype=float) for a in axes]
         self.labels = list(labels)
         self.setWindowTitle("What to show in 3D")
@@ -134,7 +500,8 @@ class VolumeRangeDialog(QDialog):
                 box.addWidget(widget)
             points = QSpinBox()
             points.setRange(8, 2000)
-            points.setValue(int(min(axis.size, 160)))
+            points.setValue(int(targets[dim]) if targets is not None
+                            else int(min(axis.size, BALANCED_POINTS)))
             points.setKeyboardTracking(False)
             points.setMaximumWidth(90)
             points.setToolTip("How many points to keep on this axis. "
@@ -144,6 +511,11 @@ class VolumeRangeDialog(QDialog):
             box.addWidget(points)
             box.addStretch(1)
             form.addRow(self.labels[dim], row)
+            if ranges is not None and ranges[dim] is not None:
+                for widget, value in zip((lo, hi), ranges[dim]):
+                    widget.blockSignals(True)
+                    widget.setValue(float(value))
+                    widget.blockSignals(False)
             self.lo_boxes.append(lo)
             self.hi_boxes.append(hi)
             self.point_boxes.append(points)
@@ -210,7 +582,7 @@ class VolumeRangeDialog(QDialog):
     def _update_estimate(self):
         kept = self._kept()
         total = int(np.prod(kept))
-        before = int(self.values.size)
+        before = int(np.prod(self.values.shape))
         self.estimate.setText(
             f"{' × '.join(str(n) for n in kept)} = {total:,} points "
             f"({100.0 * total / max(before, 1):.1f}% of the {before:,} "
@@ -272,6 +644,24 @@ class AxisPosition(QWidget):
     def index(self) -> int:
         return int(self.slider.value())
 
+    def set_axis(self, axis):
+        """A new axis -- the cube was resampled -- keeping the position as
+        close as the new points allow. Quietly: the caller redraws."""
+        position = self.position()
+        self.axis = np.asarray(axis, dtype=float)
+        step = abs(float(self.axis[-1] - self.axis[0])) / max(self.axis.size - 1, 1)
+        index = int(np.argmin(np.abs(self.axis - position)))
+        for widget in (self.slider, self.box):
+            widget.blockSignals(True)
+        self.slider.setRange(0, self.axis.size - 1)
+        self.slider.setValue(index)
+        self.box.setRange(float(min(self.axis[0], self.axis[-1])),
+                          float(max(self.axis[0], self.axis[-1])))
+        self.box.setSingleStep(step or 0.01)
+        self.box.setValue(float(self.axis[index]))
+        for widget in (self.slider, self.box):
+            widget.blockSignals(False)
+
     def position(self) -> float:
         return float(self.axis[self.index()])
 
@@ -295,196 +685,59 @@ class AxisPosition(QWidget):
         self._apply(int(np.argmin(np.abs(self.axis - float(value)))))
 
 
-class SceneView(QWidget):
-    """Draws a list of :class:`V.Face` objects, and lets the mouse
-    turn them."""
-
-    rotated = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.faces = []
-        self.bounds = [(0, 1)] * 3
-        self.camera = V.Camera()
-        self.levels = (0.0, 1.0)
-        self.gamma = 1.0
-        self.colormap = "gray"
-        self.flip = False
-        self.show_edges = True
-        self.show_axes = True
-        self.axis_labels = ("x", "y", "z")
-        self.background = "#ffffff"
-        self.cull = True
-        self.image = None                    # a flat projected image, if any
-        self.setMinimumSize(360, 320)
-        self.setMouseTracking(True)
-        self._drag = None
-
-    def set_scene(self, faces, bounds):
-        self.faces = list(faces)
-        self.bounds = list(bounds)
-        self.update()
-
-    # -- painting ----------------------------------------------------------
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.fillRect(self.rect(), QColor(self.background))
-        self.render_into(painter, self.width(), self.height())
-        painter.end()
-
-    def render_into(self, painter, width: int, height: int):
-        """Paint the scene into any painter at any size.
-
-        Kept separate from ``paintEvent`` so the same code produces the
-        widget, a PNG at 600 dpi and a PDF page -- the view on screen and the
-        file are then the same picture by construction rather than by care.
-        """
-        if not self.faces and self.image is None:
-            return
-        lut = colormaps.get_lut(self.colormap, flip=self.flip)
-        scale, offset = self._fit_for(width, height)
-        if self.image is not None:
-            self._paint_image(painter, width, height)
-        visible = V.visible(self.faces, self.camera, self.bounds, cull=self.cull)
-        # Which of each face's edges belong to the shape rather than to the
-        # way it was cut up for drawing. Computed over the visible set, so a
-        # seam whose other half is hidden is still recognised as a seam.
-        real_edges = dict(zip((id(f) for f in visible),
-                              V.outline_edges(visible)))
-        for face, screen in V.sort_faces(visible, self.camera, self.bounds):
-            pixels = self._pixels_for(screen, scale, offset, height)
-            nu, nv = face.image.shape
-            qimage = _colour_face(face.image, lut, self.levels, self.gamma,
-                                  self._shade(face))
-            painter.save()
-            painter.setTransform(_face_transform(pixels, nu, nv), True)
-            painter.drawImage(QRectF(0, 0, nu, nv), qimage)
-            painter.restore()
-            if self.show_edges:
-                painter.setPen(QPen(QColor("#33000000"), 1.0))
-                for i, draw in enumerate(real_edges[id(face)]):
-                    if draw:
-                        painter.drawLine(QPointF(*pixels[i]),
-                                         QPointF(*pixels[(i + 1) % 4]))
-        if self.show_axes:
-            self._paint_axes(painter, width, height)
-
-    def _fit_for(self, width, height):
-        corners = np.array([[self.bounds[0][i], self.bounds[1][j], self.bounds[2][k]]
-                            for i in (0, 1) for j in (0, 1) for k in (0, 1)],
-                           dtype=float)
-        screen, _ = self.camera.project(corners, self.bounds)
-        lo, hi = screen.min(axis=0), screen.max(axis=0)
-        span = np.maximum(hi - lo, 1e-9)
-        margin = 0.12
-        usable = np.array([width * (1 - 2 * margin), height * (1 - 2 * margin)])
-        scale = float(np.min(usable / span))
-        centre = (lo + hi) / 2.0
-        offset = np.array([width / 2.0, height / 2.0]) - centre * scale
-        return scale, offset
-
-    def _pixels_for(self, screen, scale, offset, height):
-        out = np.asarray(screen, dtype=float) * scale + offset
-        out[:, 1] = height - out[:, 1]
-        return out
-
-    def _shade(self, face):
-        """A little directional shading, so the three walls of a notch are
-        told apart even in a single-hue colormap."""
-        if not face.outward:
-            return 1.0
-        normal = face.normal()
-        light = np.array([0.35, 0.25, 0.90])
-        light /= np.linalg.norm(light)
-        return 0.78 + 0.22 * float(abs(np.dot(normal, light)))
-
-    def _paint_image(self, painter, width, height):
-        values = np.asarray(self.image, dtype=float)
-        lut = colormaps.get_lut(self.colormap, flip=self.flip)
-        qimage = _colour_face(values, lut, self.levels, self.gamma)
-        side = min(width, height) * 0.86
-        left = (width - side) / 2.0
-        top = (height - side) / 2.0
-        painter.drawImage(QRectF(left, top, side, side), qimage)
-
-    def _paint_axes(self, painter, width, height):
-        """A labelled tripod in the corner of the view.
-
-        Anchored to the widget rather than to a corner of the box on
-        purpose: a tripod drawn at a box corner is hidden inside the solid
-        for half of all viewing angles, and a notched cube is normally
-        looked at from exactly those angles.
-        """
-        basis = self.camera.basis()
-        arm = min(width, height) * 0.09
-        origin = np.array([width - arm * 1.9, height - arm * 1.5])
-        font = QFont()
-        font.setPointSizeF(max(7.0, min(11.0, arm * 0.28)))
-        painter.setFont(font)
-        # Draw the axis pointing away from the viewer first, so the two in
-        # front overlap it rather than the other way round.
-        order = np.argsort([basis[2][d] for d in range(3)])
-        for d in order:
-            direction = np.zeros(3)
-            direction[d] = 1.0
-            tip = origin + np.array([float(direction @ basis[0]),
-                                     -float(direction @ basis[1])]) * arm
-            colour = ("#c0392b", "#27ae60", "#2471a3")[d]
-            painter.setPen(QPen(QColor(colour), 1.8))
-            painter.drawLine(QPointF(*origin), QPointF(*tip))
-            painter.drawText(QPointF(*(tip + np.sign(tip - origin) *
-                                       np.array([3.0, 4.0]))),
-                             self.axis_labels[d])
-
-    # -- mouse -------------------------------------------------------------
-    def mousePressEvent(self, event):
-        self._drag = (event.pos(), self.camera.azimuth, self.camera.elevation)
-
-    def mouseMoveEvent(self, event):
-        if self._drag is None:
-            return
-        start, azimuth, elevation = self._drag
-        self.camera.azimuth = azimuth - 0.5 * (event.pos().x() - start.x())
-        self.camera.elevation = float(np.clip(
-            elevation + 0.5 * (event.pos().y() - start.y()), -89.0, 89.0))
-        self.update()
-        self.rotated.emit()
-
-    def mouseReleaseEvent(self, event):
-        self._drag = None
-
-
 # ==========================================================================
-# The 3-D viewer
+# The 3-D viewers
 # ==========================================================================
+#: points per axis a 3-D view opens with: the sampling dialog's "Balanced"
+BALANCED_POINTS = 160
+
+#: the three views, by the name the launcher opens them with
+MODES = {"slices": "3D slices", "notch": "Notched cube",
+         "projection": "Volume projection"}
+
+#: the eight corners of the box, as the signs of their coordinates
+CORNERS = (((-1, -1, -1), "− − −"), ((1, -1, -1), "+ − −"),
+           ((-1, 1, -1), "− + −"), ((1, 1, -1), "+ + −"),
+           ((-1, -1, 1), "− − +"), ((1, -1, 1), "+ − +"),
+           ((-1, 1, 1), "− + +"), ((1, 1, 1), "+ + +"))
+
+
 class VolumeWindow(QMainWindow):
-    """Orthogonal slices, the notched cube, an isosurface and the volume
-    projections, all of one cube.
+    """One of the three 3-D views of a cube: orthogonal slices, the notched
+    cube, or a volume projection -- ``mode`` says which.
 
-    The four are tabs of one window rather than four windows because they
-    answer the same question at different depths: where is the intensity in
-    this volume. Switching between them keeps the camera, the levels and the
-    colormap, so the comparison is honest.
+    Three windows, not three tabs of one: they are different pictures with
+    different controls, and a tab hid two of them behind a button labelled
+    with the first. Each opens straight away, sampled at the "Balanced"
+    setting over the whole cube, so the data is on screen before any
+    question is asked; the sampling is shown under the view's buttons, and
+    *Change sampling...* resamples from the full cube and redraws.
+
+    ``values``/``axes`` are the cube at full resolution -- a lazy,
+    file-backed one is fine, and is only read where the sampling asks.
     """
 
     closed = pyqtSignal(object)
 
     def __init__(self, values, axes, labels, source_name: str, parent=None,
-                 colormap="gray", flip=False):
+                 colormap="gray", flip=False, mode: str = "slices",
+                 sampling=None):
         super().__init__(parent)
-        self.values = np.asarray(values, dtype=float)
-        self.axes = [np.asarray(a, dtype=float) for a in axes]
+        if mode not in MODES:
+            raise ValueError(f"unknown 3-D view {mode!r}")
+        self.mode = mode
+        self.source_values = values
+        self.source_axes = [np.asarray(a, dtype=float) for a in axes]
         self.labels = list(labels)
+        self.short_labels = [l.split(" (")[0] for l in self.labels]
         self.source_name = source_name
-        self.setWindowTitle(f"3D view — {source_name}")
-        self.resize(1020, 720)
+        self.setWindowTitle(f"{MODES[mode]} — {source_name}")
+        self.resize(1080, 760)
 
-        finite = self.values[np.isfinite(self.values)]
-        self._auto_levels = ((float(np.percentile(finite, 1)),
-                              float(np.percentile(finite, 99.5)))
-                             if finite.size else (0.0, 1.0))
+        if sampling is None:
+            sampling = ([(float(a.min()), float(a.max())) for a in self.source_axes],
+                        [int(min(BALANCED_POINTS, a.size)) for a in self.source_axes])
+        self._resample(*sampling)
 
         # Built before any control that can fire _queue: a slider's initial
         # setValue emits valueChanged, and construction order is not a thing
@@ -499,26 +752,33 @@ class VolumeWindow(QMainWindow):
         self.scene = SceneView()
         self.scene.colormap, self.scene.flip = colormap, flip
         self.scene.levels = self._auto_levels
-        self.scene.axis_labels = tuple(l.split(" (")[0] for l in self.labels)
+        self.scene.axis_labels = tuple(self.short_labels)
         self.scene.camera.aspect = (1.0, 1.0, 0.75)
         self.scene.rotated.connect(self._camera_moved)
         layout.addWidget(self.scene, 1)
 
         side = QScrollArea()
         side.setWidgetResizable(True)
-        side.setMinimumWidth(400)
-        side.setMaximumWidth(430)
+        side.setMinimumWidth(460)
+        side.setMaximumWidth(490)
         panel = QWidget()
         side.setWidget(panel)
         form = QVBoxLayout(panel)
 
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self._slice_tab(), "Slices")
-        self.tabs.addTab(self._notch_tab(), "Notched cube")
-        self.tabs.addTab(self._projection_tab(), "Projection")
-        self.tabs.currentChanged.connect(self.rebuild)
-        form.addWidget(self.tabs)
-        form.addWidget(self._view_group())
+        if mode == "projection":
+            form.addWidget(self._projection_group())
+            form.addWidget(self._flat_colour_group())
+        else:
+            form.addWidget(self._slice_group() if mode == "slices"
+                           else self._notch_group())
+            self.scene.styles = {d: FaceStyle(colormap, flip, self._auto_levels)
+                                 for d in range(3)}
+            self.scene.axes = AxesSpec(titles=tuple(self.labels))
+            form.addWidget(self._colour_group())
+            form.addWidget(self._axes_group())
+        form.addWidget(self._camera_group())
+        form.addLayout(self._output_row())
+        form.addWidget(self._sampling_group())
         form.addStretch(1)
 
         self.note = QLabel("")
@@ -526,21 +786,106 @@ class VolumeWindow(QMainWindow):
         form.addWidget(self.note)
         layout.addWidget(side)
         self.setCentralWidget(central)
+        self._update_sampling_label()
         self.rebuild()
 
-    # -- tabs --------------------------------------------------------------
+    # -- sampling ------------------------------------------------------------
+    def _resample(self, ranges, targets):
+        """Crop and bin the full cube to ``ranges`` and ``targets`` (points
+        per axis) -- the cube every view of this window is drawn from."""
+        values, axes = V.reduce_volume(self.source_values, self.source_axes,
+                                       ranges, targets)
+        self.values = np.asarray(values, dtype=float)
+        self.axes = [np.asarray(a, dtype=float) for a in axes]
+        self.sampling = ([(float(a.min()), float(a.max())) if r is None else tuple(r)
+                          for a, r in zip(self.source_axes, ranges)],
+                         [a.size if t is None else int(t)
+                          for a, t in zip(self.source_axes, targets)])
+        finite = self.values[np.isfinite(self.values)]
+        self._auto_levels = ((float(np.percentile(finite, 1)),
+                              float(np.percentile(finite, 99.5)))
+                             if finite.size else (0.0, 1.0))
+
+    def _sampling_group(self):
+        group = QGroupBox("Sampling")
+        box = QVBoxLayout(group)
+        self.sampling_label = QLabel("")
+        self.sampling_label.setWordWrap(True)
+        self.sampling_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        box.addWidget(self.sampling_label)
+        self.sampling_button = QPushButton("Change sampling...")
+        self.sampling_button.setToolTip(
+            "Choose the region of the cube and how many points per axis to "
+            "keep, then redraw. More points is finer and slower.")
+        self.sampling_button.setMaximumWidth(170)
+        self.sampling_button.clicked.connect(self.change_sampling)
+        box.addWidget(self.sampling_button)
+        return group
+
+    def _update_sampling_label(self):
+        measured = int(np.prod([a.size for a in self.source_axes]))
+        kept = int(self.values.size)
+        rows = []
+        for d, axis in enumerate(self.axes):
+            full = self.source_axes[d]
+            whole = (abs(axis.min() - full.min()) <= abs(full[1] - full[0]) if
+                     full.size > 1 else True) and \
+                    (abs(axis.max() - full.max()) <= abs(full[1] - full[0]) if
+                     full.size > 1 else True)
+            rows.append(f"{self.short_labels[d]}: {axis.size} of {full.size} pts, "
+                        f"{axis.min():.4g} … {axis.max():.4g}"
+                        + ("" if whole else " (cropped)"))
+        self.sampling_label.setText(
+            f"<b>{' × '.join(str(a.size) for a in self.axes)}</b> = "
+            f"{kept:,} points, {100.0 * kept / max(measured, 1):.1f}% of the "
+            f"{measured:,} measured ({kept * 8 / 1e6:.1f} MB)<br>"
+            + "<br>".join(rows))
+
+    def change_sampling(self):
+        """Ask for a new region and sampling, resample the full cube to it,
+        and redraw -- keeping the positions, colours and camera."""
+        ranges, targets = self.sampling
+        dialog = VolumeRangeDialog(self.source_values, self.source_axes,
+                                   self.labels, self, ranges=ranges,
+                                   targets=targets)
+        if dialog.exec_() != QDialog.Accepted:
+            return False
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self._resample(*dialog.selection())
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Change sampling", str(exc))
+            return False
+        QApplication.restoreOverrideCursor()
+        for control in getattr(self, "slice_at", []) + getattr(self, "notch_at", []):
+            control.set_axis(self.axes[self._control_axis(control)])
+        if hasattr(self, "axes_edge"):
+            self._axes_edited()
+        self._update_sampling_label()
+        self.rebuild()
+        return True
+
+    def _control_axis(self, control):
+        for controls in (getattr(self, "slice_at", []),
+                         getattr(self, "notch_at", [])):
+            if control in controls:
+                return controls.index(control)
+        return 0
+
+    # -- the view's own controls ---------------------------------------------
     def _axis_slider(self, dim: int):
         control = AxisPosition(self.axes[dim])
         control.changed.connect(self._queue)
         return control
 
-    def _slice_tab(self):
-        page = QWidget()
-        form = QFormLayout(page)
+    def _slice_group(self):
+        group = QGroupBox("Slices")
+        form = QFormLayout(group)
         form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
         self.slice_on, self.slice_at = [], []
         for dim in range(3):
-            check = QCheckBox(self.labels[dim].split(" (")[0])
+            check = QCheckBox(self.short_labels[dim])
             check.setChecked(True)
             check.toggled.connect(self._queue)
             control = self._axis_slider(dim)
@@ -553,24 +898,20 @@ class VolumeWindow(QMainWindow):
                       "it.</i>")
         hint.setWordWrap(True)
         form.addRow("", hint)
-        return page
+        return group
 
-    def _notch_tab(self):
-        page = QWidget()
-        form = QFormLayout(page)
+    def _notch_group(self):
+        group = QGroupBox("Notch")
+        form = QFormLayout(group)
         form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
         self.notch_at = []
         for dim in range(3):
             control = self._axis_slider(dim)
             control.set_position(float(self.axes[dim][int(self.axes[dim].size * 0.6)]))
-            form.addRow(self.labels[dim].split(" (")[0], control)
+            form.addRow(self.short_labels[dim], control)
             self.notch_at.append(control)
         self.notch_corner = QComboBox()
-        for signs, text in (((1, 1, 1), "+ + +"), ((-1, 1, 1), "− + +"),
-                            ((1, -1, 1), "+ − +"), ((-1, -1, 1), "− − +"),
-                            ((1, 1, -1), "+ + −"), ((-1, 1, -1), "− + −"),
-                            ((1, -1, -1), "+ − −"),
-                            ((-1, -1, -1), "− − −")):
+        for signs, text in CORNERS[::-1]:
             self.notch_corner.addItem(text, signs)
         self.notch_corner.currentIndexChanged.connect(self._queue)
         self.notch_corner.setMaximumWidth(120)
@@ -585,11 +926,11 @@ class VolumeWindow(QMainWindow):
                       "simply drops the faces it squeezes to nothing.</i>")
         hint.setWordWrap(True)
         form.addRow("", hint)
-        return page
+        return group
 
-    def _projection_tab(self):
-        page = QWidget()
-        form = QFormLayout(page)
+    def _projection_group(self):
+        group = QGroupBox("Projection")
+        form = QFormLayout(group)
         form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
         self.projection_mode = QComboBox()
         self.projection_mode.setMaximumWidth(190)
@@ -614,10 +955,16 @@ class VolumeWindow(QMainWindow):
                       "such.</i>")
         note.setWordWrap(True)
         form.addRow("", note)
-        return page
+        return group
 
-    def _view_group(self):
-        group = QGroupBox("View")
+    def _level_box(self, value):
+        box = spin(value, -1e12, 1e12, max(abs(self._auto_levels[1]) / 50, 1e-6), 4)
+        box.setMaximumWidth(140)
+        return box
+
+    def _flat_colour_group(self):
+        """The projection's colours: one picture, one look."""
+        group = QGroupBox("Colour")
         form = QFormLayout(group)
         form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
         self.colormap = QComboBox()
@@ -630,26 +977,263 @@ class VolumeWindow(QMainWindow):
         self.flip.setChecked(self.scene.flip)
         self.flip.toggled.connect(self._restyle)
         form.addRow("", self.flip)
-
-        self.level_lo = spin(self._auto_levels[0], -1e12, 1e12,
-                             max(abs(self._auto_levels[1]) / 50, 1e-6), 4)
-        self.level_hi = spin(self._auto_levels[1], -1e12, 1e12,
-                             max(abs(self._auto_levels[1]) / 50, 1e-6), 4)
+        self.level_lo = self._level_box(self._auto_levels[0])
+        self.level_hi = self._level_box(self._auto_levels[1])
         for box in (self.level_lo, self.level_hi):
             box.valueChanged.connect(self._restyle)
-        self.level_lo.setMaximumWidth(140)
-        self.level_lo.setMaximumWidth(140)
-        self.level_lo.setMaximumWidth(140)
-        self.level_lo.setMaximumWidth(140)
-        self.level_lo.setMaximumWidth(140)
-        self.level_lo.setMaximumWidth(140)
         form.addRow("Level low", self.level_lo)
-        self.level_hi.setMaximumWidth(140)
         form.addRow("Level high", self.level_hi)
         self.gamma = spin(1.0, 0.1, 5.0, 0.1, 2)
         self.gamma.valueChanged.connect(self._restyle)
         form.addRow("Gamma", self.gamma)
+        return group
 
+    # -- colours, one look per orientation -----------------------------------
+    def _colour_group(self):
+        """Colours for the faces normal to each axis, or all of them.
+
+        "All" edits every orientation at once -- only the setting that was
+        changed, so a colormap chosen for all keeps each slice's own levels.
+        """
+        group = QGroupBox("Colour")
+        form = QFormLayout(group)
+        form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
+        what = "slices" if self.mode == "slices" else "faces"
+        self.style_target = QComboBox()
+        self.style_target.addItem(f"All {what}", None)
+        for d in range(3):
+            self.style_target.addItem(
+                f"{self.short_labels[d]} = const ({'slice' if what == 'slices' else 'faces'})", d)
+        self.style_target.setToolTip(
+            "Which planes the settings below apply to. A slice at constant "
+            "energy and one at constant angle are different pictures, and "
+            "rarely want the same window.")
+        self.style_target.currentIndexChanged.connect(self._load_style_controls)
+        form.addRow("Apply to", self.style_target)
+
+        self.colormap = QComboBox()
+        self.colormap.setMaximumWidth(160)
+        self.colormap.addItems(COLORMAP_NAMES)
+        form.addRow("Colormap", self.colormap)
+        self.flip = QCheckBox("reversed")
+        form.addRow("", self.flip)
+        self.level_lo = self._level_box(self._auto_levels[0])
+        self.level_hi = self._level_box(self._auto_levels[1])
+        form.addRow("Level low", self.level_lo)
+        form.addRow("Level high", self.level_hi)
+        levels_row = QWidget()
+        row = QHBoxLayout(levels_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        auto = QPushButton("Auto")
+        auto.setToolTip("Levels from the data of the planes chosen above "
+                        "(1st to 99.5th percentile); for all of them, one "
+                        "window over all.")
+        auto.clicked.connect(self.auto_levels)
+        each = QPushButton("Each its own")
+        each.setToolTip("Every orientation its own levels, from its own data.")
+        each.clicked.connect(self.auto_levels_each)
+        row.addWidget(auto)
+        row.addWidget(each)
+        row.addStretch(1)
+        form.addRow("", levels_row)
+        self.gamma = spin(1.0, 0.1, 5.0, 0.1, 2)
+        form.addRow("Gamma", self.gamma)
+        self.opacity = spin(100.0, 0.0, 100.0, 5.0, 0, " %")
+        self.opacity.setToolTip("How opaque the planes are. Below 100 % the "
+                                "planes behind show through.")
+        form.addRow("Opacity", self.opacity)
+        self.fade = spin(0.0, 0.0, 100.0, 5.0, 0, " %")
+        self.fade.setToolTip(
+            "Make the weakest intensities transparent: from fully transparent "
+            "at the low level to the opacity above at this share of the level "
+            "window. 0 % = off.")
+        form.addRow("Fade low values", self.fade)
+
+        for widget, name in ((self.colormap, "colormap"), (self.flip, "flip"),
+                             (self.level_lo, "lo"), (self.level_hi, "hi"),
+                             (self.gamma, "gamma"), (self.opacity, "opacity"),
+                             (self.fade, "fade")):
+            signal = (widget.currentIndexChanged if isinstance(widget, QComboBox)
+                      else widget.toggled if isinstance(widget, QCheckBox)
+                      else widget.valueChanged)
+            signal.connect(lambda *_a, n=name: self._style_edited(n))
+        self._load_style_controls()
+        return group
+
+    def _style_axes(self):
+        target = self.style_target.currentData()
+        return [0, 1, 2] if target is None else [int(target)]
+
+    def _load_style_controls(self, *_):
+        """Show the chosen planes' settings (the first of them, for all)."""
+        style = self.scene.styles[self._style_axes()[0]]
+        values = ((self.colormap, style.colormap), (self.flip, style.flip),
+                  (self.level_lo, style.levels[0]), (self.level_hi, style.levels[1]),
+                  (self.gamma, style.gamma), (self.opacity, style.opacity * 100.0),
+                  (self.fade, style.fade * 100.0))
+        for widget, value in values:
+            widget.blockSignals(True)
+            if isinstance(widget, QComboBox):
+                widget.setCurrentText(value)
+            elif isinstance(widget, QCheckBox):
+                widget.setChecked(bool(value))
+            else:
+                widget.setValue(float(value))
+            widget.blockSignals(False)
+
+    def _style_edited(self, name):
+        for d in self._style_axes():
+            style = self.scene.styles[d]
+            if name == "colormap":
+                style.colormap = self.colormap.currentText()
+            elif name == "flip":
+                style.flip = self.flip.isChecked()
+            elif name == "lo":
+                style.levels = (self.level_lo.value(), style.levels[1])
+            elif name == "hi":
+                style.levels = (style.levels[0], self.level_hi.value())
+            elif name == "gamma":
+                style.gamma = self.gamma.value()
+            elif name == "opacity":
+                style.opacity = self.opacity.value() / 100.0
+            elif name == "fade":
+                style.fade = self.fade.value() / 100.0
+        self.scene.update()
+
+    def _plane_levels(self, axis=None):
+        """1st to 99.5th percentile of what the planes normal to ``axis``
+        show (every plane, for None); the cube's, if none is drawn."""
+        images = [np.asarray(f.image, dtype=float).ravel() for f in self.scene.faces
+                  if axis is None or f.axis == axis]
+        values = np.concatenate(images) if images else self.values.ravel()
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            return self._auto_levels
+        lo, hi = float(np.percentile(values, 1)), float(np.percentile(values, 99.5))
+        return (lo, hi) if hi > lo else self._auto_levels
+
+    def auto_levels(self):
+        axes = self._style_axes()
+        levels = self._plane_levels(None if len(axes) > 1 else axes[0])
+        for d in axes:
+            self.scene.styles[d].levels = levels
+        self._load_style_controls()
+        self.scene.update()
+
+    def auto_levels_each(self):
+        for d in range(3):
+            self.scene.styles[d].levels = self._plane_levels(d)
+        self._load_style_controls()
+        self.scene.update()
+
+    # -- coordinate axes -------------------------------------------------------
+    def _axes_group(self):
+        """Where the coordinate axes go: for each axis, the edge of the box
+        it is drawn on and the way it runs -- which together say where it
+        starts. Automatic puts them on the outline edges facing the viewer,
+        and moves them as the view turns."""
+        group = QGroupBox("Axes")
+        form = QFormLayout(group)
+        form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
+        self.axes_on = QCheckBox("Draw the axes, with ticks and values")
+        self.axes_on.setChecked(True)
+        self.axes_on.toggled.connect(self._axes_edited)
+        form.addRow(self.axes_on)
+
+        self.axes_auto = QComboBox()
+        self.axes_auto.addItem("Automatic: outer edges facing you", True)
+        self.axes_auto.addItem("As chosen below", False)
+        self.axes_auto.setToolTip(
+            "Automatic keeps each axis on an outline edge of the box, at the "
+            "bottom or the left as the view turns. Choose an edge or a "
+            "direction below to place them yourself.")
+        self.axes_auto.currentIndexChanged.connect(self._axes_edited)
+        form.addRow("Placement", self.axes_auto)
+
+        self.axes_show, self.axes_edge, self.axes_direction = [], [], []
+        for d in range(3):
+            others = [o for o in range(3) if o != d]
+            row = QWidget()
+            box = QHBoxLayout(row)
+            box.setContentsMargins(0, 0, 0, 0)
+            show = QCheckBox()
+            show.setChecked(True)
+            show.setToolTip(f"Draw the {self.short_labels[d]} axis.")
+            edge = QComboBox()
+            for signs in V.EDGES:
+                edge.addItem(", ".join(
+                    f"{self._tiny(o)} {'max' if sign > 0 else 'min'}"
+                    for o, sign in zip(others, signs)), signs)
+            edge.setToolTip(
+                f"The edge of the box the {self.short_labels[d]} axis is drawn "
+                f"on: where the other two coordinates are at their low (min) "
+                f"or high (max) end.")
+            direction = QComboBox()
+            direction.addItem("from min", 1)
+            direction.addItem("from max", -1)
+            direction.setToolTip(
+                f"Which end of the edge the {self.short_labels[d]} axis starts "
+                f"from: its start point is that corner of the box.")
+            box.addWidget(show)
+            box.addWidget(edge)
+            box.addWidget(direction)
+            box.addStretch(1)
+            form.addRow(self.short_labels[d], row)
+            show.toggled.connect(self._axes_edited)
+            edge.activated.connect(self._axes_chosen)
+            direction.activated.connect(self._axes_chosen)
+            self.axes_show.append(show)
+            self.axes_edge.append(edge)
+            self.axes_direction.append(direction)
+        self._axes_edited()
+        return group
+
+    def _tiny(self, d):
+        """An axis's name cut to a word, for the edge lists."""
+        words = self.short_labels[d].replace(",", "").split()
+        return words[-1] if words else "xyz"[d]
+
+    def _axes_chosen(self, *_):
+        """An edge or a direction picked by hand: placement is manual now."""
+        self.axes_auto.blockSignals(True)
+        self.axes_auto.setCurrentIndex(1)
+        self.axes_auto.blockSignals(False)
+        self._axes_edited()
+
+    def _show_auto_edges(self):
+        """With automatic placement, the edge lists are greyed out but show
+        the edge each axis is on now."""
+        if self.scene.axes is None or self.scene.axes.edges is not None:
+            return
+        for combo, edge in zip(self.axes_edge,
+                               V.auto_edges(self.scene.camera, self.scene.bounds)):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(combo.findData(tuple(edge)))
+            combo.blockSignals(False)
+
+    def _axes_edited(self, *_):
+        automatic = bool(self.axes_auto.currentData())
+        for combo in self.axes_edge:
+            combo.setEnabled(not automatic and self.axes_on.isChecked())
+        for widget in self.axes_show + self.axes_direction + [self.axes_auto]:
+            widget.setEnabled(self.axes_on.isChecked())
+        if not self.axes_on.isChecked():
+            self.scene.axes = None
+        else:
+            self.scene.axes = AxesSpec(
+                shown=[box.isChecked() for box in self.axes_show],
+                edges=None if automatic else
+                [tuple(combo.currentData()) for combo in self.axes_edge],
+                directions=[combo.currentData() for combo in self.axes_direction],
+                titles=tuple(self.labels))
+        self._show_auto_edges()
+        self.scene.update()
+
+    # -- camera ----------------------------------------------------------------
+    def _camera_group(self):
+        group = QGroupBox("Camera")
+        form = QFormLayout(group)
+        form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
         self.azimuth = spin(45.0, -360.0, 360.0, 5.0, 1, "°")
         self.elevation = spin(25.0, -89.0, 89.0, 5.0, 1, "°")
         for box in (self.azimuth, self.elevation):
@@ -666,33 +1250,60 @@ class VolumeWindow(QMainWindow):
         self.edges = QCheckBox("Outline the faces")
         self.edges.setChecked(True)
         self.edges.toggled.connect(self._restyle)
+        self.edges.setVisible(self.mode != "projection")
         form.addRow("", self.edges)
-
-        save = QPushButton("Save the view...")
-        save.clicked.connect(self.save_view)
-        form.addRow("", save)
+        self.tripod = QCheckBox("Orientation tripod in the corner")
+        self.tripod.setChecked(self.mode == "projection")
+        self.tripod.toggled.connect(self._restyle)
+        form.addRow("", self.tripod)
+        self.scene.show_axes = self.tripod.isChecked()
         return group
+
+    def _output_row(self):
+        row = QHBoxLayout()
+        save = QPushButton("Save the view...")
+        save.setToolTip(
+            "Write this view as a figure -- PDF, SVG, PNG or TIFF -- with the "
+            "figure composer's default style: 89 mm wide, 600 dpi, its font "
+            "and line widths for the axes. For another style, use To figure "
+            "composer.")
+        save.clicked.connect(self.save_view)
+        compose = QPushButton("To figure composer...")
+        compose.setToolTip(
+            "Add this view, as it is now, as a panel of a figure: a new one, "
+            "or one already open. There it takes the figure's style and can "
+            "be lettered, titled and annotated beside other panels.")
+        compose.clicked.connect(self.to_figure_composer)
+        row.addWidget(save)
+        row.addWidget(compose)
+        row.addStretch(1)
+        return row
 
     # -- behaviour ---------------------------------------------------------
     def _queue(self, *_):
         self._timer.start()
 
     def _restyle(self, *_):
-        self.scene.colormap = self.colormap.currentText()
-        self.scene.flip = self.flip.isChecked()
-        lo, hi = self.level_lo.value(), self.level_hi.value()
-        self.scene.levels = (lo, hi) if hi > lo else self._auto_levels
-        self.scene.gamma = self.gamma.value()
+        if self.mode == "projection":
+            self.scene.colormap = self.colormap.currentText()
+            self.scene.flip = self.flip.isChecked()
+            lo, hi = self.level_lo.value(), self.level_hi.value()
+            self.scene.levels = (lo, hi) if hi > lo else self._auto_levels
+            self.scene.gamma = self.gamma.value()
+            self._queue()                    # the projection uses the levels
         self.scene.show_edges = self.edges.isChecked()
+        self.scene.show_axes = self.tripod.isChecked()
         self.scene.update()
 
     def _camera_typed(self, *_):
         self.scene.camera.azimuth = self.azimuth.value()
         self.scene.camera.elevation = self.elevation.value()
         self.scene.camera.aspect = (1.0, 1.0, self.z_aspect.value())
-        if self.tabs.currentIndex() == 2:
+        if self.mode == "projection":
             self._queue()               # a projection depends on the direction
         else:
+            if hasattr(self, "axes_edge"):
+                self._show_auto_edges()
             self.scene.update()
 
     def _camera_moved(self):
@@ -701,8 +1312,10 @@ class VolumeWindow(QMainWindow):
             box.blockSignals(True)
             box.setValue(value)
             box.blockSignals(False)
-        if self.tabs.currentIndex() == 2:
+        if self.mode == "projection":
             self._queue()
+        elif hasattr(self, "axes_edge"):
+            self._show_auto_edges()
 
     def _face_the_notch(self):
         signs = self.notch_corner.currentData()
@@ -710,11 +1323,10 @@ class VolumeWindow(QMainWindow):
         self.elevation.setValue(28.0 * signs[2])
 
     def rebuild(self):
-        tab = self.tabs.currentIndex()
         bounds = V._bounds(self.axes)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            if tab == 0:
+            if self.mode == "slices":
                 positions = [self.slice_at[d].position()
                              if self.slice_on[d].isChecked() else None
                              for d in range(3)]
@@ -724,9 +1336,9 @@ class VolumeWindow(QMainWindow):
                                       density=360)
                 self.scene.set_scene(faces, bounds)
                 self.note.setText(f"{len(faces)} plane(s) at " + ", ".join(
-                    f"{self.labels[d].split(' (')[0]} = {p:.4g}"
+                    f"{self.short_labels[d]} = {p:.4g}"
                     for d, p in enumerate(positions) if p is not None))
-            elif tab == 1:
+            elif self.mode == "notch":
                 notch = [self.notch_at[d].position() for d in range(3)]
                 self.scene.image = None
                 self.scene.cull = True
@@ -749,7 +1361,9 @@ class VolumeWindow(QMainWindow):
         cube = V.view_volume(self.values, self.axes, self.scene.camera,
                              samples=samples, bounds=bounds)
         mode = self.projection_mode.currentIndex()
-        lo, hi = self.scene.levels
+        lo, hi = self.level_lo.value(), self.level_hi.value()
+        if hi <= lo:
+            lo, hi = self._auto_levels
         if mode == 3:
             level = lo + float(self.iso_level.value()) * (hi - lo)
             depth, shade = V.isosurface_depth(cube, level)
@@ -759,7 +1373,6 @@ class VolumeWindow(QMainWindow):
                 f"Isosurface at {level:.4g}: {100 * hits:.1f}% of the view "
                 f"hits it. Shading is Lambert on the depth map's gradient.")
             self.scene.set_scene([], bounds)
-            self._iso_levels = (0.0, 1.0)
             self.scene.levels = (0.0, 1.0)
             return
         kind = ["mip", "sum", "alpha"][mode]
@@ -776,45 +1389,96 @@ class VolumeWindow(QMainWindow):
         self.note.setText(f"{self.projection_mode.currentText()} over "
                           f"{samples} samples along the view")
 
-    def save_view(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save the 3D view", f"{self.source_name}_3d.png",
-            "PNG (*.png);;PDF (*.pdf);;SVG (*.svg)")
-        if not path:
+    # -- output ------------------------------------------------------------
+    def figure_panel(self):
+        """This view as it is now, as a figure-composer panel."""
+        from tools.output.figure import Panel, PanelData
+
+        snapshot = self.scene.snapshot()
+        style = (snapshot.styles or {}).get(2)
+        colormap = style.colormap if style else snapshot.colormap
+        flip = style.flip if style else snapshot.flip
+        levels = tuple(style.levels if style else snapshot.levels)
+        data = PanelData(array=np.array([levels, levels], dtype=float),
+                         x=np.array([0.0, 1.0]), y=np.array([0.0, 1.0]),
+                         name=f"{self.source_name} ({MODES[self.mode]})",
+                         kind="scene3d", scene=snapshot)
+        return Panel(data=data, colormap=colormap, flip=flip, levels=levels,
+                     colorbar_label="Intensity")
+
+    def _aspect(self) -> float:
+        """Height / width for a figure panel of this view: the shape of the
+        box as the camera sees it, not of the window, so the page has no
+        bands of white above and below it."""
+        bounds = self.scene.bounds
+        corners = np.array([[bounds[0][i], bounds[1][j], bounds[2][k]]
+                            for i in (0, 1) for j in (0, 1) for k in (0, 1)],
+                           dtype=float)
+        screen, _ = self.scene.camera.project(corners, bounds)
+        span = np.maximum(screen.max(axis=0) - screen.min(axis=0), 1e-9)
+        return float(np.clip(span[1] / span[0], 0.45, 1.6))
+
+    def save_view(self, path: str = None):
+        """Write the view as a one-panel figure, by the composer's own
+        export: the same style, fonts and resolution as any figure."""
+        from tools.output.figure import Figure, FigureStyle
+        from ui.panels.figure import FigurePainter, write_figure
+
+        if path is None:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save the view", f"{self.source_name}_3d.pdf",
+                "PDF (*.pdf);;SVG (*.svg);;PNG (*.png);;TIFF (*.tif)")
+            if not path:
+                return None
+        fmt = path.lower().rsplit(".", 1)[-1] if "." in path else "png"
+        fmt = {"tiff": "tif"}.get(fmt, fmt)
+        if fmt not in ("pdf", "svg", "png", "tif"):
+            fmt, path = "png", path + ".png"
+        figure = Figure([self.figure_panel()],
+                        style=FigureStyle(panel_aspect=self._aspect()))
+        figure.panels[0].label = ""
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            written = write_figure(FigurePainter(figure), path, fmt)
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Save the view", f"Could not write it:\n{exc}")
             return None
-        lower = path.lower()
-        width, height = 2000, int(2000 * self.scene.height() / max(self.scene.width(), 1))
-        if lower.endswith(".pdf"):
-            from PyQt5.QtGui import QPdfWriter
-            from PyQt5.QtCore import QSizeF
-            writer = QPdfWriter(path)
-            writer.setResolution(600)
-            writer.setPageSizeMM(QSizeF(160.0, 160.0 * height / width))
-            painter = QPainter(writer)
-            self.scene.render_into(painter, writer.width(), writer.height())
-            painter.end()
-        elif lower.endswith(".svg"):
-            from PyQt5.QtSvg import QSvgGenerator
-            generator = QSvgGenerator()
-            generator.setFileName(path)
-            generator.setSize(pg.QtCore.QSize(width, height))
-            generator.setViewBox(QRectF(0, 0, width, height))
-            painter = QPainter(generator)
-            painter.fillRect(QRectF(0, 0, width, height),
-                             QColor(self.scene.background))
-            self.scene.render_into(painter, width, height)
-            painter.end()
-        else:
-            pixmap = QPixmap(width, height)
-            pixmap.fill(QColor(self.scene.background))
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            self.scene.render_into(painter, width, height)
-            painter.end()
-            pixmap.save(path)
-        self.note.setText(f"Saved {width} × {height} to {path}")
+        QApplication.restoreOverrideCursor()
+        self.note.setText(f"Saved {', '.join(written)}")
         return path
+
+    def to_figure_composer(self, target=None):
+        """Put this view into a figure composer: ``target`` (a window), or
+        one the user picks among those open, or a new one."""
+        from ui.panels.figure import FigureWindow, open_figure_windows
+        from ui.viewers.windows import keep_alive
+
+        panel = self.figure_panel()
+        if target is None:
+            windows = open_figure_windows()
+            if windows:
+                names = ["A new figure"] + [w.windowTitle() for w in windows]
+                choice, ok = QInputDialog.getItem(
+                    self, "To figure composer", "Add this view to:", names,
+                    0, False)
+                if not ok:
+                    return None
+                index = names.index(choice)
+                target = windows[index - 1] if index > 0 else None
+        if target is None:
+            target = FigureWindow([panel], f"Figure — {self.source_name}",
+                                  parent=None)
+            target.figure.style.panel_aspect = self._aspect()
+            target.refresh()
+            keep_alive(target)
+            target.show()
+        else:
+            target.add_panels([panel])
+            target.raise_()
+            target.activateWindow()
+        self.note.setText(f"Added to “{target.windowTitle()}”")
+        return target
 
     def closeEvent(self, event):
         self.closed.emit(self)

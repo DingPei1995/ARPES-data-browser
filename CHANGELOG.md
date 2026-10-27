@@ -45,6 +45,48 @@ file is the record of how it got that way.
     own window: the map's first axis is whatever was scanned -- a
     deflector angle, a manipulator rotation, or the photon energy of a kz
     map. The tooltip names the axis this map has.
+- **The 3-D view is three tools: 3D slices, Notched cube, Volume
+  projection.** They were tabs of one window, behind one "3D view" button,
+  though they are different pictures with different controls. Each is now
+  its own button in the tool panel's *3D only* group and its own window.
+  - **No sampling question before the data is on screen.** A view opens at
+    the "Balanced" sampling (about 160 points per axis) over the whole
+    cube. Under *Save the view* the window shows the sampling it is drawn
+    from -- points per axis, the share of the measurement, the range and
+    whether it is cropped -- and **Change sampling...** opens the region /
+    sampling dialog, prefilled, and redraws from the full cube. The window
+    keeps the dataset open for that and releases it on close; a
+    file-backed cube is cropped before it is read
+    (`volume.reduce_volume`), so a small window onto a large map reads
+    only that window.
+  - **Colours per slice, with transparency** (slices and notched cube).
+    *Apply to* chooses all planes or only those at constant deflector,
+    slit or energy; each orientation keeps its own colormap, levels,
+    gamma, **opacity** and **fade low values** (the weakest intensities
+    go transparent, so a slice can be looked through where it holds only
+    background). Editing with *All* changes only the setting edited, so a
+    colormap chosen for all keeps each slice's levels. *Auto* takes the
+    levels from the chosen planes' own data; *Each its own* gives every
+    orientation its own. Translucent faces are drawn back to front with
+    the hidden ones included, so what is behind shows through.
+  - **Coordinate axes with ticks, values and titles**, drawn on edges of
+    the box. *Automatic* keeps each axis on an outline edge facing the
+    viewer -- at the bottom, or the left for the upright one -- and moves
+    it as the view turns; the edge lists are greyed out but show the edge
+    in use. Otherwise each axis gets its own edge (which of the four
+    parallel ones) and its direction (from its min or its max end), which
+    together set where it starts. Titles run along their axis. The corner
+    tripod is now an option, off by default.
+  - **Save the view writes a figure**, by the figure composer's own export
+    (`figure.write_figure`): PDF, SVG, PNG or TIFF, 89 mm wide at 600 dpi,
+    with the composer's font, point sizes, axis line width and tick length
+    for the 3-D axes. **To figure composer...** adds the view as it is
+    now as a panel of a new figure or of one already open, where it is
+    lettered, titled and annotated like any panel. The figure painter
+    draws such a panel (`kind == "scene3d"`) with the same function as the
+    window (`volume.paint_scene`), so the panel is what the window showed;
+    a figure made only of 3-D panels reserves no frame margins.
+  - Volume projection is unchanged apart from being a window of its own.
 - **Close is always the last button of a dialog's row.** The buttons were
   laid out by `QDialogButtonBox`, which orders them by role in the
   platform's own way; on Windows that put *Close* to the left of *Apply*

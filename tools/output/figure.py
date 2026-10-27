@@ -232,6 +232,10 @@ class PanelData:
     name: str = ""
     kind: str = "cut"
     info: dict = field(default_factory=dict)
+    #: for ``kind == "scene3d"``: the 3-D view to draw, a snapshot made by
+    #: ui.panels.volume (faces, camera, colours, axes). The panel's own x
+    #: and y then run 0..1 across the picture, for placing notes on it.
+    scene: object = None
 
 
 @dataclass
@@ -273,6 +277,8 @@ class Panel:
         """The data's outer bounds: the axis range grown by half a pixel at
         each end, since a pixel is centred on its value."""
         x, y = np.asarray(self.data.x, float), np.asarray(self.data.y, float)
+        if self.data.kind == "scene3d":
+            return (0.0, 1.0, 0.0, 1.0)       # a picture, not pixels on axes
         if self.data.kind == "stack":
             # Curves only: the "image" is a blank placeholder of two pixels,
             # and growing it by half a pixel doubled both ranges -- the curves
@@ -453,6 +459,10 @@ class Figure:
         label_pt = style.label_pt or style.font_pt
         gap = 0.35 * pt_to_mm(tick_pt)
         outward = style.tick_len_mm if style.tick_direction == "out" else 0.0
+        # A 3-D view carries its axes inside the picture, so a figure made
+        # only of those reserves nothing for a frame's ticks and labels.
+        scenes_only = bool(self.panels) and all(
+            getattr(panel.data, "kind", "") == "scene3d" for panel in self.panels)
 
         target = self.tick_targets(*(panel_size or (40.0, 30.0)))[1]
         widest = 0.0
@@ -473,6 +483,8 @@ class Figure:
                   + 1.9 * pt_to_mm(label_pt))
         top = outward
         right = outward
+        if scenes_only:
+            left = bottom = top = right = 0.0
         if any(panel.title for panel in self.panels):
             top += 1.4 * pt_to_mm(label_pt)
         if any(panel.top_axis and panel.top_axis.enabled for panel in self.panels):

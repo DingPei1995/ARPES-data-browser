@@ -369,12 +369,11 @@ class Shots:
 
     def volume(self):
         self._select("FS_map_hv60")
-        grab_modal("volume_range_dialog", then="accept")
-        self.av.open_volume_view()
+        window = self.av.open_volume_view("notch")
         pump(20)
-        window = [w for w in QApplication.topLevelWidgets()
-                  if type(w).__name__ == "VolumeWindow" and w.isVisible()][-1]
         shot(window, "volume_view", (1100, 820))
+        grab_modal("volume_range_dialog", then="reject")
+        window.change_sampling()
         self._select("FS_map_hv60")
         dialog = self.av.open_processing()
         pump()

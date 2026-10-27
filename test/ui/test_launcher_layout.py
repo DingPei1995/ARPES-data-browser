@@ -60,9 +60,10 @@ def test_tool_buttons_follow_the_selection(launcher):
     _select(lv, "c")
     tools = lv.ui.ToolButtons
     assert tools["fit"].isEnabled() and tools["background"].isEnabled()
-    assert not tools["view3d"].isEnabled()
+    assert not tools["slices3d"].isEnabled()
     _select(lv, "m")
-    assert tools["view3d"].isEnabled() and tools["smooth"].isEnabled()
+    assert tools["slices3d"].isEnabled() and tools["notch3d"].isEnabled()
+    assert tools["projection3d"].isEnabled() and tools["smooth"].isEnabled()
     assert not tools["stack"].isEnabled()
     assert "a cut" in tools["stack"].toolTip()
     _select(lv, "c", "m")

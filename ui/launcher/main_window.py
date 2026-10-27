@@ -334,9 +334,15 @@ TOOL_GROUPS = (
          "selected is A; the window can swap them."),
     )),
     ("3D only \u2014 maps", (
-        ("view3d", "3D view...",
-         "Orthogonal slices, the notched cube, an isosurface and the volume "
-         "projections."),
+        ("slices3d", "3D slices...",
+         "The three orthogonal planes through the cube, each placed where "
+         "you choose, each with its own colours."),
+        ("notch3d", "Notched cube...",
+         "The cube with one corner cut away: a constant-energy map and two "
+         "dispersions in one picture."),
+        ("projection3d", "Volume projection...",
+         "The whole volume projected along the view: maximum intensity, "
+         "sum, alpha composite, or a shaded isosurface."),
     )),
 )
 
