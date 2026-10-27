@@ -73,12 +73,13 @@ def test_map_keeps_only_its_cut_buttons(app):
     window = W.ContourWindow(_map(), "m", "gray", False)
     assert _toolbar_buttons(window) == ["Scan-axis cut", "Slit cut", "Plot tools"]
     texts = _visible_texts(window)
-    for expected in ("Arbitrary cut...", "Convert to momentum (k)...",
+    for expected in ("Arbitrary cut...",
                      "Multi-slice figure...", "Save slice to the main list",
                      "Freeze slice in a new window"):
         assert expected in texts
     # the tool panel's, so not repeated here
     assert "Remove detector grid..." not in texts
+    assert "Convert to momentum (k)..." not in texts
     slit = window.open_cut("slit")
     assert "Remove detector grid..." not in _visible_texts(slit)
     assert "Brillouin zone..." not in texts          # angle map: not offered
@@ -99,11 +100,10 @@ def test_cut_viewer_keeps_no_tool_buttons(app):
     window = W.CutWindow(_cut(), "c", "gray", False)
     assert _toolbar_buttons(window) == ["Plot tools"]
     texts = _visible_texts(window)
-    for expected in ("Straighten bands (FS correction)...",
-                     "Convert to momentum (k)..."):
-        assert expected in texts
+    assert "Straighten bands (FS correction)..." in texts
     # Tools of the launcher's tool panel are not repeated in a viewer.
-    for gone in ("Fermi edge fit...", "MDC fit (k-cut only)...", "EDC fit...",
+    for gone in ("Fermi edge fit...", "Convert to momentum (k)...",
+                 "MDC fit (k-cut only)...", "EDC fit...",
                  "Cut arithmetic...", "Remove detector grid..."):
         assert gone not in texts
     window.close()
@@ -114,9 +114,10 @@ def test_menu_sections_and_hidden_entries(app):
     window._rebuild_functions_menu()
     shown = [a.text() for a in window.functions_menu.actions()]
     assert shown[0] == "Transform"
-    assert "Convert to momentum (kz, k\u2225)..." in shown
-    assert "Align Fermi levels (kz map)..." not in shown     # the tool panel's
-    assert "Convert to momentum (k)..." not in shown
+    # the tool panel's
+    for gone in ("Convert to momentum (kz, k\u2225)...",
+                 "Align Fermi levels (kz map)...", "Convert to momentum (k)..."):
+        assert gone not in shown
     assert shown.index("Slice") > shown.index("Visualization")
     k_map = W.ContourWindow(_map("k_map"), "k", "gray", False)
     assert "Brillouin zone..." in _visible_texts(k_map)

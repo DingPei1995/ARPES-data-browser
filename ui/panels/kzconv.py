@@ -34,6 +34,7 @@ from tools.crystal.lattice import LatticeParams, validate_lattice_parameters
 from tools.processing.process import Step, record_step
 from ui.common import jobs as nxs_jobs
 from tools.output import colormaps
+from tools.runtime import remembered
 from ui.viewers.widgets import add_button, ButtonRow, MemoryData
 
 __all__ = ["KzConversionDialog"]
@@ -81,7 +82,47 @@ class KzConversionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        # A kz map of the same size as one converted before is nearly always
+        # the same crystal again (another polarisation): start from that
+        # conversion's V0, geometry, grid and lattice.
+        self.restored = remembered.recall(self.REMEMBERED, self._shape())
+        if self.restored:
+            self.restore(self.restored)
         self.refresh()
+
+    # -- remembered between scans of one size ------------------------------
+    #: the key the settings are remembered under (tools.runtime.remembered)
+    REMEMBERED = "kz_conversion"
+
+    #: the boxes that carry over -- not the work function or the
+    #: manipulator theta, which each file records for itself
+    _CARRIED = ("inner_potential", "effective_mass", "angle_offset", "n_kz",
+                "n_kpar", "space_group", "lat_a", "lat_b", "lat_c",
+                "lat_alpha", "lat_beta", "lat_gamma", "kpar_h", "kpar_k",
+                "kpar_l", "kpar_rotation")
+
+    def _shape(self):
+        return (self.hv.size, self.angle.size, self.energy.size)
+
+    def remembered_settings(self) -> dict:
+        settings = {name: getattr(self, name).value() for name in self._CARRIED}
+        settings["surface_hkl"] = list(self.surface_hkl())
+        return settings
+
+    def restore(self, settings: dict):
+        # The space group first: it fixes some of the cell, and the cell
+        # decides which surface normals are on offer.
+        for name in self._CARRIED:
+            if name in settings:
+                box = getattr(self, name)
+                box.setValue(type(box.value())(settings[name]))
+        wanted = settings.get("surface_hkl")
+        if wanted is not None:
+            for index in range(self.normal_index.count()):
+                data = self.normal_index.itemData(index)
+                if data is not None and _same_direction(data[0], wanted):
+                    self.normal_index.setCurrentIndex(index)
+                    break
 
     # -- is the Fermi surface flat enough? ---------------------------------
     def _flatness_banner(self) -> QLabel:
@@ -703,6 +744,8 @@ class KzConversionDialog(QDialog):
 
     # -- converting --------------------------------------------------------
     def convert(self):
+        remembered.remember(self.REMEMBERED, self._shape(),
+                            self.remembered_settings())
         cube = np.asarray(self.contour.full_cube(), dtype=float)
         settings = self.settings()
         n_kz, n_kpar = int(self.n_kz.value()), int(self.n_kpar.value())

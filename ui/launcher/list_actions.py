@@ -64,6 +64,11 @@ RULES = {
     # Only on the detector's own pixels: a map in momentum has been
     # resampled, and the grid is no longer anywhere fixed to find.
     "fermi": ("one", PLANES, "a cut or a map"),
+    "kmap": ("one", frozenset({"map"}),
+             "an angle map (one in k or a kz map is not converted this way)"),
+    "kcut": ("one", frozenset({"cut"}), "a cut in angle"),
+    "kzconv": ("one", frozenset({"kz_map"}),
+               "a photon-energy scan (kz map) not yet in momentum"),
     "kzalign": ("one", frozenset({"kz_map"}),
                 "a photon-energy scan (kz map) before its k conversion"),
     "degrid": ("one", frozenset({"cut", "map", "kz_map"}),
@@ -116,6 +121,8 @@ def availability(action: str, rows):
                                      for row in rows}) > 1:
         return False, ("Cuts and maps are processed in different panels: "
                        "select cuts only, or maps only.")
+    if action == "kcut" and any(len(row) > 2 and row[2] is True for row in rows):
+        return False, (f"“{rows[0][0]}” is already in momentum.")
     if action == "mdcfit" and any(len(row) > 2 and row[2] is False
                                   for row in rows):
         return False, ("The MDC fit works on a cut in momentum only; "

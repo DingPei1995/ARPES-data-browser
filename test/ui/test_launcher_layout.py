@@ -49,7 +49,7 @@ def _select(lv, *texts):
     lw = lv.ui.FilePathListWidget
     lw.clearSelection()
     for i in range(lw.count()):
-        if any(lw.item(i).text().startswith(t + " ") for t in texts):
+        if any(lw.item(i).text().startswith(t + "   [") for t in texts):
             lw.item(i).setSelected(True)
 
 
@@ -263,3 +263,128 @@ def test_fermi_fit_and_kz_alignment_are_tools(launcher):
     dialog.close()
     QApplication.processEvents()
     assert not dialog.cut_window.isVisible()
+
+
+def test_settings_are_remembered_per_size(tmp_path):
+    from tools.runtime import remembered
+    assert remembered.recall("t", (3, 4)) is None
+    remembered.remember("t", (3, 4), {"a": 1.5})
+    remembered.remember("t", (5, 4), {"a": 2.0})
+    assert remembered.recall("t", (3, 4)) == {"a": 1.5}
+    assert remembered.recall("t", (4, 3)) is None
+    assert remembered.recall("other", (3, 4)) is None
+
+
+def test_the_panel_has_a_basic_and_an_advanced_section(launcher):
+    ui = launcher.ui
+    basic, advanced = ui.ToolSections["Basic"], ui.ToolSections["Advanced"]
+    for name in ("fermi", "degrid", "background", "kcut", "corelevel", "kmap",
+                 "kzalign", "kzconv"):
+        assert basic.isAncestorOf(ui.ToolButtons[name]), name
+    for name in ("figure", "smooth", "derivative", "curvature", "symmetry",
+                 "stack", "mdcfit", "edcfit", "arithmetic", "slices3d",
+                 "notch3d", "projection3d"):
+        assert advanced.isAncestorOf(ui.ToolButtons[name]), name
+
+
+def test_map_k_conversion_opens_a_bare_contour_and_remembers(launcher, monkeypatch):
+    lv = launcher
+    run = W.ContourWindow.run_k_conversion
+    monkeypatch.setattr(W.ContourWindow, "run_k_conversion",
+                        lambda self, s, name=None, background=True:
+                        run(self, s, name=name, background=False))
+    _select(lv, "m")
+    assert lv.ui.ToolButtons["kmap"].isEnabled()
+    assert not lv.ui.ToolButtons["kzconv"].isEnabled()
+    lv.ui.ToolButtons["kmap"].click()
+    contour = lv.viewer_windows[-1]
+    dialog = contour._kconv_dialog
+    assert isinstance(contour, W.ContourWindow) and dialog is not None
+    for hidden in (contour.functions_button, contour.plot_tools_button,
+                   contour.slit_cut_button, contour.defl_cut_button):
+        assert not hidden.isVisibleTo(contour)
+    assert not dialog.restored
+    dialog.theta_box.setValue(1.5)
+    dialog.azimuth_box.setValue(10.0)
+    rows = lv.ui.FilePathListWidget.count()
+    dialog.accept()
+    QApplication.processEvents()
+    assert lv.ui.FilePathListWidget.count() == rows + 1      # the k-map listed
+    assert not contour.isVisible()                            # closed with it
+
+    _select(lv, "m")                                          # same size again
+    lv.ui.ToolButtons["kmap"].click()
+    dialog = lv.viewer_windows[-1]._kconv_dialog
+    assert dialog.restored
+    assert dialog.theta_box.value() == pytest.approx(1.5)
+    assert dialog.azimuth_box.value() == pytest.approx(10.0)
+    contour = lv.viewer_windows[-1]
+    dialog.reject()
+    QApplication.processEvents()
+    assert not contour.isVisible()
+
+
+def test_cut_k_conversion_picks_gamma_with_a_line_and_remembers(launcher):
+    lv = launcher
+    _select(lv, "c")
+    lv.ui.ToolButtons["kcut"].click()
+    window = lv.viewer_windows[-1]
+    dialog = window._cut_k_dialog
+    assert not window.functions_button.isVisibleTo(window)
+    assert dialog.gamma_line.getViewBox() is window.view.view_box
+    dialog.gamma_line.setValue(2.5)                  # dragged
+    assert dialog.gamma_slit.value() == pytest.approx(2.5)
+    geometry = dialog.geometry()
+    assert geometry["gamma_deflector_deg"] == geometry["deflector_deg"]
+    assert geometry["azimuth_deg"] == 0.0
+    assert not dialog.advanced.isChecked()
+    dialog.advanced.setChecked(True)
+    dialog.gamma_defl.setValue(3.0)
+    assert dialog.geometry()["gamma_deflector_deg"] == 3.0
+    dialog.advanced.setChecked(False)
+    dialog.accept()
+    QApplication.processEvents()
+    assert not window.isVisible()
+    assert dialog.gamma_line.scene() is None             # taken off the cut
+
+    _select(lv, "c")
+    lv.ui.ToolButtons["kcut"].click()
+    dialog = lv.viewer_windows[-1]._cut_k_dialog
+    assert dialog.restored and dialog.gamma_slit.value() == pytest.approx(2.5)
+    assert dialog.gamma_line.value() == pytest.approx(2.5)
+    dialog.reject()
+
+
+def test_a_k_cut_is_not_converted_again(launcher):
+    lv = launcher
+    k = np.linspace(-0.5, 0.5, 21)
+    lv.add_memory_dataset(MemoryData("cut", (k, EKIN), np.ones((k.size, EKIN.size)),
+                                     {"x": "k (Å⁻¹)", "y": "Kinetic energy (eV)"},
+                                     source_label="kk"), "kk")
+    _select(lv, "kk")
+    assert not lv.ui.ToolButtons["kcut"].isEnabled()
+    assert "already in momentum" in lv.ui.ToolButtons["kcut"].toolTip()
+
+
+def test_kz_conversion_remembers(app, monkeypatch):
+    from ui.panels import kzconv
+    hv = np.linspace(30, 60, 7)
+    rng = np.random.default_rng(2)
+    data = MemoryData("kz_map", (hv, SLIT, EKIN),
+                      rng.random((hv.size, SLIT.size, EKIN.size)) + 1,
+                      {"x": "Photon energy (eV)", "k": "Angle, slit (deg)",
+                       "z": "Kinetic energy (eV)"}, source_label="kz")
+    contour = W.ContourWindow(data, "kz", "gray", False)
+    monkeypatch.setattr(kzconv.nxs_jobs, "run_job", lambda *a, **k: True)
+    dialog = kzconv.KzConversionDialog(contour)
+    assert not dialog.restored
+    dialog.inner_potential.setValue(15.5)
+    dialog.lat_c.setValue(7.25)
+    dialog.convert()
+    dialog.close()
+    again = kzconv.KzConversionDialog(contour)
+    assert again.restored
+    assert again.inner_potential.value() == pytest.approx(15.5)
+    assert again.lat_c.value() == pytest.approx(7.25)
+    again.close()
+    contour.close()

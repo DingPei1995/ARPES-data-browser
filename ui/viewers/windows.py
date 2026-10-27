@@ -168,10 +168,12 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
         bar = QHBoxLayout(bar_widget)
         bar.setContentsMargins(0, 0, 0, 0)
         bar.setSpacing(6)
+        self._toolbar_tools = list(extra_widgets)
         for widget in extra_widgets:
             bar.addWidget(widget)
         if extra_widgets:
-            bar.addWidget(separator())
+            self._toolbar_tools.append(separator())
+            bar.addWidget(self._toolbar_tools[-1])
 
         # What to do with the slice on screen: last in the menu, for every
         # viewer.
@@ -195,7 +197,9 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
         from ui.viewers.plot_tools import plot_tools_button
         self.plot_tools_button = plot_tools_button(self)
         bar.addWidget(self.plot_tools_button)
-        bar.addWidget(separator())
+        self._toolbar_tools += [self.functions_button, self.plot_tools_button,
+                                separator()]
+        bar.addWidget(self._toolbar_tools[-1])
 
         bar.addWidget(section_label("Colormap"))
         self.colormap_combo = QComboBox()
@@ -432,6 +436,15 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
         dialog.show()
         dialog.raise_()
         return dialog
+
+    def show_picture_only(self):
+        """Keep only the picture and how it is displayed: no Functions menu,
+        no plot tools, no cut buttons. For a window opened to serve one tool
+        (a k conversion picks Γ on it), where anything else on offer would
+        be a way to wander off from the job."""
+        for widget in getattr(self, "_toolbar_tools", ()):
+            widget.setVisible(False)
+        return self
 
     def fermi_frame(self):
         """``(angles, energy, frame, angle label, energy label)``: the
@@ -1145,22 +1158,14 @@ class CutWindow(ViewerWindow):
             "Right-click the image for the readout cursor: it reports the "
             "coordinates and value under it and draws the EDC and MDC through "
             "that point.")
-        # The Fermi edge fit, the MDC and EDC fits, cut arithmetic and
-        # de-gridding are buttons of the launcher's tool panel, so they are
-        # not repeated here: one way in for each, always in sight.
+        # The Fermi edge fit, the k conversion, the MDC and EDC fits, cut
+        # arithmetic and de-gridding are buttons of the launcher's tool
+        # panel, so they are not repeated here: one way in for each, always
+        # in sight.
         self.fs_action = self.add_function(
             "Straighten bands (FS correction)...", self.open_fs_correction,
             "Straighten a curved feature: click along it, fit a polynomial, and "
             "shift every angle column in energy so it comes out flat.")
-        self.kconv_action = self.add_function(
-            "Convert to momentum (k)...", self.open_cut_k_conversion,
-            "Convert this cut from degrees to \u00c5\u207b\u00b9. Needs to be "
-            "told where \u0393 is, since a cut is a line that generally misses "
-            "it -- inherit that from a converted map, or type the angles.")
-        blocked = cut_k_conversion_blocked(data)
-        if blocked:
-            self.kconv_action.setEnabled(False)
-            self.kconv_action.setToolTip(f"Not available here: {blocked}.")
         self.build_toolbar()
 
         self.view = FrameImageView()
@@ -1190,14 +1195,16 @@ class CutWindow(ViewerWindow):
                  scan.labels.get("x", "k"), scan.labels.get("y", "E"))]
 
     # -- angle -> momentum -------------------------------------------------
-    def open_cut_k_conversion(self):
+    def open_cut_k_conversion(self, bound: bool = False):
         """The conversion dialog, modeless like the map's: the cut stays
-        readable while the angles are being settled."""
+        readable -- and its Γ line draggable -- while the angles are being
+        settled. ``bound``: this window was opened for the conversion alone
+        (the launcher's tool panel), so the two close together."""
         existing = getattr(self, "_cut_k_dialog", None)
         if existing is not None and existing.isVisible():
             existing.raise_()
             existing.activateWindow()
-            return None
+            return existing
         dialog = CutKConversionDialog(self)
         self._cut_k_dialog = dialog
 
@@ -1205,9 +1212,18 @@ class CutWindow(ViewerWindow):
             settings, name = dialog.settings(), dialog.output_name()
             self._cut_k_dialog = None
             self.run_cut_k_conversion(settings, name=name)
+            if bound:
+                self.close()
+
+        def on_rejected():
+            self._cut_k_dialog = None
+            if bound:
+                self.close()
 
         dialog.accepted.connect(on_accepted)
-        dialog.rejected.connect(lambda: setattr(self, "_cut_k_dialog", None))
+        dialog.rejected.connect(on_rejected)
+        if bound:
+            self.closed.connect(lambda *_: dialog.isVisible() and dialog.reject())
         dialog.show()
         dialog.raise_()
         return dialog
@@ -1526,6 +1542,63 @@ class KConversionDialog(QDialog):
 
         for box in (self.theta_box, self.phi_box):
             box.valueChanged.connect(self._mark_edited)
+
+        # A map of the same size as one converted before is, nearly always,
+        # the same sample measured again (another photon energy, another
+        # polarisation): start from that conversion's settings.
+        from tools.runtime import remembered
+        self.restored = remembered.recall(self.REMEMBERED, self._shape())
+        if self.restored:
+            self.restore(self.restored)
+
+    #: the key the settings are remembered under (tools.runtime.remembered)
+    REMEMBERED = "map_k_conversion"
+
+    def _shape(self):
+        contour = self.contour
+        return (len(contour.angle_defl), len(contour.angle_slit), len(contour.E))
+
+    def remembered_settings(self) -> dict:
+        """What carries over to the next map of this size: Γ, the rotation,
+        the grid and the precision -- not the energy offset, which is this
+        map's own E_F, nor the name."""
+        return {"theta": self.theta_box.value(), "phi": self.phi_box.value(),
+                "azimuth": self.azimuth_box.value(),
+                "by_count": self.by_count.isChecked(),
+                "nkx": self.nkx_box.value(), "nky": self.nky_box.value(),
+                "ne": self.ne_box.value(), "dkx": self.dkx_box.value(),
+                "dky": self.dky_box.value(), "de": self.de_box.value(),
+                "precision": self.precision_combo.currentData()}
+
+    def restore(self, settings: dict):
+        """Fill the boxes from remembered settings (see
+        :meth:`remembered_settings`); anything missing keeps its default."""
+        boxes = {"theta": self.theta_box, "phi": self.phi_box,
+                 "azimuth": self.azimuth_box, "nkx": self.nkx_box,
+                 "nky": self.nky_box, "ne": self.ne_box, "dkx": self.dkx_box,
+                 "dky": self.dky_box, "de": self.de_box}
+        for name, box in boxes.items():
+            if name in settings:
+                box.blockSignals(True)
+                box.setValue(type(box.value())(settings[name]))
+                box.blockSignals(False)
+        if "by_count" in settings:
+            (self.by_count if settings["by_count"] else self.by_resolution).setChecked(True)
+        index = self.precision_combo.findData(settings.get("precision"))
+        if index >= 0:
+            self.precision_combo.setCurrentIndex(index)
+        # The origin is now the remembered one, not the cursor's.
+        self._user_edited = True
+        self._update_grid_mode()
+        self.note.setText(
+            "Settings from the last conversion of a map of this size "
+            "(Γ, rotation, grid). The energy offset is this map's own.")
+
+    def accept(self):
+        from tools.runtime import remembered
+        remembered.remember(self.REMEMBERED, self._shape(),
+                            self.remembered_settings())
+        super().accept()
 
     def _default_name(self) -> str:
         """A name for the result that is not already taken.
@@ -3457,30 +3530,11 @@ class ContourWindow(ViewerWindow):
             "Arbitrary cut...", self.open_arbitrary_cut,
             "Cut along a path of up to six points picked on this contour, "
             "instead of along one of the two axes.")
-        # Already in momentum space: converting again would be meaningless.
-        # A kz map is hidden too, for a different reason -- its first axis is
-        # a photon energy, and the in-plane formula does not apply to it.
-        # (The refusal in open_k_conversion() is still there as the backstop,
-        # and explains why; this just stops the entry being offered.)
-        self.kconv_action = self.add_function(
-            "Convert to momentum (k)...", self.open_k_conversion,
-            "Convert this map from angle space to momentum space (A^-1). "
-            "Pick the point on the contour that should become k = (0, 0).",
-            visible=data.kind not in MOMENTUM_KINDS and data.kind != "kz_map")
-        # Aligning a kz map's Fermi levels is the launcher tool panel's.
-        self.kzconv_action = self.add_function(
-            "Convert to momentum (kz, k\u2225)...", self.open_kz_conversion,
-            "Convert this photon-energy scan to (k_z, k_par) in A^-1, "
-            "choosing the inner potential.\n\n"
-            "Flatten the Fermi surface first: the conversion reads the "
-            "energy axis literally, so a Fermi edge that bends across the "
-            "analyser angle becomes a bend in k_z that looks like "
-            "dispersion.",
-            visible=data.kind == "kz_map")
-        # De-gridding is the launcher tool panel's (Remove detector grid...).
+        # The k and kz conversions, aligning a kz map's Fermi levels and
+        # de-gridding are the launcher tool panel's.
         # A Brillouin zone is a statement about momentum-space periodicity,
-        # so it only means something once the axes are actually k, not angle
-        # -- the mirror image of the k conversion's own gating above.
+        # so it only means something once the axes are actually k, not
+        # angle.
         self.bz_action = self.add_function(
             "Brillouin zone...", self.open_brillouin_zone,
             "Overlay a Brillouin zone (or a moire zone) on this contour. "
@@ -3846,8 +3900,13 @@ class ContourWindow(ViewerWindow):
         x, y = cursor.pos()
         return float(x), float(y)
 
-    def open_k_conversion(self):
+    def open_k_conversion(self, bound: bool = False):
         """Ask for the conversion settings, then convert this map to k-space.
+
+        ``bound``: this window was opened for the conversion alone (the
+        launcher's tool panel does that), so it closes with the dialog --
+        once the conversion it started has finished -- and the dialog
+        closes with it.
 
         The dialog is deliberately **modeless**: its whole premise is that
         the user drags the readout cursor on the contour behind it to choose
@@ -3875,6 +3934,11 @@ class ContourWindow(ViewerWindow):
         dialog.setModal(False)
         self._kconv_dialog = dialog
         dialog.follow_cursor()
+        if dialog.restored:
+            # Show where the remembered Γ is on this map.
+            self.view.move_readout_to(dialog.theta_box.value(),
+                                      dialog.phi_box.value())
+        self._close_after_conversion = bound
 
         # Keep the boxes on the cursor while the user drags it around, until
         # they type a value of their own.
@@ -3909,12 +3973,22 @@ class ContourWindow(ViewerWindow):
         def on_rejected():
             cleanup()
             self.statusBar().showMessage("k conversion cancelled")
+            if bound:
+                self.close()
 
         dialog.accepted.connect(on_accepted)
         dialog.rejected.connect(on_rejected)
+        if bound:
+            self.closed.connect(lambda *_: dialog.isVisible() and dialog.reject())
         dialog.show()
         dialog.raise_()
         return dialog
+
+    def _conversion_over(self):
+        """A conversion this window was opened for has ended: close it."""
+        if getattr(self, "_close_after_conversion", False):
+            self._close_after_conversion = False
+            self.close()
 
     def first_axis_is_an_angle(self) -> bool:
         """Whether this map's first axis is an emission angle.
@@ -3952,6 +4026,7 @@ class ContourWindow(ViewerWindow):
                 f"emission angle, so converting it to momentum would not "
                 f"mean anything.\n\nIf that is wrong, re-open the file from "
                 f"the loader and set the first axis to an angle.")
+            self._conversion_over()
             return None
 
         self.statusBar().showMessage("Reading the cube...")
@@ -3970,9 +4045,12 @@ class ContourWindow(ViewerWindow):
         if background:
             started = jobs.run_job(
                 self, "k conversion", work,
-                on_done=lambda result: self._finish_k_conversion(result, settings, name),
-                on_error=lambda exc: self._failed_k_conversion(exc),
-                on_cancel=lambda: self.statusBar().showMessage("k conversion cancelled"))
+                on_done=lambda result: (self._finish_k_conversion(result, settings, name),
+                                        self._conversion_over()),
+                on_error=lambda exc: (self._failed_k_conversion(exc),
+                                      self._conversion_over()),
+                on_cancel=lambda: (self.statusBar().showMessage("k conversion cancelled"),
+                                   self._conversion_over()))
             if started:
                 self.statusBar().showMessage("Converting to k-space...")
                 return None
@@ -3981,8 +4059,11 @@ class ContourWindow(ViewerWindow):
             result = work(lambda *a, **k: None)
         except Exception as exc:
             self._failed_k_conversion(exc)
+            self._conversion_over()
             return None
-        return self._finish_k_conversion(result, settings, name)
+        finished = self._finish_k_conversion(result, settings, name)
+        self._conversion_over()
+        return finished
 
     def _failed_k_conversion(self, exc):
         QMessageBox.warning(self, "k conversion", f"Conversion failed:\n{exc}")
@@ -4129,6 +4210,15 @@ class MapCutWindow(ViewerWindow):
         return f"{self.sum_axis[idx]:.4g} (ind {idx + 1})"
 
     # -- Fermi-edge fitting ----------------------------------------------------
+    def show_picture_only(self):
+        """Keep only the picture and how it is displayed: no Functions menu,
+        no plot tools, no cut buttons. For a window opened to serve one tool
+        (a k conversion picks Γ on it), where anything else on offer would
+        be a way to wander off from the job."""
+        for widget in getattr(self, "_toolbar_tools", ()):
+            widget.setVisible(False)
+        return self
+
     def fermi_frame(self):
         """The cut on screen, at the slider's position and width."""
         frame = self.view.last_frame
@@ -4720,18 +4810,19 @@ class CutKConversionDialog(QDialog):
     The conversion needs two things the cut itself cannot supply: which
     deflector position it was taken at (the file knows) and at which angles
     Gamma sits (the file cannot know -- normal emission is a beamline
-    convention). The second is what the three buttons at the top are for,
-    in descending order of trustworthiness: inherit it from a Map already
-    converted in this session, take the file's own geometry as a starting
-    point, or type it.
+    convention).
 
-    Deliberately *not* offered: picking a "centre line" on the cut. That is
-    what the lab's MATLAB dialog does, and it conflates where normal
-    emission is (which enters inside the sine, and so sets the k axis's
-    scale) with where Gamma is (a translation applied afterwards). Getting
-    the first from the second stretches one half of the cut and squashes the
-    other. Here they are separate: geometry fixes the whole trajectory, and
-    where the axis reads zero is chosen below.
+    **By default Γ is taken to lie on the cut**, at the slit angle of a
+    vertical line dragged on the cut itself: its deflector angle is then the
+    cut's own, and the cut runs through Γ. That is not exact when the cut
+    misses Γ, but it is often all there is -- an experiment sometimes
+    measures one slit cut and nothing else. Γ's angles still enter the
+    geometry as angles (normal emission inside the sine), not as a shift of
+    the converted axis, so the k scale stays right on both sides of it.
+
+    **Advanced** is for a cut that does not run through Γ: Γ's deflector
+    angle and the sample rotation typed, or inherited from a Map converted
+    earlier -- exact if both were measured in the same alignment.
     """
 
     def __init__(self, window: "CutWindow"):
@@ -4758,40 +4849,19 @@ class CutKConversionDialog(QDialog):
 
         layout = QVBoxLayout(content)
         intro = QLabel(
-            "A cut is a line in the (kx, ky) plane and generally does not "
-            "pass through Γ, so the conversion needs to be told where "
-            "Γ is. Inherit it from a converted map, or type the angles.")
+            "Drag the vertical line on the cut to the slit angle of Γ. The "
+            "cut is then taken to run through Γ -- not exact if it misses Γ, "
+            "but the only choice when only this cut was measured. For a cut "
+            "that does not run through Γ, see Advanced.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        # -- where Gamma is --------------------------------------------------
-        gamma_group = QGroupBox("Reference Γ")
+        # -- where Gamma is: on the cut -----------------------------------------
+        gamma_group = QGroupBox("Γ on this cut")
         gamma = QFormLayout(gamma_group)
-        self.map_button = QPushButton("From a converted map...")
-        self.map_button.setToolTip(
-            "Take the angles from a Map already converted in this session. "
-            "Exact if the cut was measured in the same alignment -- the "
-            "manipulator angles of both are compared and any difference is "
-            "reported.")
-        self.map_button.clicked.connect(self.from_converted_map)
-        gamma.addRow("", self.map_button)
-
-        self.gamma_defl = self._angle_box(
-            "Deflector angle at which Γ was observed -- the same number "
-            "as the Map conversion's.")
         self.gamma_slit = self._angle_box(
-            "Angle along the slit at which Γ was observed -- the same "
-            "number as the Map conversion's.")
-        self.azimuth_box = self._angle_box(
-            "Sample rotation about the surface normal, as in the Map "
-            "conversion.")
-        gamma.addRow("Γ deflector angle (deg)", self.gamma_defl)
+            "The slit angle at which Γ is: the vertical line on the cut.")
         gamma.addRow("Γ slit angle (deg)", self.gamma_slit)
-        gamma.addRow("Sample rotation (deg)", self.azimuth_box)
-        self.source_note = QLabel("Typed by hand — nothing inherited yet.")
-        self.source_note.setWordWrap(True)
-        self.source_note.setMinimumHeight(34)
-        gamma.addRow("", self.source_note)
         layout.addWidget(gamma_group)
 
         # -- what this cut is ------------------------------------------------
@@ -4824,6 +4894,44 @@ class CutKConversionDialog(QDialog):
         self.file_note.setWordWrap(True)
         cut.addRow("", self.file_note)
         layout.addWidget(cut_group)
+
+        # -- Advanced: Γ elsewhere --------------------------------------------
+        self.advanced = QGroupBox("Advanced: Γ off this cut")
+        self.advanced.setCheckable(True)
+        self.advanced.setChecked(False)
+        self.advanced.setToolTip(
+            "Ticked: Γ's deflector angle and the sample rotation below are "
+            "used, so the cut may run past Γ at any distance. Unticked: Γ is "
+            "on the cut, at the line's slit angle.")
+        adv_outer = QVBoxLayout(self.advanced)
+        adv_widget = QWidget()
+        adv_outer.addWidget(adv_widget)
+        advanced = QFormLayout(adv_widget)
+        advanced.setContentsMargins(0, 0, 0, 0)
+        self.map_button = QPushButton("From a converted map...")
+        self.map_button.setToolTip(
+            "Take Γ's angles from a Map already converted in this session. "
+            "Exact if the cut was measured in the same alignment -- the "
+            "manipulator angles of both are compared and any difference is "
+            "reported.")
+        self.map_button.clicked.connect(self.from_converted_map)
+        advanced.addRow("", self.map_button)
+        self.gamma_defl = self._angle_box(
+            "Deflector angle at which Γ was observed -- the same number "
+            "as the Map conversion's.")
+        self.gamma_defl.setValue(self.deflector_box.value())
+        self.azimuth_box = self._angle_box(
+            "Sample rotation about the surface normal, as in the Map "
+            "conversion.")
+        advanced.addRow("Γ deflector angle (deg)", self.gamma_defl)
+        advanced.addRow("Sample rotation (deg)", self.azimuth_box)
+        self.source_note = QLabel("Typed by hand — nothing inherited yet.")
+        self.source_note.setWordWrap(True)
+        self.source_note.setMinimumHeight(34)
+        advanced.addRow("", self.source_note)
+        self.advanced.toggled.connect(adv_widget.setVisible)
+        adv_widget.setVisible(False)
+        layout.addWidget(self.advanced)
 
         # -- the output -------------------------------------------------------
         out_group = QGroupBox("Output")
@@ -4910,9 +5018,92 @@ class CutKConversionDialog(QDialog):
                     self.deflector_box, self.energy_offset_box,
                     self.nk_box, self.ne_box, self.dk_box, self.de_box):
             box.valueChanged.connect(self._refresh)
-        for box in (self.radial_box, self.trim_box):
+        for box in (self.radial_box, self.trim_box, self.advanced):
             box.toggled.connect(self._refresh)
+
+        # Γ's slit angle as a line on the cut, both ways: drag it, or type.
+        start = 0.0 if self.slit.min() <= 0.0 <= self.slit.max() \
+            else float(np.median(self.slit))
+        self.gamma_slit.setValue(start)
+        self.gamma_line = pg.InfiniteLine(
+            pos=start, angle=90, movable=True,
+            pen=pg.mkPen("#e8413c", width=2),
+            label="Γ", labelOpts={"position": 0.95, "color": "#e8413c"})
+        self.gamma_line.setZValue(30)
+        window.view.view_box.addItem(self.gamma_line, ignoreBounds=True)
+        self.gamma_line.sigPositionChanged.connect(self._line_moved)
+        self.gamma_slit.valueChanged.connect(self._slit_typed)
+        self.finished.connect(lambda *_: self._remove_line())
+
+        from tools.runtime import remembered
+        self.restored = remembered.recall(self.REMEMBERED, self._shape())
+        if self.restored:
+            self.restore(self.restored)
         self._update_grid_mode()
+
+    # -- the line on the cut ---------------------------------------------------
+    def _line_moved(self, *_):
+        value = float(self.gamma_line.value())
+        if abs(value - self.gamma_slit.value()) > 1e-9:
+            self.gamma_slit.setValue(value)
+
+    def _slit_typed(self, value):
+        if abs(float(self.gamma_line.value()) - value) > 1e-9:
+            self.gamma_line.blockSignals(True)
+            self.gamma_line.setValue(float(value))
+            self.gamma_line.blockSignals(False)
+
+    def _remove_line(self):
+        try:
+            self.window_.view.view_box.removeItem(self.gamma_line)
+        except (RuntimeError, AttributeError):
+            pass                     # the window went first
+
+    # -- remembered between cuts of one size ------------------------------
+    #: the key the settings are remembered under (tools.runtime.remembered)
+    REMEMBERED = "cut_k_conversion"
+
+    def _shape(self):
+        return (self.slit.size, self.energy.size)
+
+    def remembered_settings(self) -> dict:
+        """What carries over to the next cut of this size: where Γ is, the
+        Advanced choice and angles, and the output -- not the deflector
+        angle or the energy offset, which belong to each file."""
+        return {"gamma_slit": self.gamma_slit.value(),
+                "advanced": self.advanced.isChecked(),
+                "gamma_defl": self.gamma_defl.value(),
+                "azimuth": self.azimuth_box.value(),
+                "radial": self.radial_box.isChecked(),
+                "trim": self.trim_box.isChecked(),
+                "by_count": self.by_count.isChecked(),
+                "nk": self.nk_box.value(), "ne": self.ne_box.value(),
+                "dk": self.dk_box.value(), "de": self.de_box.value()}
+
+    def restore(self, settings: dict):
+        boxes = {"gamma_slit": self.gamma_slit, "gamma_defl": self.gamma_defl,
+                 "azimuth": self.azimuth_box, "nk": self.nk_box,
+                 "ne": self.ne_box, "dk": self.dk_box, "de": self.de_box}
+        for name, box in boxes.items():
+            if name in settings:
+                box.blockSignals(True)
+                box.setValue(type(box.value())(settings[name]))
+                box.blockSignals(False)
+        self._slit_typed(self.gamma_slit.value())
+        for name, box in (("advanced", self.advanced), ("radial", self.radial_box),
+                          ("trim", self.trim_box)):
+            if name in settings:
+                box.setChecked(bool(settings[name]))
+        if "by_count" in settings:
+            (self.by_count if settings["by_count"] else self.by_resolution).setChecked(True)
+        self.source_note.setText("Settings from the last conversion of a cut "
+                                 "of this size.")
+
+    def accept(self):
+        from tools.runtime import remembered
+        remembered.remember(self.REMEMBERED, self._shape(),
+                            self.remembered_settings())
+        super().accept()
 
     # -- small builders ----------------------------------------------------
     @staticmethod
@@ -5011,6 +5202,8 @@ class CutKConversionDialog(QDialog):
             box.blockSignals(True)
             box.setValue(value)
             box.blockSignals(False)
+        self._slit_typed(phi)
+        self.advanced.setChecked(True)
 
         mine = sample_rotations(self.window_.data)
         theirs = sample_rotations(data)
@@ -5043,11 +5236,15 @@ class CutKConversionDialog(QDialog):
         self._refresh()
 
     def geometry(self) -> dict:
+        """The conversion's geometry. Without Advanced, Γ is on the cut:
+        its deflector angle is the cut's own, and no rotation is applied."""
+        advanced = self.advanced.isChecked()
         return {
             "deflector_deg": self.deflector_box.value(),
-            "gamma_deflector_deg": self.gamma_defl.value(),
+            "gamma_deflector_deg": (self.gamma_defl.value() if advanced
+                                    else self.deflector_box.value()),
             "gamma_slit_deg": self.gamma_slit.value(),
-            "azimuth_deg": self.azimuth_box.value(),
+            "azimuth_deg": self.azimuth_box.value() if advanced else 0.0,
             "energy_offset_eV": self.energy_offset_box.value(),
         }
 

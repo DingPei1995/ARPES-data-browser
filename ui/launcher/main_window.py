@@ -36,26 +36,29 @@ class Ui_MainWindow:
         # of a disabled menu entry, so without them a greyed-out entry of the
         # list's right-click menu looked exactly like an enabled one.
         MainWindow.setStyleSheet(
-            "* { background-color: rgb(245, 241, 249);"
-            " font: \"Lucida Sans Unicode\";"
-            " color: rgb(102, 126, 161); }"
+            "* { background-color: rgb(245, 241, 249); "
+            "font: \"Lucida Sans Unicode\"; "
+            "color: rgb(102, 126, 161); }"
             "\n*:disabled { color: rgb(190, 190, 200); }"
             "\nQMenu::item { padding: 3px 24px 3px 20px; }"
-            "\nQMenu::item:selected { background-color: rgb(214, 224, 240);"
-            " color: rgb(40, 60, 95); }"
+            "\nQMenu::item:selected { background-color: rgb(214, 224, 240); "
+            "color: rgb(40, 60, 95); }"
             "\nQMenu::item:disabled { color: rgb(190, 190, 200); }"
-            "\nQMenu::item:disabled:selected { background-color: rgb(236, 234, 242);"
-            " color: rgb(175, 175, 188); }"
-            "\nQMenu::separator { height: 1px; background: rgb(210, 214, 226);"
-            " margin: 4px 8px; }"
+            "\nQMenu::item:disabled:selected { background-color: rgb(236, 234, 242); "
+            "color: rgb(175, 175, 188); }"
+            "\nQMenu::separator { height: 1px; background: rgb(210, 214, 226); "
+            "margin: 4px 8px; }"
             # The two panels: each a box of its own, on a slightly darker
             # ground so the gap between them reads as a gap.
             "\nQWidget#centralwidget { background-color: rgb(232, 228, 240); }"
-            "\nQFrame#ToolPanel, QFrame#MainPanel {"
-            " border: 1px solid rgb(200, 204, 222); border-radius: 6px; }"
+            "\nQFrame#ToolPanel, QFrame#MainPanel { "
+            "border: 1px solid rgb(200, 204, 222); border-radius: 6px; }"
             "\nQFrame#ToolPanel QGroupBox { font-weight: bold; }"
-            "\nQFrame#ToolPanel QPushButton { text-align: left;"
-            " padding: 3px 8px; font-weight: normal; }"
+            "\nQGroupBox#ToolSection { font-size: 11pt; }"
+            "\nQLabel#ToolHeading { font-weight: normal; font-style: italic;"
+            " color: rgb(120, 130, 160); padding-top: 3px; }"
+            "\nQFrame#ToolPanel QPushButton { text-align: left; "
+            "padding: 3px 8px; font-weight: normal; }"
             "\nQLabel#ToolPanelTitle { font-weight: bold; }"
         )
 
@@ -199,7 +202,8 @@ class Ui_MainWindow:
 
         One button per tool, so every one of them is in sight -- they used
         to be behind a right-click or on a tab of a window the user had to
-        know to open. Grouped by the dimension of data a tool takes, and each
+        know to open. In two sections, Basic and Advanced (TOOL_SECTIONS),
+        each grouped by the dimension of data a tool takes, and each button
         greyed out until the list's selection is something it can take; its
         tooltip then says why (ARPES_viewer.update_tool_buttons()).
         """
@@ -215,22 +219,43 @@ class Ui_MainWindow:
         title.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(title)
 
+        # Basic, then Advanced; in each, a small heading per dimension of
+        # data and the buttons under it. In a scroll area, so a short screen
+        # scrolls the tools rather than squeezing them -- the memory box
+        # below stays put.
+        holder = QtWidgets.QWidget()
+        holder.setObjectName("ToolHolder")
+        tools_layout = QtWidgets.QVBoxLayout(holder)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(4)
         self.ToolButtons = {}
-        self.ToolGroups = {}
-        for heading, tools in TOOL_GROUPS:
-            group = QtWidgets.QGroupBox(heading, panel)
-            box = QtWidgets.QVBoxLayout(group)
-            box.setContentsMargins(4, 4, 4, 4)
-            box.setSpacing(2)
-            for name, text, tooltip in tools:
-                button = QtWidgets.QPushButton(text, group)
-                button.setToolTip(tooltip)
-                button.setProperty("description", tooltip)
-                box.addWidget(button)
-                self.ToolButtons[name] = button
-            layout.addWidget(group)
-            self.ToolGroups[heading] = group
-        layout.addStretch(1)
+        self.ToolSections = {}
+        for section, groups in TOOL_SECTIONS:
+            box = QtWidgets.QGroupBox(section, holder)
+            box.setObjectName("ToolSection")
+            column = QtWidgets.QVBoxLayout(box)
+            column.setContentsMargins(4, 4, 4, 4)
+            column.setSpacing(2)
+            for heading, names in groups:
+                label = QtWidgets.QLabel(heading.replace("&&", "&"), box)
+                label.setObjectName("ToolHeading")
+                column.addWidget(label)
+                for name in names:
+                    text, tooltip = TOOLS[name]
+                    button = QtWidgets.QPushButton(text, box)
+                    button.setToolTip(tooltip)
+                    button.setProperty("description", tooltip)
+                    column.addWidget(button)
+                    self.ToolButtons[name] = button
+            tools_layout.addWidget(box)
+            self.ToolSections[section] = box
+        tools_layout.addStretch(1)
+        scroller = QtWidgets.QScrollArea(panel)
+        scroller.setWidgetResizable(True)
+        scroller.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroller.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        scroller.setWidget(holder)
+        layout.addWidget(scroller, stretch=1)
 
         # -- memory: how much this program is holding, and a way to give
         # some of it back. Several spatial scans open at once is where it
@@ -292,78 +317,106 @@ LIST_OPERATIONS = (
      "optionally over a window of your own."),
 )
 
-#: The tool panel: (group heading, [(action, button text, tooltip), ...]).
-#: Grouped by the dimension of the data a tool takes -- 1D curves (EDC,
-#: MDC), 2D cuts, 3D maps (angle maps, kz maps, k-maps).
-TOOL_GROUPS = (
-    ("1D && 2D \u2014 curves, cuts", (
-        ("figure", "Figure composer...",
-         "One panel per selected dataset, in the figure composer."),
+#: Every tool of the tool panel: action -> (button text, tooltip). The
+#: action names are list_actions' and ARPES_viewer.run_list_action()'s.
+TOOLS = {
+    "figure": ("Figure composer...",
+             "One panel per selected dataset, in the figure composer."),
+    "fermi": ("Fermi edge fit...",
+             "Fit the Fermi edge: E_F and the resolution, then offset the "
+             "energy axis to E - E_F. A cut opens with its viewer; a map "
+             "with its slit cut, whose slider picks the cut to fit -- one "
+             "E_F for the whole map, or one per cut, interpolated between "
+             "them."),
+    "smooth": ("Smooth...",
+             "Gaussian, Savitzky-Golay or moving-average smoothing, with "
+             "spike removal. A map is smoothed plane by plane, on the plane "
+             "you pick."),
+    "derivative": ("Second derivative...",
+             "-d\xb2I/dE\xb2 or -d\xb2I/dk\xb2 after a pre-smooth, to "
+             "sharpen the bands."),
+    "curvature": ("Curvature...",
+             "The 1D or 2D curvature (Zhang et al.), which follows the band "
+             "better than a second derivative."),
+    "symmetry": ("Symmetrise...",
+             "Mirror a cut about a line; for a map, mirror or rotate its "
+             "constant-energy planes."),
+    "degrid": ("Remove detector grid...",
+             "Remove the detector's grid pattern. From a whole map (or kz "
+             "map), using the map itself as the reference -- do this first, "
+             "before a k conversion or Fermi-surface correction. From a cut, "
+             "with a grid found on a map with the same settings if one is "
+             "in the list, by notching the cut's own grid peaks otherwise."),
+    "background": ("Background subtraction...",
+             "Remove the intensity that is not the bands: Shirley or "
+             "Tougaard inelastic background, a floor common to every angle, "
+             "a smooth polynomial -- or divide out the Fermi cut-off."),
+    "stack": ("Stack plot (EDC / MDC)...",
+             "A waterfall of EDCs or MDCs across the cut."),
+    "mdcfit": ("MDC fit (k-cut only)...",
+             "Fit the momentum distribution curves line by line, then read "
+             "the band off the fitted centres: Fermi velocity, effective "
+             "mass, self-energy. Only for a cut converted to momentum (k)."),
+    "edcfit": ("EDC fit...",
+             "Fit the energy distribution curves line by line, optionally "
+             "with the Fermi cut-off in the model. Any cut; v_F and m* from "
+             "the fitted band need a cut in momentum."),
+    "corelevel": ("Core-level check...",
+             "Which element and orbital each peak of the angle-integrated "
+             "EDC is: the sample's elements against tabulated binding "
+             "energies, after checking E_F and the photon energy; "
+             "unexplained peaks get possible contaminants."),
+    "arithmetic": ("Cut arithmetic (two cuts)...",
+             "Combine two cuts: linear or circular dichroism, dividing by a "
+             "reference, A \u2212 B, A / B, (A \u2212 B)/(A + B), A + B. The "
+             "first selected is A; the window can swap them."),
+    "kzalign": ("Align Fermi levels (kz)...",
+             "Fit the Fermi edge of every spectrum of a photon-energy scan, "
+             "shift each one to put its own edge at zero, and crop to the "
+             "energy range they all still cover. Before the kz conversion."),
+    "slices3d": ("3D slices...",
+             "The three orthogonal planes through the cube, each placed "
+             "where you choose, each with its own colours."),
+    "notch3d": ("Notched cube...",
+             "The cube with one corner cut away: a constant-energy map and "
+             "two dispersions in one picture."),
+    "projection3d": ("Volume projection...",
+             "The whole volume projected along the view: maximum intensity, "
+             "sum, alpha composite, or a shaded isosurface."),
+    "kmap": ("k conversion (map)...",
+             "Convert an angle map to momentum (\u00c5\u207b\u00b9). It opens on "
+             "its constant-energy contour, where the readout cursor picks "
+             "\u0393; the settings start from the last conversion of a map "
+             "of the same size."),
+    "kcut": ("k conversion (cut)...",
+             "Convert a cut to momentum. By default a vertical line on the "
+             "cut picks \u0393's slit angle (\u0393 taken to lie on the "
+             "cut); Advanced inherits \u0393 from a converted map. Starts "
+             "from the last conversion of a cut of the same size."),
+    "kzconv": ("kz conversion...",
+             "Convert a photon-energy scan to (k_z, k_par), choosing the "
+             "inner potential against the lattice's own period. Flatten the "
+             "Fermi edge first. Starts from the last conversion of a scan of "
+             "the same size."),
+}
+
+#: The tool panel's layout: two sections -- Basic, the steps nearly every
+#: dataset goes through (E_F, the detector grid, the background, the k
+#: conversions, the core levels), and Advanced, the analysis that follows --
+#: each grouped by the dimension of data a tool takes: 1D curves (EDC, MDC),
+#: 2D cuts, 3D maps (angle maps, kz maps, k-maps).
+TOOL_SECTIONS = (
+    ("Basic", (
+        ("2D && 3D \u2014 cuts, maps", ("fermi", "degrid")),
+        ("2D only \u2014 cuts", ("background", "kcut", "corelevel")),
+        ("3D only \u2014 maps", ("kmap", "kzalign", "kzconv")),
     )),
-    ("2D && 3D \u2014 cuts, maps", (
-        ("fermi", "Fermi edge fit...",
-         "Fit the Fermi edge: E_F and the resolution, then offset the energy "
-         "axis to E - E_F. A cut opens with its viewer; a map with its slit "
-         "cut, whose slider picks the cut to fit -- one E_F for the whole "
-         "map, or one per cut, interpolated between them."),
-        ("smooth", "Smooth...",
-         "Gaussian, Savitzky-Golay or moving-average smoothing, with spike "
-         "removal. A map is smoothed plane by plane, on the plane you pick."),
-        ("derivative", "Second derivative...",
-         "-d\u00b2I/dE\u00b2 or -d\u00b2I/dk\u00b2 after a pre-smooth, to "
-         "sharpen the bands."),
-        ("curvature", "Curvature...",
-         "The 1D or 2D curvature (Zhang et al.), which follows the band "
-         "better than a second derivative."),
-        ("symmetry", "Symmetrise...",
-         "Mirror a cut about a line; for a map, mirror or rotate its "
-         "constant-energy planes."),
-        ("degrid", "Remove detector grid...",
-         "Remove the detector's grid pattern. From a whole map (or kz map), "
-         "using the map itself as the reference -- do this first, before a "
-         "k conversion or Fermi-surface correction. From a cut, with a grid "
-         "found on a map with the same settings if one is in the list, by "
-         "notching the cut's own grid peaks otherwise."),
-    )),
-    ("2D only \u2014 cuts", (
-        ("background", "Background subtraction...",
-         "Remove the intensity that is not the bands: Shirley or Tougaard "
-         "inelastic background, a floor common to every angle, a smooth "
-         "polynomial -- or divide out the Fermi cut-off."),
-        ("stack", "Stack plot (EDC / MDC)...",
-         "A waterfall of EDCs or MDCs across the cut."),
-        ("mdcfit", "MDC fit (k-cut only)...",
-         "Fit the momentum distribution curves line by line, then read the "
-         "band off the fitted centres: Fermi velocity, effective mass, "
-         "self-energy. Only for a cut converted to momentum (k)."),
-        ("edcfit", "EDC fit...",
-         "Fit the energy distribution curves line by line, optionally with "
-         "the Fermi cut-off in the model. Any cut; v_F and m* from the "
-         "fitted band need a cut in momentum."),
-        ("corelevel", "Core-level check...",
-         "Which element and orbital each peak of the angle-integrated EDC is: "
-         "the sample's elements against tabulated binding energies, after "
-         "checking E_F and the photon energy; unexplained peaks get possible "
-         "contaminants."),
-        ("arithmetic", "Cut arithmetic (two cuts)...",
-         "Combine two cuts: linear or circular dichroism, dividing by a "
-         "reference, A \u2212 B, A / B, (A \u2212 B)/(A + B), A + B. The first "
-         "selected is A; the window can swap them."),
-    )),
-    ("3D only \u2014 maps", (
-        ("kzalign", "Align Fermi levels (kz)...",
-         "Fit the Fermi edge of every spectrum of a photon-energy scan, shift "
-         "each one to put its own edge at zero, and crop to the energy range "
-         "they all still cover. Before the kz conversion."),
-        ("slices3d", "3D slices...",
-         "The three orthogonal planes through the cube, each placed where "
-         "you choose, each with its own colours."),
-        ("notch3d", "Notched cube...",
-         "The cube with one corner cut away: a constant-energy map and two "
-         "dispersions in one picture."),
-        ("projection3d", "Volume projection...",
-         "The whole volume projected along the view: maximum intensity, "
-         "sum, alpha composite, or a shaded isosurface."),
+    ("Advanced", (
+        ("1D && 2D \u2014 curves, cuts", ("figure",)),
+        ("2D && 3D \u2014 cuts, maps", ("smooth", "derivative", "curvature",
+                                       "symmetry")),
+        ("2D only \u2014 cuts", ("stack", "mdcfit", "edcfit", "arithmetic")),
+        ("3D only \u2014 maps", ("slices3d", "notch3d", "projection3d")),
     )),
 )
 

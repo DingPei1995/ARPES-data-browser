@@ -1,5 +1,6 @@
 """
 runtime -- the process itself.
 
-Memory use (``memory``) and the small system stand-ins (``system``).
+Memory use (``memory``), the small system stand-ins (``system``), and the
+settings tools remember between uses, per size of data (``remembered``).
 """

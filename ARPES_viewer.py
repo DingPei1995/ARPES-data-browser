@@ -597,6 +597,9 @@ def run_list_action(name):
         "background": lambda: open_processing("background"),
         "degrid": open_degrid,
         "fermi": open_fermi_fit,
+        "kmap": lambda: open_k_conversion("map"),
+        "kcut": lambda: open_k_conversion("cut"),
+        "kzconv": open_kz_conversion,
         "kzalign": open_kz_alignment,
         "save": save_selected,
         "log": show_operations_log,
@@ -1173,6 +1176,78 @@ def open_fermi_fit():
     if window is None or not hasattr(window, "open_fermi_fit"):
         return None
     return window.open_fermi_fit(bound=True)
+
+
+def _window_for_tool(key):
+    """A fresh viewer of the row, showing only its picture (no Functions,
+    no cut buttons): what a conversion picks Γ on, and nothing to wander
+    off with. None if it cannot be opened."""
+    try:
+        data = load_dataset(key)
+    except Exception as exc:                                # noqa: BLE001
+        QMessageBox.warning(win, "Open", f"{label_for(key)} could not be read: {exc}")
+        return None
+    window = viewer_windows_module.open_viewer(
+        data, label_for(key), default_colormap, default_flip)
+    if window is None:
+        data.close()
+        return None
+    _adopt_viewer(window, key)
+    window.closed.connect(_forget_viewer)
+    viewer_windows.append(window)
+    window.show_picture_only()
+    window.show()
+    return window
+
+
+def open_k_conversion(what: str = "map"):
+    """Convert the selected angle map (``"map"``) or cut (``"cut"``) to
+    momentum. The dataset opens in a window of its own showing only its
+    picture -- the map's constant-energy contour, where the readout cursor
+    picks Γ, or the cut, where a vertical line does -- and that window and
+    the conversion dialog close together. The dialog starts from the last
+    conversion of data of the same size."""
+    key = selected_key()
+    if key is None:
+        return None
+    window = _window_for_tool(key)
+    if window is None:
+        return None
+    if what == "cut":
+        blocked = viewer_windows_module.cut_k_conversion_blocked(window.data)
+        if blocked:
+            window.close()
+            QMessageBox.information(win, "Cut k conversion",
+                                    f"This cut cannot be converted: {blocked}.")
+            return None
+        return window.open_cut_k_conversion(bound=True)
+    if not isinstance(window, viewer_windows_module.ContourWindow):
+        window.close()
+        return None
+    return window.open_k_conversion(bound=True)
+
+
+def open_kz_conversion():
+    """Convert the selected photon-energy scan to (k_z, k_par). Its dialog
+    has its own preview, so the map is not put on screen for it; the
+    dialog starts from the last conversion of a scan of the same size."""
+    key = selected_key()
+    if key is None:
+        return None
+    contour = map_contour(key)
+    if contour is None:
+        return None
+    if contour.data.kind != "kz_map":
+        QMessageBox.information(win, "kz conversion",
+                                "Only a photon-energy scan (kz map) converts to "
+                                "(k_z, k_par).")
+        return None
+    dialog = contour.open_kz_conversion()
+    if not contour.isVisible():
+        # Made for the dialog: it has nothing to do once the dialog is gone.
+        dialog.finished.connect(lambda *_: (not contour.isVisible())
+                                and contour.close())
+    return dialog
 
 
 def open_kz_alignment():

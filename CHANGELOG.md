@@ -16,6 +16,38 @@ A large rework of where things are: every tool is a button in sight, one
 window per tool. (The version number stays 1.1.0; later changes are added
 here.)
 
+- **The tool panel has two sections, Basic and Advanced**, each grouped by
+  the dimension of data as before. *Basic* holds the steps nearly every
+  dataset goes through: Fermi edge fit, Remove detector grid, Background
+  subtraction, the three k conversions, Core-level check, Align Fermi levels
+  (kz). *Advanced* holds the analysis after them: the figure composer, the
+  filters, the stack plot, the MDC and EDC fits, cut arithmetic, the 3-D
+  views. The list scrolls when the window is too short for all of it; the
+  memory box stays at the bottom.
+- **The k conversions are tool-panel buttons** -- *k conversion (map)*,
+  *k conversion (cut)*, *kz conversion* -- and no longer entries of the
+  viewers' Functions menus.
+  - The map and the cut open in a window of their own that shows only the
+    picture and how it is displayed -- no Functions menu, plot tools or cut
+    buttons (`ViewerWindow.show_picture_only`) -- and close together with the
+    conversion dialog, after the conversion it started has finished.
+  - **Each conversion starts from the last one of data the same size**
+    (`tools/runtime/remembered.py`, kept in `remembered.json` beside the
+    config): a beamtime converts map after map of one sample, one per photon
+    energy or polarisation, with the same Γ and grid. Carried over: for a
+    map, Γ's angles, the rotation, the output grid and the precision (the
+    readout cursor starts on the remembered Γ); for a cut, Γ's slit angle,
+    the Advanced choice and angles, and the output; for a kz map, V0, m*,
+    the normal-emission angle, the grid and the lattice. Not carried over:
+    the energy offset, the deflector angle, the work function and the
+    manipulator theta, which each file has of its own.
+  - **The cut conversion picks Γ with a vertical line on the cut** by
+    default: Γ is taken to lie on the cut at that slit angle, so its
+    deflector angle is the cut's own. Not exact if the cut misses Γ, but
+    often the only choice -- sometimes one slit cut is all that was
+    measured. Γ still enters the geometry as an angle, not as a shift of
+    the converted axis. Inheriting Γ from a converted map, Γ's deflector
+    angle and the sample rotation are under **Advanced: Γ off this cut**.
 - **Fermi edge fit is a tool-panel button** (*2D & 3D*), for a cut or a
   map, in angle or in momentum, instead of an entry of the cut viewer's
   Functions menu. The fit and the window it works on open together and are
