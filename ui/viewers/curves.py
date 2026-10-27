@@ -656,7 +656,9 @@ class CurveFitDialog(QDialog):
         self.pick_button.setCheckable(True)
         self.pick_button.toggled.connect(self._toggle_picking)
         find = QPushButton("Find peaks")
-        find.clicked.connect(self.find_peaks)
+        # Not connected directly: clicked() passes `checked` (False), which
+        # would become max_peaks and find nothing.
+        find.clicked.connect(lambda: self.find_peaks())
         remove = QPushButton("Remove selected")
         remove.clicked.connect(self._remove_rows)
         for widget in (self.pick_button, find, remove):

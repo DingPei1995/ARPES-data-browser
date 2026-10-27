@@ -125,3 +125,24 @@ def _no_modal_boxes(monkeypatch):
         raise AssertionError(f"{title}: {text}")
     for name in ("warning", "information", "critical"):
         monkeypatch.setattr(QMessageBox, name, staticmethod(fail))
+
+
+def test_the_buttons_themselves_save_and_compose(app, tmp_path, monkeypatch):
+    """Clicked, not called: a button passes its `checked` flag, which once
+    arrived in save_view's path and to_figure_composer's target."""
+    from PyQt5.QtWidgets import QFileDialog, QInputDialog, QPushButton
+    window = _window("slices")
+    target = str(tmp_path / "clicked.png")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (target, "")))
+    monkeypatch.setattr(QInputDialog, "getItem",
+                        staticmethod(lambda *a, **k: ("A new figure", True)))
+    buttons = {b.text(): b for b in window.findChildren(QPushButton)}
+    buttons["Save the view..."].click()
+    assert (tmp_path / "clicked.png").stat().st_size > 1000
+    buttons["To figure composer..."].click()
+    from ui.panels.figure import open_figure_windows
+    composer = open_figure_windows()[-1]
+    assert composer.figure.panels[-1].data.kind == "scene3d"
+    composer.close()
+    window.close()

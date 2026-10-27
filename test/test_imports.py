@@ -186,3 +186,42 @@ def test_every_package_says_what_it_is_for(package):
     with open(init, encoding="utf-8") as handle:
         assert ast.get_docstring(ast.parse(handle.read())), \
             f"{package}/__init__.py has no docstring"
+
+
+def test_no_button_passes_its_checked_flag_into_an_optional_argument():
+    """``button.clicked.connect(self.method)`` hands the method clicked()'s
+    ``checked`` flag -- False -- as its first argument. A method whose first
+    argument is optional then runs with it set to False: a save path, a
+    target window, ``background=``, ``max_peaks=`` all went wrong this way.
+    Such a slot is connected through a lambda instead."""
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    problems = []
+    for path in sorted(root.glob("**/*.py")):
+        if "test" in path.parts or path.name.startswith("."):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+            optional = set()
+            for item in cls.body:
+                if isinstance(item, ast.FunctionDef):
+                    args = item.args.args[1:]          # past self
+                    if args and item.args.defaults and len(item.args.defaults) == len(args) \
+                            and not args[0].arg.startswith("_"):
+                        optional.add(item.name)
+            for node in ast.walk(cls):
+                if (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "connect"
+                        and isinstance(node.func.value, ast.Attribute)
+                        and node.func.value.attr in ("clicked", "triggered")
+                        and node.args
+                        and isinstance(node.args[0], ast.Attribute)
+                        and isinstance(node.args[0].value, ast.Name)
+                        and node.args[0].value.id == "self"
+                        and node.args[0].attr in optional):
+                    problems.append(f"{path.relative_to(root)}:{node.lineno} "
+                                    f"{node.func.value.attr} -> self.{node.args[0].attr}")
+    assert not problems, "\n".join(problems)

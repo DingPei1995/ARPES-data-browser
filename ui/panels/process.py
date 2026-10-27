@@ -577,7 +577,9 @@ class ProcessDialog(QDialog):
         preview_button = add_button(buttons,"Preview", QDialogButtonBox.ActionRole)
         preview_button.clicked.connect(self.refresh)
         apply_button = add_button(buttons,"Apply", QDialogButtonBox.AcceptRole)
-        apply_button.clicked.connect(self.apply)
+        # Not connected directly: clicked() passes `checked` (False), which
+        # would become apply(background=False) and freeze the window.
+        apply_button.clicked.connect(lambda: self.apply())
         apply_button.setToolTip("Add the result to the main list as a new dataset.")
         close = add_button(buttons,"Close", QDialogButtonBox.RejectRole)
         close.clicked.connect(self.reject)

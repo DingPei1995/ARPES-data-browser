@@ -12,7 +12,17 @@ file is the record of how it got that way.
 
 ## Unreleased
 
-(nothing yet)
+- **Fixed: Save the view and To figure composer failed when clicked** (1.0.9,
+  the 3-D views). A button's `clicked` signal passes its `checked` flag --
+  False -- to the slot, and both methods took it as their optional argument
+  (the file to write, the composer to add to). They are connected through a
+  lambda now. The same mistake, older, is fixed in three more places:
+  **Find peaks** in the curve fit never found a peak (`max_peaks=False`),
+  and **Apply** in the 2-D and 3-D processing windows ran on the GUI thread
+  (`background=False`), freezing the window with no progress or Cancel.
+  - `test_imports` now fails on any button connected straight to a method
+    whose first argument is optional, and the 3-D view's test clicks the
+    real buttons rather than calling the methods.
 
 ## 1.0.9 — 2026-10-27
 

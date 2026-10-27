@@ -1267,13 +1267,15 @@ class VolumeWindow(QMainWindow):
             "figure composer's default style: 89 mm wide, 600 dpi, its font "
             "and line widths for the axes. For another style, use To figure "
             "composer.")
-        save.clicked.connect(self.save_view)
+        # Through a lambda: clicked() passes its `checked` flag, which would
+        # land in save_view's `path` (and to_figure_composer's `target`).
+        save.clicked.connect(lambda: self.save_view())
         compose = QPushButton("To figure composer...")
         compose.setToolTip(
             "Add this view, as it is now, as a panel of a figure: a new one, "
             "or one already open. There it takes the figure's style and can "
             "be lettered, titled and annotated beside other panels.")
-        compose.clicked.connect(self.to_figure_composer)
+        compose.clicked.connect(lambda: self.to_figure_composer())
         row.addWidget(save)
         row.addWidget(compose)
         row.addStretch(1)
@@ -1589,7 +1591,9 @@ class VolumeProcessDialog(QDialog):
         preview.clicked.connect(self.refresh)
         apply_button = add_button(buttons,"Apply to the whole cube",
                                          QDialogButtonBox.AcceptRole)
-        apply_button.clicked.connect(self.apply)
+        # Not connected directly: clicked() passes `checked` (False), which
+        # would become apply(background=False) and freeze the window.
+        apply_button.clicked.connect(lambda: self.apply())
         add_button(buttons,"Close", QDialogButtonBox.RejectRole).clicked.connect(
             self.reject)
         layout.addWidget(buttons)
