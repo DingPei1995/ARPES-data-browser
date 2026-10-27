@@ -12,7 +12,7 @@ and opens the window no larger than the screen.
 """
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QEvent, QObject, Qt
 from PyQt5.QtWidgets import (QAbstractButton, QApplication, QDialogButtonBox,
                              QFrame, QMainWindow, QPushButton, QScrollArea,
                              QVBoxLayout, QWidget)
@@ -122,3 +122,40 @@ def fits_screen(cls):
     return cls
 
 
+
+
+class _WheelScrollsWindow(QObject):
+    """See :func:`wheel_scrolls_window`."""
+
+    def eventFilter(self, watched, event):
+        if event.type() != QEvent.Wheel or event.modifiers() & Qt.ControlModifier:
+            return False
+        widget = watched.parentWidget() if watched is not None else None
+        while widget is not None and not isinstance(widget, QScrollArea):
+            widget = widget.parentWidget()
+        if widget is None:
+            return False
+        bar = widget.verticalScrollBar()
+        if bar.maximum() <= bar.minimum():
+            return False            # nothing to scroll: the plot zooms
+        QApplication.sendEvent(bar, event)
+        return True
+
+
+def wheel_scrolls_window(*views):
+    """Make the mouse wheel over these plots scroll the window they are in
+    (when it scrolls at all) rather than zoom the plot; Ctrl + wheel still
+    zooms.
+
+    A pyqtgraph plot takes every wheel turn as a zoom, so in a window too
+    tall for the screen, a turn of the wheel with the pointer over the
+    picture -- most of the window -- zoomed the picture instead of bringing
+    the settings below it into sight. ``views`` are QGraphicsViews
+    (``PlotWidget``, ``ImageView.ui.graphicsView``); the filter goes on
+    their viewports, which are what receive the wheel.
+    """
+    for view in views:
+        viewport = view.viewport() if hasattr(view, "viewport") else view
+        guard = _WheelScrollsWindow(viewport)
+        viewport.installEventFilter(guard)
+        viewport._wheel_guard = guard

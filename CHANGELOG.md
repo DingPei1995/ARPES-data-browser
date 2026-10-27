@@ -16,6 +16,40 @@ A large rework of where things are: every tool is a button in sight, one
 window per tool. (The version number stays 1.1.0; later changes are added
 here.)
 
+- **The figure composer is a manuscript page.** With nothing selected it
+  opens a blank page of four empty panels (a)–(d); each panel is a frame on
+  the page (`Panel.frame`, mm) that is dragged and resized with the mouse,
+  snapping to the other panels' edges and a 0.5 mm grid. A panel is filled
+  from the main list or with a picture from a file (`PanelData` kinds
+  `empty` and `picture`). A *Zoom-in inset* tool drags out a region of a
+  panel and puts a magnified copy in its corner (`role="inset"`,
+  `zoom_of`), with the region outlined; any panel drawn inside another is an
+  inset. Arrows, lines, boxes, ellipses and text are drawn on the page
+  (`Figure.shapes`, in mm) from a tool column on the left and edited when
+  selected; the figure tools sit beside the page instead of in a dialog,
+  with the selected panel's position, size, label edges and font size.
+  Undo/Redo cover all of it. Figures opened with panels (slice series, 3-D
+  views, stack plots) start as the automatic grid as before and become a
+  hand-made page at the first drag (`Figure.freeze`). Empty slots are never
+  exported. Panels now compare by identity (`eq=False`): comparing by value
+  compared their arrays.
+- **Guided MDC / EDC fit.** *Guided fit (step by step)* at the top of the
+  fit panel walks a first-time user through the fit in eight steps beside
+  the controls -- what the fit does, line shape, range, bands, seeds (the
+  guide moves the line to five places and arms the seed click), a test
+  line, the series, the result -- outlining the widgets each step uses;
+  *Next* waits until a step has what the fit needs.
+- **The fit panel's controls stay in sight.** Pictures and controls are in
+  a vertical splitter, so the plots no longer push the settings below the
+  window; the wheel over a plot scrolls the window when it scrolls
+  (`screen.wheel_scrolls_window`), and Ctrl + wheel zooms.
+- **Smoothed data is tagged.** A smooth step marks its result
+  (`proc.tag = smoothed`, and `process.is_smoothed` also reads it off the
+  history, so files saved earlier and every result made from smoothed data
+  count). The row shows ‹smoothed› in the list, and the second-derivative
+  and curvature panels drop their smooth-first tip and start with no
+  pre-smoothing on it.
+
 - **Multi-slice figure is the Advanced tool "Slice series figure"**
   (*3D only — maps*, beside the 3-D views), instead of an entry of a map
   viewer's Functions menu. The new name says what it makes -- a page of

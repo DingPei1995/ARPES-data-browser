@@ -86,7 +86,8 @@ def test_frozen_slice_names_figure_composer_apart_from_plot_tools(app):
     assert window.plot_tools_button.text() == "Plot tools"
     assert window.figure_button.text() == "Figure composer..."
     figure = window.open_figure()
-    assert figure.tools_button.text() == "Figure tools..."
+    assert figure.tools_button.text() == "Figure tools"
     assert figure.open_tools().windowTitle() == "Figure tools"
+    assert figure.open_tools().isVisible()      # beside the page, not a dialog
     figure.close()
     window.close()

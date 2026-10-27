@@ -876,6 +876,37 @@ def history_of(data) -> list:
     return [text for _, text in sorted(steps)]
 
 
+#: the tag a smoothed dataset carries in the main list and in its info
+SMOOTHED_TAG = "smoothed"
+
+
+def is_smoothed(data_or_info) -> bool:
+    """Whether a dataset (or its ``scan.info``) went through a smoothing
+    step -- its own or one of the datasets it was made from, since each
+    result carries its source's history forward.
+
+    The second-derivative and curvature panels read this: on smoothed data
+    their "smooth it first" tip is only noise.
+    """
+    info = data_or_info
+    if not isinstance(info, dict):
+        info = getattr(getattr(data_or_info, "scan", None), "info", None) or {}
+    if str(info.get("proc.tag", "")).strip() == SMOOTHED_TAG:
+        return True
+    for key, value in info.items():
+        key = str(key)
+        if not key.startswith("proc.step.") or key.endswith(".from"):
+            continue
+        if str(value).split("(", 1)[0].strip() == "smooth":
+            return True
+    return False
+
+
+def tags_of(data_or_info) -> list:
+    """The short tags a dataset's row shows in the main list."""
+    return [SMOOTHED_TAG] if is_smoothed(data_or_info) else []
+
+
 def record_step(source_info: dict, step: Step) -> dict:
     """Return ``source_info`` plus one more step, ready for MemoryData.
 
@@ -888,4 +919,6 @@ def record_step(source_info: dict, step: Step) -> dict:
     info[f"proc.step.{index}"] = step.describe()
     if step.source:
         info[f"proc.step.{index}.from"] = step.source
+    if step.name == "smooth":
+        info["proc.tag"] = SMOOTHED_TAG
     return info

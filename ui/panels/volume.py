@@ -1644,7 +1644,8 @@ class VolumeProcessDialog(QDialog):
             from ui.panels.process import smooth_first_hint
             form.insertRow(0, smooth_first_hint(
                 "A second derivative" if self.start == "derivative"
-                else "The curvature", presmooth=False))
+                else "The curvature", presmooth=False,
+                smoothed=all(P.is_smoothed(d) for _, d in self.datasets)))
 
         self.plane_width_u = spin(0.0, 0.0, 1e4, 0.001, 5)
         self.plane_width_v = spin(0.0, 0.0, 1e4, 0.001, 5)

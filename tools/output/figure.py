@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import math
+import uuid
 from dataclasses import dataclass, field, asdict
 
 import numpy as np
@@ -36,8 +37,8 @@ from tools.output.export import (MM_PER_INCH, PT_PER_MM, tick_values,
 
 __all__ = [
     "Figure", "Panel", "PanelData", "FigureStyle", "Line", "TextNote",
-    "Arrow", "ScaleBar", "Inset", "SecondaryAxis", "Overlay",
-    "JOURNAL_PRESETS", "parse_markup", "text_width_mm", "pt_to_mm",
+    "Arrow", "ScaleBar", "Inset", "SecondaryAxis", "Overlay", "Shape",
+    "empty_data", "picture_data", "JOURNAL_PRESETS", "parse_markup", "text_width_mm", "pt_to_mm",
 ]
 
 #: Widths journals actually ask for, with a sensible default font size.
@@ -222,6 +223,47 @@ class Overlay:
 
 
 @dataclass
+class Shape:
+    """Something drawn on the page itself, in millimetres from its top
+    left corner: an arrow from one panel to another, a guide line, a box
+    round a feature, a note.
+
+    Not tied to a panel's data, because on a manuscript figure these cross
+    panels and margins freely -- the panel-bound annotations (a reference
+    line at E_F, a label at Γ) are the panel's own lists.
+    """
+    kind: str = "arrow"        # arrow / line / rect / ellipse / text
+    x0: float = 0.0
+    y0: float = 0.0
+    x1: float = 0.0
+    y1: float = 0.0
+    color: str = "#000000"
+    width_pt: float = 0.8
+    style: str = "solid"       # solid / dashed / dotted / dashdot
+    fill: str = ""             # a box's or ellipse's fill; "" = none
+    text: str = ""
+    size_pt: float = 0.0       # 0 = the figure's annotation size
+    bold: bool = False
+    head_mm: float = 1.6       # an arrow's head
+    #: an arrow's head at both ends
+    double: bool = False
+
+    #: the kinds the composer's drawing tools make
+    KINDS = ("arrow", "line", "rect", "ellipse", "text")
+
+    def bounds(self):
+        """``(left, top, right, bottom)`` in mm (a text: its anchor only)."""
+        return (min(self.x0, self.x1), min(self.y0, self.y1),
+                max(self.x0, self.x1), max(self.y0, self.y1))
+
+    def move(self, dx: float, dy: float):
+        self.x0 += dx
+        self.x1 += dx
+        self.y0 += dy
+        self.y1 += dy
+
+
+@dataclass(eq=False)
 class PanelData:
     """The measurement a panel draws. Not part of the saved style."""
     array: np.ndarray = None       # (nx, ny)
@@ -237,10 +279,33 @@ class PanelData:
     #: and y then run 0..1 across the picture, for placing notes on it.
     scene: object = None
 
+    def is_plot(self) -> bool:
+        """Whether this is data drawn on axes (not a slot or a picture)."""
+        return self.kind not in ("empty", "picture", "scene3d")
 
-@dataclass
+
+def empty_data(name: str = "") -> PanelData:
+    """An empty slot of a figure, waiting for a dataset or a picture."""
+    return PanelData(array=np.zeros((2, 2)), x=np.array([0.0, 1.0]),
+                     y=np.array([0.0, 1.0]), name=name, kind="empty")
+
+
+def picture_data(rgba, name: str = "") -> PanelData:
+    """A picture read from a file (a sketch, a photograph, a figure made
+    elsewhere): ``rgba`` is ``(height, width, 4)`` uint8. Drawn as it is,
+    without axes."""
+    rgba = np.asarray(rgba, dtype=np.uint8)
+    return PanelData(array=rgba, x=np.array([0.0, 1.0]),
+                     y=np.array([0.0, 1.0]), name=name, kind="picture")
+
+
+@dataclass(eq=False)
 class Panel:
-    """One picture in the figure, and everything drawn on it."""
+    """One picture in the figure, and everything drawn on it.
+
+    Compared by identity (``eq=False``): a panel is itself, not its
+    contents -- comparing two by value compares their arrays, and
+    ``list.index`` could not find one."""
     data: PanelData = None
     colormap: str = "gray"
     flip: bool = False
@@ -265,6 +330,21 @@ class Panel:
     inset: Inset = None
     top_axis: SecondaryAxis = field(default_factory=SecondaryAxis)
     right_axis: SecondaryAxis = field(default_factory=SecondaryAxis)
+    #: where the panel's data box sits on the page, ``(x, y, w, h)`` in mm
+    #: from the top left; None while the figure is still a plain grid
+    frame: tuple = None
+    #: "panel" -- one of (a), (b), (c) -- or "inset", a small picture on
+    #: top of another panel, which takes no letter
+    role: str = "panel"
+    #: an inset that magnifies part of another panel: that panel's uid
+    zoom_of: str = ""
+    #: tick numbers and axis label along x / y (on a page laid out by hand;
+    #: a grid decides this from the panel's place in it)
+    x_labels: bool = True
+    y_labels: bool = True
+    #: this panel's font size; 0 = the figure's
+    font_pt: float = 0.0
+    uid: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
 
     # -- what the painter asks for ---------------------------------------
     def label_x(self) -> str:
@@ -277,7 +357,7 @@ class Panel:
         """The data's outer bounds: the axis range grown by half a pixel at
         each end, since a pixel is centred on its value."""
         x, y = np.asarray(self.data.x, float), np.asarray(self.data.y, float)
-        if self.data.kind == "scene3d":
+        if self.data.kind in ("scene3d", "picture", "empty"):
             return (0.0, 1.0, 0.0, 1.0)       # a picture, not pixels on axes
         if self.data.kind == "stack":
             # Curves only: the "image" is a blank placeholder of two pixels,
@@ -300,6 +380,8 @@ class Panel:
         return (float(min(xr)), float(max(xr))), (float(min(yr)), float(max(yr)))
 
     def auto_levels(self):
+        if not self.data.is_plot() and self.data.kind != "scene3d":
+            return (0.0, 1.0)
         finite = np.asarray(self.data.array, float)
         finite = finite[np.isfinite(finite)]
         if finite.size == 0:
@@ -363,6 +445,217 @@ class Figure:
         self.cols = max(int(cols), 1)
         self.style = style or FigureStyle()
         self.title = title
+        #: arrows, lines, boxes and notes drawn on the page (see Shape)
+        self.shapes = []
+
+    # -- a page laid out by hand --------------------------------------------
+    @property
+    def free(self) -> bool:
+        """Whether the panels sit where the user put them (each has a
+        ``frame``) rather than in the automatic grid."""
+        return bool(self.panels) and all(p.frame is not None for p in self.panels)
+
+    def main_panels(self):
+        return [p for p in self.panels if p.role != "inset"]
+
+    def panel_by_uid(self, uid: str):
+        return next((p for p in self.panels if p.uid == uid), None)
+
+    def freeze(self):
+        """Turn the automatic grid into frames the user can move.
+
+        The page keeps the size the grid gave it, and each panel keeps its
+        place, so nothing on the figure moves at the moment it becomes
+        editable by hand. Tick labels stay where the grid had them.
+        """
+        if self.free:
+            return self
+        width, height, rects = self.layout()
+        for rect in rects:
+            panel = self.panels[rect["index"]]
+            if panel.frame is None:
+                panel.frame = (rect["x"], rect["y"], rect["w"], rect["h"])
+                panel.x_labels = self.shows_x_labels(rect["index"])
+                panel.y_labels = self.shows_y_labels(rect["index"])
+        self.style.width_mm = float(width)
+        self.style.height_mm = float(height)
+        return self
+
+    def grid_frames(self, rows: int, cols: int, count: int = None):
+        """``count`` data boxes in a ``rows`` x ``cols`` grid filling the
+        page, with room for the axis labels round each -- what *Arrange as
+        grid* and a new blank figure lay out."""
+        style = self.style
+        saved = (self.rows, self.cols, list(self.panels))
+        count = rows * cols if count is None else count
+        try:
+            self.rows, self.cols = max(int(rows), 1), max(int(cols), 1)
+            if not self.panels:
+                self.panels = [Panel(data=empty_data())]
+            left, bottom, top, right = self.margins_mm()
+        finally:
+            self.rows, self.cols, self.panels = saved
+        height = style.height_mm if style.height_mm > 0 else None
+        inner_w = (style.width_mm - style.margin_left_mm - style.margin_right_mm
+                   - (cols - 1) * style.gap_x_mm)
+        cell_w = max(inner_w / cols, 4.0)
+        data_w = max(cell_w - left - right, 2.0)
+        if height:
+            inner_h = (height - style.margin_top_mm - style.margin_bottom_mm
+                       - (rows - 1) * style.gap_y_mm)
+            cell_h = max(inner_h / rows, 4.0)
+            data_h = max(cell_h - top - bottom, 2.0)
+        else:
+            data_h = max(data_w * (style.panel_aspect or self.DEFAULT_ASPECT), 2.0)
+            cell_h = data_h + top + bottom
+        frames = []
+        for index in range(count):
+            row, col = divmod(index, cols)
+            frames.append((style.margin_left_mm + col * (cell_w + style.gap_x_mm) + left,
+                           style.margin_top_mm + row * (cell_h + style.gap_y_mm) + top,
+                           data_w, data_h))
+        page_h = (cell_h * rows + (rows - 1) * style.gap_y_mm
+                  + style.margin_top_mm + style.margin_bottom_mm)
+        return frames, (height or page_h)
+
+    def arrange_grid(self, rows: int, cols: int, fill_height: bool = False):
+        """Put the panels (not the insets) back on a regular grid, in their
+        reading order; insets travel with the panel they sit on.
+
+        The panels take the figure's panel shape and the page's height
+        follows -- or, with ``fill_height``, they share out the page's
+        present height.
+        """
+        mains = self.reading_order()
+        rows = max(int(rows), int(math.ceil(len(mains) / max(int(cols), 1))), 1)
+        kept = self.style.height_mm
+        if not fill_height:
+            self.style.height_mm = 0.0
+        try:
+            frames, height = self.grid_frames(rows, cols, len(mains))
+        finally:
+            self.style.height_mm = kept
+        self.style.height_mm = float(height)
+        for panel, frame in zip(mains, frames):
+            old = panel.frame
+            panel.frame = frame
+            if old is not None:
+                self._carry_insets(panel, old, frame)
+        self.rows, self.cols = rows, int(cols)
+        self.auto_edge_labels()
+        return self
+
+    def _carry_insets(self, panel, old, new):
+        """Move and scale the insets that sat on ``panel`` (whose frame
+        was ``old``) along with it."""
+        ox, oy, ow, oh = old
+        nx, ny, nw, nh = new
+        if ow <= 0 or oh <= 0:
+            return
+        for inset in self.panels:
+            if inset.role != "inset" or inset.frame is None or inset is panel:
+                continue
+            if not self._sits_on(inset, panel, old):
+                continue
+            x, y, w, h = inset.frame
+            inset.frame = (nx + (x - ox) * nw / ow, ny + (y - oy) * nh / oh,
+                           w * nw / ow, h * nh / oh)
+
+    @staticmethod
+    def _sits_on(inset, panel, box) -> bool:
+        if inset.zoom_of:
+            return inset.zoom_of == panel.uid
+        cx = inset.frame[0] + inset.frame[2] / 2
+        cy = inset.frame[1] + inset.frame[3] / 2
+        return box[0] <= cx <= box[0] + box[2] and box[1] <= cy <= box[1] + box[3]
+
+    def host_of(self, inset):
+        """The panel an inset sits on: the one its zoom names, or else the
+        panel whose box holds the inset's centre."""
+        if inset.zoom_of:
+            host = self.panel_by_uid(inset.zoom_of)
+            if host is not None:
+                return host
+        if inset.frame is None:
+            return None
+        for panel in self.main_panels():
+            if panel.frame is not None and self._sits_on(inset, panel, panel.frame):
+                return panel
+        return None
+
+    def move_panel(self, panel, frame):
+        """Give ``panel`` a new frame; its insets follow."""
+        old = panel.frame
+        panel.frame = tuple(float(v) for v in frame)
+        if old is not None and panel.role != "inset":
+            self._carry_insets(panel, old, panel.frame)
+
+    def reading_order(self):
+        """The panels (not insets) top to bottom, then left to right: rows
+        are panels whose tops are within half a panel of one another."""
+        mains = self.main_panels()
+        if not all(p.frame is not None for p in mains):
+            return mains
+        ordered = sorted(mains, key=lambda p: (p.frame[1], p.frame[0]))
+        rows, current = [], []
+        for panel in ordered:
+            if current and panel.frame[1] > current[0].frame[1] + 0.5 * current[0].frame[3]:
+                rows.append(current)
+                current = []
+            current.append(panel)
+        if current:
+            rows.append(current)
+        return [p for row in rows for p in sorted(row, key=lambda p: p.frame[0])]
+
+    def auto_edge_labels(self):
+        """On a hand-made page, label only the outer edges (when the style
+        says so): a panel keeps its y numbers unless another panel sits
+        right beside it on the left at the same height, and its x numbers
+        unless one sits right below it."""
+        mains = [p for p in self.main_panels() if p.frame is not None]
+        for panel in mains:
+            if not self.style.edge_labels_only:
+                panel.x_labels = panel.y_labels = True
+                continue
+            x, y, w, h = panel.frame
+            left = below = False
+            for other in mains:
+                if other is panel:
+                    continue
+                ox, oy, ow, oh = other.frame
+                overlap_v = min(y + h, oy + oh) - max(y, oy)
+                overlap_h = min(x + w, ox + ow) - max(x, ox)
+                if (ox + ow <= x + 0.5 and x - (ox + ow) < w
+                        and overlap_v > 0.6 * min(h, oh)
+                        and abs(oy - y) < 1.0 and abs(oh - h) < 1.0):
+                    left = True
+                if (oy >= y + h - 0.5 and oy - (y + h) < h
+                        and overlap_h > 0.6 * min(w, ow)
+                        and abs(ox - x) < 1.0 and abs(ow - w) < 1.0):
+                    below = True
+            panel.y_labels = not left
+            panel.x_labels = not below
+
+    def place_new(self, panel):
+        """A frame for a panel added to a hand-made page: the size of the
+        last panel, below everything there is; the page grows to hold it."""
+        mains = [p for p in self.panels if p.frame is not None and p.role != "inset"]
+        style = self.style
+        if mains:
+            w, h = mains[-1].frame[2], mains[-1].frame[3]
+            left = min(p.frame[0] for p in mains)
+        else:
+            frames, _ = self.grid_frames(1, 1)
+            left, _top, w, h = frames[0]
+        bottom = max([p.frame[1] + p.frame[3] for p in self.panels
+                      if p.frame is not None] + [0.0])
+        top_margin = self.margins_mm((w, h))[2]
+        y = bottom + self.margins_mm((w, h))[1] + style.gap_y_mm + top_margin
+        panel.frame = (left, y, w, h)
+        needed = y + h + self.margins_mm((w, h))[1] + style.margin_bottom_mm
+        if needed > style.height_mm:
+            style.height_mm = float(needed)
+        return panel
 
     # -- the grid ---------------------------------------------------------
     def fit_grid(self, cols: int = None):
@@ -379,11 +672,15 @@ class Figure:
         return divmod(int(index), self.cols)
 
     def shows_y_labels(self, index: int) -> bool:
+        if self.free:
+            return bool(self.panels[index].y_labels)
         if not self.style.edge_labels_only:
             return True
         return self.cell(index)[1] == 0
 
     def shows_x_labels(self, index: int) -> bool:
+        if self.free:
+            return bool(self.panels[index].x_labels)
         if not self.style.edge_labels_only:
             return True
         row, col = self.cell(index)
@@ -398,6 +695,8 @@ class Figure:
         must be comparable by eye."""
         lows, highs = [], []
         for panel in self.panels:
+            if not panel.data.is_plot():
+                continue
             lo, hi = panel.auto_levels()
             lows.append(lo)
             highs.append(hi)
@@ -408,6 +707,8 @@ class Figure:
     def common_ranges(self):
         xs, ys = [], []
         for panel in self.panels:
+            if not panel.data.is_plot() or panel.role == "inset":
+                continue
             (x0, x1), (y0, y1) = panel.ranges()
             xs += [x0, x1]
             ys += [y0, y1]
@@ -421,13 +722,17 @@ class Figure:
         return panel.effective_levels()
 
     def panel_ranges(self, panel: Panel):
-        if self.style.shared_ranges:
+        if (self.style.shared_ranges and panel.role != "inset"
+                and panel.data.is_plot()):
             return self.common_ranges()
         return panel.ranges()
 
     def letter_panels(self, template: str = "({letter})", start: int = 0):
-        """(a), (b), (c)... in reading order."""
-        for i, panel in enumerate(self.panels):
+        """(a), (b), (c)... in reading order; insets take no letter."""
+        for panel in self.panels:
+            if panel.role == "inset":
+                panel.label = ""
+        for i, panel in enumerate(self.reading_order()):
             letter = chr(ord("a") + (i + start) % 26)
             panel.label = template.format(letter=letter, LETTER=letter.upper(),
                                           number=i + start + 1)
@@ -467,13 +772,16 @@ class Figure:
         target = self.tick_targets(*(panel_size or (40.0, 30.0)))[1]
         widest = 0.0
         for index, panel in enumerate(self.panels):
-            if not self.shows_y_labels(index):
+            if not self.shows_y_labels(index) or not panel.data.is_plot():
                 continue
             (_x, _x1), (y0, y1) = self.panel_ranges(panel)
             values, step = tick_values(y0, y1, target)
             fmt = tick_format(step)
             for value in values:
                 widest = max(widest, text_width_mm(fmt % value, tick_pt))
+        if widest == 0.0 and any(p.data.kind == "empty" for p in self.panels):
+            # Slots still to be filled: room for numbers like "-0.25".
+            widest = text_width_mm("-0.25", tick_pt)
         # A font's line box is about 1.17 em tall and the axis label sits a
         # line below the tick labels, so the reserve is counted in line
         # boxes rather than em -- get this wrong by 10% and the label is
@@ -548,6 +856,20 @@ class Figure:
         measured from the top so the painter can use it directly.
         """
         style = self.style
+        if self.free:
+            # Drawn in order: the panels, then the insets on top of them.
+            order = ([i for i, p in enumerate(self.panels) if p.role != "inset"]
+                     + [i for i, p in enumerate(self.panels) if p.role == "inset"])
+            rects = []
+            for index in order:
+                x, y, w, h = self.panels[index].frame
+                rects.append({"index": index, "row": 0, "col": 0,
+                              "x": float(x), "y": float(y),
+                              "w": max(float(w), 1.0), "h": max(float(h), 1.0)})
+            height = style.height_mm
+            if height <= 0:
+                height = max(r["y"] + r["h"] for r in rects) + 12.0
+            return max(float(style.width_mm), 20.0), float(height), rects
         # Two passes: the margins depend on how wide the tick labels are,
         # which depends on how many there are, which depends on the panel
         # size the margins decide. One round of feedback settles it.

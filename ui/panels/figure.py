@@ -30,20 +30,24 @@ what Qt calls things: Panels, Axes, Text, Colour, Overlays, Export.
 """
 from __future__ import annotations
 
+import copy
 import os
+import time
+import uuid
 
 import numpy as np
 from PyQt5.QtCore import Qt, QRectF, QPointF, QSize, pyqtSignal
-from PyQt5.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter,
-                         QPainterPath, QPen, QBrush, QPolygonF, QPdfWriter,
-                         QPageSize)
+from PyQt5.QtGui import (QColor, QCursor, QFont, QFontMetricsF, QImage,
+                         QKeySequence, QPainter, QPainterPath, QPen, QBrush,
+                         QPolygonF, QPdfWriter, QPageSize)
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QComboBox, QCheckBox,
                              QDoubleSpinBox, QSpinBox, QLineEdit, QFormLayout,
                              QTabWidget, QDialog, QDialogButtonBox, QGroupBox,
                              QFileDialog, QMessageBox, QListWidget, QScrollArea,
                              QFrame, QApplication, QRadioButton, QInputDialog,
-                             QSizePolicy, QColorDialog, QListWidgetItem)
+                             QSizePolicy, QColorDialog, QListWidgetItem,
+                             QMenu, QShortcut, QSplitter)
 
 from tools.output import colormaps
 from tools.output import export
@@ -77,6 +81,8 @@ class FigurePainter:
         #: device units per mm to generate the data raster at; None means
         #: the figure's own dpi (see :meth:`_raster`)
         self._raster_scale = None
+        #: draw the empty slots (on screen only: never in a file)
+        self.placeholders = False
 
     # -- sizes -------------------------------------------------------------
     def size_mm(self):
@@ -179,6 +185,9 @@ class FigurePainter:
         for rect in rects:
             self._paint_panel(painter, figure.panels[rect["index"]], rect,
                               scale, rect["index"])
+        self._draw_zoom_marks(painter, rects, scale)
+        for shape in getattr(figure, "shapes", ()):
+            self.paint_shape(painter, shape, scale)
         if figure.title:
             self._draw_markup(
                 painter, width * scale / 2,
@@ -197,12 +206,35 @@ class FigurePainter:
 
     # -- one panel ----------------------------------------------------------
     def _paint_panel(self, painter, panel: Panel, rect, scale, index):
+        """One panel, in its own font size when it has one (the figure's
+        sizes are swapped for the panel's while it is drawn)."""
+        style = self.figure.style
+        if not panel.font_pt:
+            return self._paint_panel_body(painter, panel, rect, scale, index)
+        kept = (style.font_pt, style.tick_pt, style.label_pt,
+                style.annotation_pt, style.panel_label_pt)
+        style.font_pt = float(panel.font_pt)
+        style.tick_pt = style.label_pt = style.annotation_pt = 0.0
+        style.panel_label_pt = kept[4] or (kept[0] + 1)
+        try:
+            return self._paint_panel_body(painter, panel, rect, scale, index)
+        finally:
+            (style.font_pt, style.tick_pt, style.label_pt,
+             style.annotation_pt, style.panel_label_pt) = kept
+
+    def _paint_panel_body(self, painter, panel: Panel, rect, scale, index):
         figure, style = self.figure, self.figure.style
         (x0, x1), (y0, y1) = figure.panel_ranges(panel)
         levels = figure.panel_levels(panel)
         box = QRectF(rect["x"] * scale, rect["y"] * scale,
                      rect["w"] * scale, rect["h"] * scale)
 
+        if panel.data.kind == "empty":
+            self._paint_empty(painter, panel, box, scale)
+            return
+        if panel.data.kind == "picture":
+            self._paint_picture(painter, panel, box, scale)
+            return
         if panel.data.kind == "scene3d":
             self._paint_scene_panel(painter, panel, box, scale, levels)
             return
@@ -220,6 +252,126 @@ class FigurePainter:
         if panel.colorbar:
             self._draw_colorbar(painter, panel, rect, box, scale, levels)
         self._draw_panel_label(painter, panel, box, scale)
+
+    def _paint_empty(self, painter, panel, box, scale):
+        """An empty slot: a dashed outline with its letter on screen, and
+        nothing at all in a file."""
+        if not self.placeholders:
+            return
+        pen = QPen(QColor("#9aa3ad"))
+        pen.setWidthF(max(1.0, 0.25 * scale))
+        pen.setStyle(Qt.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(QColor(240, 243, 247, 160)))
+        painter.drawRect(box)
+        size = 7.0 if box.width() / scale > 18 else 5.0
+        text = ("empty — double-click to load" if box.width() / scale > 45
+                else "empty")
+        self._draw_markup(painter, box.center().x(),
+                          box.center().y() + pt_to_mm(size) * scale / 3,
+                          text, size, scale, "#7a828b", anchor="center")
+        self._draw_panel_label(painter, panel, box, scale)
+
+    def _paint_picture(self, painter, panel, box, scale):
+        """A picture from a file, as large as fits the frame without
+        changing its shape, centred in it."""
+        rgba = np.ascontiguousarray(panel.data.array, dtype=np.uint8)
+        if rgba.ndim == 3 and rgba.shape[0] > 0 and rgba.shape[1] > 0:
+            height, width = rgba.shape[:2]
+            image = QImage(rgba.data, width, height, width * 4,
+                           QImage.Format_RGBA8888)
+            fit = min(box.width() / width, box.height() / height)
+            target = QRectF(0, 0, width * fit, height * fit)
+            target.moveCenter(box.center())
+            painter.drawImage(target, image)
+        self._draw_panel_label(painter, panel, box, scale)
+
+    def _draw_zoom_marks(self, painter, rects, scale):
+        """On each panel an inset magnifies, a dashed box round the region
+        the inset shows."""
+        figure, style = self.figure, self.figure.style
+        boxes = {figure.panels[r["index"]].uid: r for r in rects}
+        for panel in figure.panels:
+            if panel.role != "inset" or not panel.zoom_of:
+                continue
+            host = figure.panel_by_uid(panel.zoom_of)
+            rect = boxes.get(panel.zoom_of)
+            if host is None or rect is None or not host.data.is_plot():
+                continue
+            box = QRectF(rect["x"] * scale, rect["y"] * scale,
+                         rect["w"] * scale, rect["h"] * scale)
+            xr, yr = figure.panel_ranges(host)
+            (a0, a1), (b0, b1) = panel.ranges()
+            corner0 = self._map_point(box, host, xr, yr, a0, b0)
+            corner1 = self._map_point(box, host, xr, yr, a1, b1)
+            painter.save()
+            painter.setClipRect(box)
+            painter.setPen(self._pen(style.axis_color if style.axis_color != "#000000"
+                                     else "#ffffff", style.axis_width_pt, scale,
+                                     "dashed"))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(corner0, corner1).normalized())
+            painter.restore()
+
+    def paint_shape(self, painter, shape, scale):
+        """One arrow, line, box, ellipse or note of the page (mm -> device
+        units by ``scale``)."""
+        style = self.figure.style
+        start = QPointF(shape.x0 * scale, shape.y0 * scale)
+        end = QPointF(shape.x1 * scale, shape.y1 * scale)
+        painter.save()
+        if shape.kind == "text":
+            size = shape.size_pt or style.annotation_pt or style.font_pt
+            self._draw_markup(painter, start.x(), start.y(), shape.text or "text",
+                              size, scale, shape.color, bold=shape.bold)
+            painter.restore()
+            return
+        pen = self._pen(shape.color, shape.width_pt, scale, shape.style)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        if shape.kind in ("rect", "ellipse"):
+            painter.setBrush(QBrush(QColor(shape.fill)) if shape.fill else Qt.NoBrush)
+            area = QRectF(start, end).normalized()
+            if shape.kind == "rect":
+                painter.drawRect(area)
+            else:
+                painter.drawEllipse(area)
+        elif shape.kind == "line":
+            painter.drawLine(start, end)
+        elif shape.kind == "arrow":
+            self._page_arrow(painter, start, end, shape, scale)
+        painter.restore()
+
+    def _page_arrow(self, painter, start, end, shape, scale):
+        vector = np.array([end.x() - start.x(), end.y() - start.y()])
+        length = float(np.hypot(*vector))
+        if length < 1e-6:
+            return
+        unit = vector / length
+        head = min(shape.head_mm * scale, 0.45 * length)
+        normal = np.array([-unit[1], unit[0]]) * head * 0.38
+        tips = [(end, unit)] + ([(start, -unit)] if shape.double else [])
+        a = QPointF(start.x() + unit[0] * head, start.y() + unit[1] * head) \
+            if shape.double else start
+        b = QPointF(end.x() - unit[0] * head, end.y() - unit[1] * head)
+        painter.drawLine(a, b)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(shape.color)))
+        for tip, direction in tips:
+            base = QPointF(tip.x() - direction[0] * head, tip.y() - direction[1] * head)
+            painter.drawPolygon(QPolygonF([
+                tip, QPointF(base.x() + normal[0], base.y() + normal[1]),
+                QPointF(base.x() - normal[0], base.y() - normal[1])]))
+
+    def text_box(self, shape, scale):
+        """Where a note is drawn, in device units, for picking it."""
+        style = self.figure.style
+        size = shape.size_pt or style.annotation_pt or style.font_pt
+        font = self._font(size, scale, shape.bold)
+        metrics = QFontMetricsF(font)
+        width = max(metrics.horizontalAdvance(nf.plain_text(shape.text or "text")), 4.0)
+        return QRectF(shape.x0 * scale, shape.y0 * scale - metrics.ascent(),
+                      width, metrics.height())
 
     def _paint_scene_panel(self, painter, panel, box, scale, levels):
         """A 3-D view (ui.panels.volume) as a panel: drawn by the same code
@@ -753,82 +905,317 @@ def QMarginsF_zero():
 # The canvas
 # --------------------------------------------------------------------------
 class FigureCanvas(QWidget):
-    """Shows the rendered figure and lets a panel be picked by clicking it.
+    """The page itself, edited with the mouse.
 
-    Nothing here is a pyqtgraph plot: the figure is a picture drawn by
-    :class:`FigurePainter`, which is the only way the preview and the file
-    can be guaranteed to agree.
+    The figure is drawn by :class:`FigurePainter`, the same call that
+    writes the file, so the page on screen is the page in the PDF. On top
+    of that picture this widget draws only what is not part of the figure:
+    the selection's handles, the snapping guides, and the shape being
+    drawn.
+
+    The tools (``tool``):
+
+    * ``select`` -- click a panel, an inset or a drawing to select it; drag
+      it to move it, drag a handle to resize it. Panels snap to each
+      other's edges, and to a 0.5 mm grid.
+    * ``slot`` -- drag out a new empty panel (inside another panel: an
+      inset).
+    * ``zoom`` -- drag out a region of a panel: an inset magnifying it.
+    * ``arrow``, ``line``, ``rect``, ``ellipse`` -- drag to draw one.
+    * ``text`` -- click where a note goes.
+
+    The page is laid out in millimetres; this widget only converts.
     """
 
     panelPicked = pyqtSignal(int)
     pointPicked = pyqtSignal(int, float, float)
+    #: the selection changed (a panel, a drawing, or nothing)
+    selectionChanged = pyqtSignal()
+    #: about to change the figure: the window keeps an undo step
+    aboutToChange = pyqtSignal()
+    #: the figure was changed by the mouse or the keyboard
+    changed = pyqtSignal()
+    #: a drawing tool finished, and the canvas is back to ``select``
+    toolFinished = pyqtSignal()
+    #: a panel was double-clicked
+    panelActivated = pyqtSignal(int)
+    #: right click: (what, index, global position), what in panel/shape/page
+    menuRequested = pyqtSignal(str, int, object)
+
+    TOOLS = ("select", "slot", "zoom", "arrow", "line", "rect", "ellipse", "text")
+    #: handles, by the edges of the frame each one moves
+    HANDLES = {"nw": "lt", "n": "t", "ne": "rt", "e": "r",
+               "se": "rb", "s": "b", "sw": "lb", "w": "l"}
+    MARGIN_PX = 14
 
     def __init__(self, figure: Figure, parent=None):
         super().__init__(parent)
         self.figure = figure
         self.painter = FigurePainter(figure)
-        self.selected = 0
+        self.painter.placeholders = True
+        self.selection = None          # ("panel", index) / ("shape", index)
+        self.tool = "select"
+        self.snap = True
+        #: None fits the page to the window; otherwise screen px per mm
+        self.zoom = None
         self._image = None
-        self._rect = None          # where the image sits in the widget
-        self._picking = None       # a callback while a point is being picked
+        self._scale = 1.0
+        self._origin = (0.0, 0.0)
+        self._rect = None              # where the page sits: x, y, w, h (px)
+        self._picking = None           # a callback while a point is picked
+        self._drag = None              # what the mouse is doing
+        self._guides = []              # snapping guides: ("v"/"h", mm)
+        self._draft = None             # the shape or box being drawn
         self.setMinimumSize(280, 220)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setCursor(Qt.ArrowCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
+
+    # -- the selection, as the tools see it ---------------------------------
+    @property
+    def selected(self) -> int:
+        """The selected panel's index (the first panel when a drawing or
+        nothing is selected), for the tools that work on one panel."""
+        if self.selection and self.selection[0] == "panel":
+            return self.selection[1]
+        return 0
+
+    @selected.setter
+    def selected(self, index):
+        if 0 <= int(index) < len(self.figure.panels):
+            self.selection = ("panel", int(index))
+        self.update()
+
+    def selected_shape(self):
+        if self.selection and self.selection[0] == "shape" \
+                and 0 <= self.selection[1] < len(self.figure.shapes):
+            return self.figure.shapes[self.selection[1]]
+        return None
+
+    def selected_panel(self):
+        if self.selection and self.selection[0] == "panel" \
+                and 0 <= self.selection[1] < len(self.figure.panels):
+            return self.figure.panels[self.selection[1]]
+        return None
+
+    def select(self, what, index=None):
+        self.selection = None if what is None else (what, int(index))
+        self.update()
+        self.selectionChanged.emit()
+        if what == "panel":
+            self.panelPicked.emit(int(index))
+
+    def set_tool(self, tool: str):
+        if tool not in self.TOOLS:
+            raise ValueError(f"unknown tool {tool!r}")
+        self.tool = tool
+        self._drag = self._draft = None
+        self.setCursor(Qt.ArrowCursor if tool == "select" else Qt.CrossCursor)
+        self.update()
 
     # -- rendering ---------------------------------------------------------
     def refresh(self):
         self._image = None
         self.update()
 
+    def _page_scale(self):
+        width_mm, height_mm = self.painter.size_mm()
+        if self.zoom:
+            return float(self.zoom)
+        available_w = max(self.width() - 2 * self.MARGIN_PX, 60)
+        available_h = max(self.height() - 2 * self.MARGIN_PX, 60)
+        return min(available_w / max(width_mm, 1.0),
+                   available_h / max(height_mm, 1.0))
+
     def _ensure_image(self):
         if self._image is not None:
             return
         width_mm, height_mm = self.painter.size_mm()
-        margin = 12
-        available_w = max(self.width() - 2 * margin, 60)
-        available_h = max(self.height() - 2 * margin, 60)
-        scale = min(available_w / max(width_mm, 1.0),
-                    available_h / max(height_mm, 1.0))
-        self._image = self.painter.preview(max(int(width_mm * scale), 60),
-                                           self.selected)
-        x = (self.width() - self._image.width()) // 2
-        y = (self.height() - self._image.height()) // 2
+        scale = self._page_scale()
+        if self.zoom:
+            self.setMinimumSize(int(width_mm * scale) + 2 * self.MARGIN_PX,
+                                int(height_mm * scale) + 2 * self.MARGIN_PX)
+        else:
+            self.setMinimumSize(280, 220)
+        self._image = self.painter.preview(max(int(width_mm * scale), 60), None)
+        self._scale = self._image.width() / max(width_mm, 1.0)
+        x = max((self.width() - self._image.width()) // 2, self.MARGIN_PX)
+        y = max((self.height() - self._image.height()) // 2, self.MARGIN_PX)
+        self._origin = (float(x), float(y))
         self._rect = (x, y, self._image.width(), self._image.height())
+
+    def to_mm(self, pos):
+        return ((pos.x() - self._origin[0]) / self._scale,
+                (pos.y() - self._origin[1]) / self._scale)
+
+    def to_px(self, x_mm, y_mm):
+        return QPointF(self._origin[0] + x_mm * self._scale,
+                       self._origin[1] + y_mm * self._scale)
 
     def paintEvent(self, event):
         self._ensure_image()
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor("#e9e6ef"))
         if self._image is not None:
-            painter.drawImage(self._rect[0], self._rect[1], self._image)
+            x, y, w, h = self._rect
+            painter.fillRect(QRectF(x + 3, y + 3, w, h), QColor(0, 0, 0, 40))
+            painter.drawImage(x, y, self._image)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        self._paint_draft(painter)
+        self._paint_selection(painter)
+        self._paint_guides(painter)
         painter.end()
+
+    def _paint_draft(self, painter):
+        draft = self._draft
+        if draft is None:
+            return
+        if isinstance(draft, nf.Shape):
+            painter.save()
+            painter.translate(*self._origin)
+            self.painter.paint_shape(painter, draft, self._scale)
+            painter.restore()
+            return
+        x0, y0, x1, y1 = draft
+        pen = QPen(QColor("#2ca6cd"))
+        pen.setWidthF(1.5)
+        pen.setStyle(Qt.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(QColor(44, 166, 205, 40)))
+        painter.drawRect(QRectF(self.to_px(x0, y0), self.to_px(x1, y1)).normalized())
+
+    def _paint_selection(self, painter):
+        if self.selection is None:
+            return
+        pen = QPen(QColor("#2ca6cd"))
+        pen.setWidthF(1.2)
+        pen.setStyle(Qt.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        shape = self.selected_shape()
+        if shape is not None and shape.kind == "text":
+            painter.drawRect(self.painter.text_box(shape, self._scale)
+                             .translated(*self._origin).adjusted(-2, -2, 2, 2))
+        elif shape is None:
+            panel = self.selected_panel()
+            frame = self._frame_of(panel)
+            if frame is not None:
+                x, y, w, h = frame
+                painter.drawRect(QRectF(self.to_px(x, y), self.to_px(x + w, y + h)))
+        painter.setPen(QPen(QColor("#1d7fa0"), 1.0))
+        painter.setBrush(QBrush(QColor("#ffffff")))
+        for _name, point in self._handles():
+            painter.drawRect(QRectF(point.x() - 4, point.y() - 4, 8, 8))
+
+    def _paint_guides(self, painter):
+        if not self._guides or self._rect is None:
+            return
+        pen = QPen(QColor("#e0389b"))
+        pen.setWidthF(1.0)
+        painter.setPen(pen)
+        x, y, w, h = self._rect
+        for direction, value in self._guides:
+            point = self.to_px(value, value)
+            if direction == "v":
+                painter.drawLine(QPointF(point.x(), y), QPointF(point.x(), y + h))
+            else:
+                painter.drawLine(QPointF(x, point.y()), QPointF(x + w, point.y()))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._image = None
 
-    # -- picking -----------------------------------------------------------
-    def start_point_picking(self, callback):
-        """The next click reports ``(panel index, x, y)`` in data
-        coordinates -- how an annotation gets placed where it is wanted
-        rather than typed in blind."""
-        self._picking = callback
-        self.setCursor(Qt.CrossCursor)
+    # -- geometry ------------------------------------------------------------
+    def _frame_of(self, panel):
+        """A panel's data box in mm, whether the page is free or a grid."""
+        if panel is None:
+            return None
+        if panel.frame is not None:
+            return panel.frame
+        _w, _h, rects = self.figure.layout()
+        index = self.figure.panels.index(panel)
+        for rect in rects:
+            if rect["index"] == index:
+                return (rect["x"], rect["y"], rect["w"], rect["h"])
+        return None
 
-    def stop_point_picking(self):
-        self._picking = None
-        self.setCursor(Qt.ArrowCursor)
+    def _handles(self):
+        """``[(name, point in px)]`` for the selection."""
+        shape = self.selected_shape()
+        if shape is not None:
+            if shape.kind in ("arrow", "line"):
+                return [("p0", self.to_px(shape.x0, shape.y0)),
+                        ("p1", self.to_px(shape.x1, shape.y1))]
+            if shape.kind in ("rect", "ellipse"):
+                left, top, right, bottom = shape.bounds()
+                return [("nw", self.to_px(left, top)), ("ne", self.to_px(right, top)),
+                        ("se", self.to_px(right, bottom)), ("sw", self.to_px(left, bottom))]
+            return []
+        frame = self._frame_of(self.selected_panel())
+        if frame is None:
+            return []
+        x, y, w, h = frame
+        points = {"nw": (x, y), "n": (x + w / 2, y), "ne": (x + w, y),
+                  "e": (x + w, y + h / 2), "se": (x + w, y + h),
+                  "s": (x + w / 2, y + h), "sw": (x, y + h), "w": (x, y + h / 2)}
+        return [(name, self.to_px(*xy)) for name, xy in points.items()]
+
+    def _tolerance_mm(self):
+        return 5.0 / max(self._scale, 1e-6)
+
+    def _hit_shape(self, shape, x, y, tol) -> bool:
+        if shape.kind == "text":
+            box = self.painter.text_box(shape, self._scale)
+            return QRectF(box.x() / self._scale - tol, box.y() / self._scale - tol,
+                          box.width() / self._scale + 2 * tol,
+                          box.height() / self._scale + 2 * tol).contains(QPointF(x, y))
+        if shape.kind in ("arrow", "line"):
+            return _segment_distance(x, y, shape.x0, shape.y0, shape.x1, shape.y1) <= tol
+        left, top, right, bottom = shape.bounds()
+        inside = left - tol <= x <= right + tol and top - tol <= y <= bottom + tol
+        if not inside:
+            return False
+        if shape.fill:
+            return True
+        if shape.kind == "rect":
+            return (min(abs(x - left), abs(x - right)) <= tol
+                    or min(abs(y - top), abs(y - bottom)) <= tol)
+        cx, cy = (left + right) / 2, (top + bottom) / 2
+        rx, ry = max((right - left) / 2, 1e-6), max((bottom - top) / 2, 1e-6)
+        radius = np.hypot((x - cx) / rx, (y - cy) / ry)
+        return abs(radius - 1.0) * min(rx, ry) <= tol
+
+    def item_at(self, pos):
+        """``("handle", name)``, ``("shape", i)``, ``("panel", i)`` or None
+        under a widget position: the selection's handles first, then the
+        drawings, the insets and the panels, topmost first."""
+        for name, point in self._handles():
+            if abs(point.x() - pos.x()) <= 6 and abs(point.y() - pos.y()) <= 6:
+                return ("handle", name)
+        x, y = self.to_mm(pos)
+        tol = self._tolerance_mm()
+        for index in range(len(self.figure.shapes) - 1, -1, -1):
+            if self._hit_shape(self.figure.shapes[index], x, y, tol):
+                return ("shape", index)
+        panels = self.figure.panels
+        order = ([i for i, p in enumerate(panels) if p.role == "inset"][::-1]
+                 + [i for i, p in enumerate(panels) if p.role != "inset"][::-1])
+        for index in order:
+            frame = self._frame_of(panels[index])
+            if frame is None:
+                continue
+            fx, fy, fw, fh = frame
+            if fx - tol <= x <= fx + fw + tol and fy - tol <= y <= fy + fh + tol:
+                return ("panel", index)
+        return None
 
     def _locate(self, pos):
         """Which panel was clicked, and where in its data."""
         if self._rect is None:
             return None
-        width_mm, height_mm = self.painter.size_mm()
-        scale = self._rect[2] / max(width_mm, 1.0)
-        mm_x = (pos.x() - self._rect[0]) / scale
-        mm_y = (pos.y() - self._rect[1]) / scale
+        mm_x, mm_y = self.to_mm(pos)
         _w, _h, rects = self.figure.layout()
-        for rect in rects:
+        for rect in reversed(rects):
             if (rect["x"] <= mm_x <= rect["x"] + rect["w"]
                     and rect["y"] <= mm_y <= rect["y"] + rect["h"]):
                 panel = self.figure.panels[rect["index"]]
@@ -842,19 +1229,459 @@ class FigureCanvas(QWidget):
                 return rect["index"], x0 + fx * (x1 - x0), y0 + fy * (y1 - y0)
         return None
 
+    # -- snapping ------------------------------------------------------------
+    def _snap_value(self, value):
+        return round(value * 2.0) / 2.0 if self.snap else value
+
+    def _snap_frame(self, moving, frame, edges):
+        """Snap ``frame``'s ``edges`` (some of "l", "r", "t", "b") to the
+        other panels' edges within a few pixels, else to the 0.5 mm grid.
+        Returns the frame, with the guides that apply."""
+        x, y, w, h = frame
+        self._guides = []
+        if not self.snap:
+            return frame
+        threshold = max(6.0 / self._scale, 0.6)
+        xs, ys = [0.0, self.figure.style.width_mm], [0.0]
+        for panel in self.figure.panels:
+            if panel is moving or panel.frame is None:
+                continue
+            if panel.role == "inset" and moving.role != "inset":
+                continue          # they move with their panel
+            px, py, pw, ph = panel.frame
+            xs += [px, px + pw]
+            ys += [py, py + ph]
+
+        def best(value, candidates):
+            near = [(abs(value - c), c) for c in candidates if abs(value - c) <= threshold]
+            return min(near)[1] if near else None
+
+        moving_whole = set(edges) == {"l", "r", "t", "b"}
+        # x
+        if moving_whole:
+            left, right = best(x, xs), best(x + w, xs)
+            if left is not None and (right is None or abs(left - x) <= abs(right - x - w)):
+                x = left
+                self._guides.append(("v", left))
+            elif right is not None:
+                x = right - w
+                self._guides.append(("v", right))
+            else:
+                x = self._snap_value(x)
+            top, bottom = best(y, ys), best(y + h, ys)
+            if top is not None and (bottom is None or abs(top - y) <= abs(bottom - y - h)):
+                y = top
+                self._guides.append(("h", top))
+            elif bottom is not None:
+                y = bottom - h
+                self._guides.append(("h", bottom))
+            else:
+                y = self._snap_value(y)
+            return (x, y, w, h)
+        left, top, right, bottom = x, y, x + w, y + h
+        for edge in edges:
+            if edge == "l":
+                found = best(left, xs)
+                left = found if found is not None else self._snap_value(left)
+                if found is not None:
+                    self._guides.append(("v", found))
+            elif edge == "r":
+                found = best(right, xs)
+                right = found if found is not None else self._snap_value(right)
+                if found is not None:
+                    self._guides.append(("v", found))
+            elif edge == "t":
+                found = best(top, ys)
+                top = found if found is not None else self._snap_value(top)
+                if found is not None:
+                    self._guides.append(("h", found))
+            elif edge == "b":
+                found = best(bottom, ys)
+                bottom = found if found is not None else self._snap_value(bottom)
+                if found is not None:
+                    self._guides.append(("h", found))
+        return (left, top, max(right - left, 2.0), max(bottom - top, 2.0))
+
+    # -- the mouse -------------------------------------------------------------
+    def start_point_picking(self, callback):
+        """The next click reports ``(panel index, x, y)`` in data
+        coordinates -- how an annotation gets placed where it is wanted
+        rather than typed in blind."""
+        self._picking = callback
+        self.setCursor(Qt.CrossCursor)
+
+    def stop_point_picking(self):
+        self._picking = None
+        self.setCursor(Qt.ArrowCursor if self.tool == "select" else Qt.CrossCursor)
+
+    def _begin_change(self):
+        """Before the first change of a gesture: an undo step, and a page
+        laid out by hand from here on."""
+        self.aboutToChange.emit()
+        self.figure.freeze()
+
     def mousePressEvent(self, event):
-        found = self._locate(event.pos())
-        if found is None:
+        self.setFocus()
+        self._ensure_image()
+        if event.button() == Qt.RightButton:
+            found = self.item_at(event.pos())
+            if found is not None and found[0] in ("panel", "shape"):
+                self.select(*found)
+                self.menuRequested.emit(found[0], found[1], event.globalPos())
+            else:
+                self.menuRequested.emit("page", -1, event.globalPos())
             return
-        index, x, y = found
+        if event.button() != Qt.LeftButton:
+            return
         if self._picking is not None:
+            found = self._locate(event.pos())
+            if found is None:
+                return
             callback, self._picking = self._picking, None
-            self.setCursor(Qt.ArrowCursor)
-            callback(index, x, y)
+            self.stop_point_picking()
+            callback(*found)
             return
-        self.selected = index
+        x, y = self.to_mm(event.pos())
+        if self.tool == "select":
+            found = self.item_at(event.pos())
+            if found is None:
+                self.select(None)
+                return
+            if found[0] != "handle":
+                self.select(*found)
+            self._drag = {"kind": found[0], "name": found[1] if found[0] == "handle" else None,
+                          "start": (x, y), "started": False,
+                          "origin": self._origin_geometry()}
+            return
+        if self.tool == "text":
+            self._place_text(self._snap_value(x), self._snap_value(y))
+            return
+        sx, sy = self._snap_value(x), self._snap_value(y)
+        self._drag = {"kind": "draw", "start": (sx, sy), "started": True}
+        if self.tool in ("arrow", "line", "rect", "ellipse"):
+            self._draft = nf.Shape(kind=self.tool, x0=sx, y0=sy, x1=sx, y1=sy,
+                                   color=self.default_colour())
+        else:
+            self._draft = (sx, sy, sx, sy)
+        self.update()
+
+    def default_colour(self) -> str:
+        """Drawings start in the figure's axis colour."""
+        return self.figure.style.axis_color
+
+    def _origin_geometry(self):
+        shape = self.selected_shape()
+        if shape is not None:
+            return (shape.x0, shape.y0, shape.x1, shape.y1)
+        frame = self._frame_of(self.selected_panel())
+        return frame
+
+    def mouseMoveEvent(self, event):
+        drag = self._drag
+        x, y = self.to_mm(event.pos())
+        if drag is None:
+            if self.tool == "select":
+                found = self.item_at(event.pos())
+                if found and found[0] == "handle":
+                    self.setCursor(_HANDLE_CURSORS.get(found[1], Qt.SizeAllCursor))
+                elif found:
+                    self.setCursor(Qt.SizeAllCursor)
+                else:
+                    self.setCursor(Qt.ArrowCursor)
+            return
+        dx, dy = x - drag["start"][0], y - drag["start"][1]
+        if drag["kind"] == "draw":
+            sx, sy = drag["start"]
+            ex, ey = self._snap_value(x), self._snap_value(y)
+            if isinstance(self._draft, nf.Shape):
+                if event.modifiers() & Qt.ShiftModifier and self._draft.kind in ("arrow", "line"):
+                    # Shift: horizontal, vertical or 45°
+                    angle = np.arctan2(ey - sy, ex - sx)
+                    step = np.pi / 4
+                    angle = round(angle / step) * step
+                    length = np.hypot(ex - sx, ey - sy)
+                    ex, ey = sx + length * np.cos(angle), sy + length * np.sin(angle)
+                self._draft.x1, self._draft.y1 = ex, ey
+            else:
+                self._draft = (sx, sy, ex, ey)
+            self.update()
+            return
+        if not drag["started"]:
+            if abs(dx) * self._scale < 3 and abs(dy) * self._scale < 3:
+                return
+            drag["started"] = True
+            self._begin_change()
+            drag["origin"] = self._origin_geometry()
+        origin = drag["origin"]
+        if origin is None:
+            return
+        shape = self.selected_shape()
+        if shape is not None:
+            x0, y0, x1, y1 = origin
+            name = drag["name"]
+            if drag["kind"] == "shape":
+                sdx, sdy = self._snap_value(x0 + dx) - x0, self._snap_value(y0 + dy) - y0
+                shape.x0, shape.y0, shape.x1, shape.y1 = x0 + sdx, y0 + sdy, x1 + sdx, y1 + sdy
+            elif name == "p0":
+                shape.x0, shape.y0 = self._snap_value(x), self._snap_value(y)
+            elif name == "p1":
+                shape.x1, shape.y1 = self._snap_value(x), self._snap_value(y)
+            else:
+                left, top, right, bottom = min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
+                sx, sy = self._snap_value(x), self._snap_value(y)
+                if "w" in name:
+                    left = sx
+                if "e" in name:
+                    right = sx
+                if "n" in name:
+                    top = sy
+                if "s" in name:
+                    bottom = sy
+                shape.x0, shape.y0, shape.x1, shape.y1 = left, top, right, bottom
+        else:
+            panel = self.selected_panel()
+            if panel is None:
+                return
+            fx, fy, fw, fh = origin
+            if drag["kind"] == "panel":
+                frame = self._snap_frame(panel, (fx + dx, fy + dy, fw, fh),
+                                         ("l", "r", "t", "b"))
+            else:
+                edges = self.HANDLES[drag["name"]]
+                left, top, right, bottom = fx, fy, fx + fw, fy + fh
+                if "l" in edges:
+                    left = min(fx + dx, right - 2.0)
+                if "r" in edges:
+                    right = max(fx + fw + dx, left + 2.0)
+                if "t" in edges:
+                    top = min(fy + dy, bottom - 2.0)
+                if "b" in edges:
+                    bottom = max(fy + fh + dy, top + 2.0)
+                if (event.modifiers() & Qt.ShiftModifier) and len(edges) == 2:
+                    # Shift on a corner: keep the panel's shape
+                    ratio = fh / fw if fw else 1.0
+                    width = right - left
+                    if "t" in edges:
+                        top = bottom - width * ratio
+                    else:
+                        bottom = top + width * ratio
+                frame = self._snap_frame(panel, (left, top, right - left, bottom - top),
+                                         tuple(edges))
+            self.figure.move_panel(panel, frame)
         self.refresh()
-        self.panelPicked.emit(index)
+        self.changed.emit()
+
+    def mouseReleaseEvent(self, event):
+        drag, self._drag = self._drag, None
+        self._guides = []
+        if drag is None:
+            return
+        if drag["kind"] == "draw":
+            draft, self._draft = self._draft, None
+            self._finish_drawing(draft)
+            return
+        if drag.get("started"):
+            if drag["kind"] in ("panel", "handle") and self.selected_shape() is None:
+                self.figure.auto_edge_labels()
+            self.refresh()
+            self.changed.emit()
+        self.update()
+
+    def _finish_drawing(self, draft):
+        tool = self.tool
+        if isinstance(draft, nf.Shape):
+            if np.hypot(draft.x1 - draft.x0, draft.y1 - draft.y0) < 1.0:
+                self.update()
+                return
+            self._begin_change()
+            self.figure.shapes.append(draft)
+            self._done(("shape", len(self.figure.shapes) - 1))
+            return
+        if draft is None:
+            return
+        x0, y0, x1, y1 = draft
+        left, top = min(x0, x1), min(y0, y1)
+        width, height = abs(x1 - x0), abs(y1 - y0)
+        if width < 2.0 or height < 2.0:
+            self.update()
+            return
+        if tool == "slot":
+            self._begin_change()
+            panel = Panel(data=nf.empty_data(), frame=(left, top, width, height))
+            host = self._panel_containing(left + width / 2, top + height / 2)
+            if host is not None and host.frame is not None \
+                    and width < host.frame[2] and height < host.frame[3]:
+                panel.role = "inset"
+                panel.x_labels = panel.y_labels = False
+            self.figure.panels.append(panel)
+            if panel.role != "inset":
+                self.figure.letter_panels()
+            self._done(("panel", len(self.figure.panels) - 1))
+        elif tool == "zoom":
+            self._make_zoom(left, top, width, height)
+
+    def _panel_containing(self, x, y, plots_only=False):
+        for panel in self.figure.main_panels():
+            frame = self._frame_of(panel)
+            if frame is None or (plots_only and not panel.data.is_plot()):
+                continue
+            fx, fy, fw, fh = frame
+            if fx <= x <= fx + fw and fy <= y <= fy + fh:
+                return panel
+        return None
+
+    def _make_zoom(self, left, top, width, height):
+        """An inset magnifying the region dragged out on a panel, placed in
+        the panel's top right corner."""
+        host = self._panel_containing(left + width / 2, top + height / 2,
+                                      plots_only=True)
+        if host is None:
+            self.update()
+            return None
+        self._begin_change()
+        fx, fy, fw, fh = host.frame
+        (x0, x1), (y0, y1) = self.figure.panel_ranges(host)
+
+        def data_x(mm):
+            frac = (mm - fx) / fw
+            frac = 1.0 - frac if host.invert_x else frac
+            return x0 + frac * (x1 - x0)
+
+        def data_y(mm):
+            frac = 1.0 - (mm - fy) / fh
+            frac = 1.0 - frac if host.invert_y else frac
+            return y0 + frac * (y1 - y0)
+
+        xs = sorted((data_x(left), data_x(left + width)))
+        ys = sorted((data_y(top), data_y(top + height)))
+        inset = copy.copy(host)
+        for name in ("lines", "texts", "arrows", "overlays"):
+            setattr(inset, name, copy.deepcopy(getattr(host, name)))
+        inset.uid = uuid.uuid4().hex[:10]
+        inset.role, inset.zoom_of, inset.label = "inset", host.uid, ""
+        inset.x_range, inset.y_range = tuple(xs), tuple(ys)
+        inset.colorbar, inset.scale_bar, inset.inset = False, None, None
+        inset.title = ""
+        inset.top_axis, inset.right_axis = nf.SecondaryAxis(), nf.SecondaryAxis()
+        inset.x_labels = inset.y_labels = False
+        # The region's own shape, about 40 % of the panel, in its corner.
+        size = 0.42 * fw
+        aspect = (height / width) if width else 1.0
+        w_in, h_in = size, min(size * aspect, 0.6 * fh)
+        if h_in < size * aspect:
+            w_in = h_in / max(aspect, 1e-6)
+        inset.frame = (fx + fw - w_in - 0.04 * fw, fy + 0.04 * fh, w_in, h_in)
+        self.figure.panels.append(inset)
+        self._done(("panel", len(self.figure.panels) - 1))
+        return inset
+
+    def _place_text(self, x, y):
+        text, ok = QInputDialog.getText(self, "Text", "Text (k_x, E_F, Å^-1 ...):")
+        if not ok or not text.strip():
+            return None
+        self._begin_change()
+        self.figure.shapes.append(nf.Shape(kind="text", x0=x, y0=y, x1=x, y1=y,
+                                           text=text, color=self.default_colour()))
+        self._done(("shape", len(self.figure.shapes) - 1))
+        return self.figure.shapes[-1]
+
+    def _done(self, selection):
+        self.selection = selection
+        self.set_tool("select")
+        self.refresh()
+        self.changed.emit()
+        self.selectionChanged.emit()
+        self.toolFinished.emit()
+
+    def mouseDoubleClickEvent(self, event):
+        found = self.item_at(event.pos())
+        if found is None or found[0] == "handle":
+            return
+        if found[0] == "shape":
+            shape = self.figure.shapes[found[1]]
+            if shape.kind == "text":
+                text, ok = QInputDialog.getText(self, "Text", "Text:", text=shape.text)
+                if ok:
+                    self.aboutToChange.emit()
+                    shape.text = text
+                    self.refresh()
+                    self.changed.emit()
+            return
+        self.panelActivated.emit(found[1])
+
+    # -- the keyboard -----------------------------------------------------------
+    def delete_selection(self):
+        if self.selection is None:
+            return False
+        what, index = self.selection
+        self.aboutToChange.emit()
+        if what == "shape" and 0 <= index < len(self.figure.shapes):
+            self.figure.shapes.pop(index)
+        elif what == "panel" and 0 <= index < len(self.figure.panels):
+            panel = self.figure.panels[index]
+            if len(self.figure.main_panels()) <= 1 and panel.role != "inset":
+                return False              # a figure keeps one panel
+            self.figure.freeze()
+            self.figure.panels.pop(index)
+            # Insets go with the panel they magnify.
+            self.figure.panels = [p for p in self.figure.panels
+                                  if p.zoom_of != panel.uid]
+            if panel.role != "inset":
+                self.figure.letter_panels()
+        self.selection = None
+        self.refresh()
+        self.changed.emit()
+        self.selectionChanged.emit()
+        return True
+
+    def nudge(self, dx, dy):
+        if self.selection is None:
+            return
+        self._begin_change()
+        shape = self.selected_shape()
+        if shape is not None:
+            shape.move(dx, dy)
+        else:
+            panel = self.selected_panel()
+            x, y, w, h = panel.frame
+            self.figure.move_panel(panel, (x + dx, y + dy, w, h))
+        self.refresh()
+        self.changed.emit()
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        step = 5.0 if event.modifiers() & Qt.ShiftModifier else 0.5
+        if key in (Qt.Key_Delete, Qt.Key_Backspace):
+            self.delete_selection()
+        elif key == Qt.Key_Escape:
+            self._drag = self._draft = None
+            self.set_tool("select")
+            self.toolFinished.emit()
+        elif key == Qt.Key_Left:
+            self.nudge(-step, 0)
+        elif key == Qt.Key_Right:
+            self.nudge(step, 0)
+        elif key == Qt.Key_Up:
+            self.nudge(0, -step)
+        elif key == Qt.Key_Down:
+            self.nudge(0, step)
+        else:
+            super().keyPressEvent(event)
+
+
+_HANDLE_CURSORS = {"nw": Qt.SizeFDiagCursor, "se": Qt.SizeFDiagCursor,
+                   "ne": Qt.SizeBDiagCursor, "sw": Qt.SizeBDiagCursor,
+                   "n": Qt.SizeVerCursor, "s": Qt.SizeVerCursor,
+                   "e": Qt.SizeHorCursor, "w": Qt.SizeHorCursor,
+                   "p0": Qt.CrossCursor, "p1": Qt.CrossCursor}
+
+
+def _segment_distance(x, y, x0, y0, x1, y1) -> float:
+    """Distance from a point to a line segment."""
+    dx, dy = x1 - x0, y1 - y0
+    length = dx * dx + dy * dy
+    t = 0.0 if length <= 0 else max(0.0, min(1.0, ((x - x0) * dx + (y - y0) * dy) / length))
+    return float(np.hypot(x - (x0 + t * dx), y - (y0 + t * dy)))
 
 
 # --------------------------------------------------------------------------
@@ -926,12 +1753,15 @@ class FigureToolsDialog(QDialog):
     inside each of its forty callbacks.
     """
 
-    def __init__(self, window: "FigureWindow"):
+    def __init__(self, window: "FigureWindow", embedded: bool = False):
         super().__init__(window)
         self.window_ = window
-        self.figure = window.figure
+        self.embedded = embedded
         self.setWindowTitle("Figure tools")
         self.setModal(False)
+        if embedded:
+            # Part of the composer's window, beside the page.
+            self.setWindowFlags(Qt.Widget)
         self._syncing = False
 
         outer = QVBoxLayout(self)
@@ -966,12 +1796,20 @@ class FigureToolsDialog(QDialog):
         self.status = QLabel("")
         self.status.setWordWrap(True)
         outer.addWidget(self.status)
-        close = QDialogButtonBox(QDialogButtonBox.Close)
-        close.rejected.connect(self.reject)
-        outer.addWidget(close)
-        self.setMinimumWidth(470)
-        self.resize(560, 700)
+        if not embedded:
+            close = QDialogButtonBox(QDialogButtonBox.Close)
+            close.rejected.connect(self.reject)
+            outer.addWidget(close)
+            self.resize(560, 700)
+        else:
+            outer.setContentsMargins(0, 0, 0, 0)
+        self.setMinimumWidth(400)
         self.sync()
+
+    @property
+    def figure(self):
+        # The window's, always: undo puts a new style object on it.
+        return self.window_.figure
 
     # -- plumbing ----------------------------------------------------------
     def panel(self):
@@ -990,9 +1828,15 @@ class FigureToolsDialog(QDialog):
         """Run ``setter(panel)`` on whatever the dialog is pointed at."""
         if self._syncing:
             return
+        self._remember()
         for panel in self.targets():
             setter(panel)
         self.redraw()
+
+    def _remember(self):
+        remember = getattr(self.window_, "remember", None)
+        if remember is not None:
+            remember("tools")
 
     def redraw(self):
         self.window_.refresh()
@@ -1009,8 +1853,13 @@ class FigureToolsDialog(QDialog):
             current = self.panel_combo.currentIndex()
             self.panel_combo.clear()
             for i, panel in enumerate(self.figure.panels):
-                name = panel.data.name or f"panel {i + 1}"
-                self.panel_combo.addItem(f"{i + 1}. {name}")
+                name = panel.data.name or ("empty" if panel.data.kind == "empty"
+                                           else f"panel {i + 1}")
+                if panel.role == "inset":
+                    letter = "inset"
+                else:
+                    letter = panel.label or f"{i + 1}."
+                self.panel_combo.addItem(f"{letter}  {name}")
             if 0 <= current < self.panel_combo.count():
                 self.panel_combo.setCurrentIndex(current)
             elif self.panel_combo.count():
@@ -1037,8 +1886,10 @@ class FigureToolsDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_panels(self, page):
         style = self.figure.style
-        form = QFormLayout(page)
+        outer = QVBoxLayout(page)
 
+        group = QGroupBox("Page")
+        form = QFormLayout(group)
         self.preset_combo = QComboBox()
         self.preset_combo.addItem("(custom)")
         for label, width, font in JOURNAL_PRESETS:
@@ -1050,9 +1901,9 @@ class FigureToolsDialog(QDialog):
         self.preset_combo.currentIndexChanged.connect(self._apply_preset)
         form.addRow("Journal", self.preset_combo)
 
-        self.width_box = spin(style.width_mm, 20, 500, 1, 1.0, "Figure width.")
+        self.width_box = spin(style.width_mm, 20, 500, 1, 1.0, "Page width.")
         self.height_box = spin(style.height_mm, 0, 800, 1, 1.0,
-                               "Figure height; 0 lets the panels choose it.")
+                               "Page height; 0 lets the panels choose it.")
         self.dpi_box = whole(style.dpi, 72, 2400,
                              "Resolution of the data raster inside the figure.")
         for box, name in ((self.width_box, "width_mm"), (self.height_box, "height_mm")):
@@ -1061,7 +1912,10 @@ class FigureToolsDialog(QDialog):
         form.addRow("Width (mm)", self.width_box)
         form.addRow("Height (mm)", self.height_box)
         form.addRow("Resolution (dpi)", self.dpi_box)
+        outer.addWidget(group)
 
+        group = QGroupBox("Arrange as a grid")
+        form = QFormLayout(group)
         grid_row = QWidget()
         grid_box = QHBoxLayout(grid_row)
         grid_box.setContentsMargins(0, 0, 0, 0)
@@ -1069,24 +1923,40 @@ class FigureToolsDialog(QDialog):
         self.cols_box = whole(self.figure.cols, 1, 12, "Columns of panels.", 60)
         self.rows_box.valueChanged.connect(self._set_grid)
         self.cols_box.valueChanged.connect(self._set_grid)
-        auto = QPushButton("Auto")
-        auto.setMaximumWidth(56)
-        auto.clicked.connect(self._auto_grid)
         grid_box.addWidget(QLabel("rows"))
         grid_box.addWidget(self.rows_box)
         grid_box.addWidget(QLabel("cols"))
         grid_box.addWidget(self.cols_box)
-        grid_box.addWidget(auto)
         grid_box.addStretch(1)
         form.addRow("Grid", grid_row)
-
         self.gap_x = spin(style.gap_x_mm, 0, 40, 1, 0.5, "Horizontal gap between panels.")
         self.gap_y = spin(style.gap_y_mm, 0, 40, 1, 0.5, "Vertical gap between panels.")
         self.gap_x.valueChanged.connect(lambda v: self._set_style("gap_x_mm", v))
         self.gap_y.valueChanged.connect(lambda v: self._set_style("gap_y_mm", v))
         form.addRow("Column gap (mm)", self.gap_x)
         form.addRow("Row gap (mm)", self.gap_y)
+        self.aspect_box = spin(style.panel_aspect, 0, 8, 2, 0.05,
+                               "Panel height / width; 0 chooses it.")
+        self.aspect_box.valueChanged.connect(lambda v: self._set_style("panel_aspect", v))
+        form.addRow("Panel aspect", self.aspect_box)
+        self.fill_slots = QCheckBox("Fill the grid with empty panels")
+        self.fill_slots.setChecked(True)
+        self.fill_slots.setToolTip(
+            "Rows × columns slots in all: the ones without a dataset stay "
+            "empty, to be filled from the list or with a picture.")
+        form.addRow("", self.fill_slots)
+        arrange = QPushButton("Arrange as grid")
+        arrange.setToolTip(
+            "Put the panels on a regular grid of this many rows and "
+            "columns, in reading order. Insets move with their panel.")
+        arrange.clicked.connect(self._arrange)
+        auto = QPushButton("Auto rows / cols")
+        auto.clicked.connect(self._auto_grid)
+        form.addRow("", self._pair(arrange, auto))
+        outer.addWidget(group)
 
+        group = QGroupBox("All panels")
+        form = QFormLayout(group)
         self.shared_levels = QCheckBox("Same colour scale everywhere")
         self.shared_levels.setToolTip(
             "One colour window over all the panels, so their intensities can "
@@ -1096,8 +1966,7 @@ class FigureToolsDialog(QDialog):
         self.edge_labels = QCheckBox("Tick labels on outer edges only")
         self.edge_labels.setToolTip(
             "The usual look for a grid of panels: the y axis is labelled on "
-            "the left column and the x axis on the bottom row. The panels "
-            "keep the same size either way, so the grid stays regular.")
+            "the left column and the x axis on the bottom row.")
         self.equal_aspect = QCheckBox("Keep the data's aspect (1:1)")
         for box, name in ((self.shared_levels, "shared_levels"),
                           (self.shared_ranges, "shared_ranges"),
@@ -1105,52 +1974,144 @@ class FigureToolsDialog(QDialog):
                           (self.equal_aspect, "equal_aspect")):
             box.toggled.connect(lambda v, n=name: self._set_style(n, bool(v)))
             form.addRow("", box)
+        outer.addWidget(group)
 
-        self.aspect_box = spin(style.panel_aspect, 0, 8, 2, 0.05,
-                               "Panel height / width; 0 chooses it.")
-        self.aspect_box.valueChanged.connect(lambda v: self._set_style("panel_aspect", v))
-        form.addRow("Panel aspect", self.aspect_box)
+        group = QGroupBox("Selected panel")
+        form = QFormLayout(group)
+        self.content_label = QLabel("")
+        self.content_label.setWordWrap(True)
+        form.addRow("Content", self.content_label)
+        loads = QWidget()
+        row = QHBoxLayout(loads)
+        row.setContentsMargins(0, 0, 0, 0)
+        for text, slot in (("From list...", lambda: self.window_.load_from_list()),
+                           ("Picture...", lambda: self.window_.load_picture()),
+                           ("Empty", lambda: self.window_.empty_panel())):
+            button = QPushButton(text)
+            button.clicked.connect(slot)
+            row.addWidget(button)
+        row.addStretch(1)
+        form.addRow("Load", loads)
+        self.pos_x = spin(0, -500, 1000, 2, 0.5, "Left edge of the data box (mm).", 80)
+        self.pos_y = spin(0, -500, 1000, 2, 0.5, "Top edge of the data box (mm).", 80)
+        self.pos_w = spin(10, 2, 1000, 2, 0.5, "Width of the data box (mm).", 80)
+        self.pos_h = spin(10, 2, 1000, 2, 0.5, "Height of the data box (mm).", 80)
+        for box in (self.pos_x, self.pos_y, self.pos_w, self.pos_h):
+            box.valueChanged.connect(self._set_frame)
+        form.addRow("x / y (mm)", self._pair(self.pos_x, self.pos_y))
+        form.addRow("w / h (mm)", self._pair(self.pos_w, self.pos_h))
+        self.role_combo = QComboBox()
+        self.role_combo.addItems(["panel (lettered)", "inset (no letter)"])
+        self.role_combo.currentIndexChanged.connect(self._set_role)
+        form.addRow("Kind", self.role_combo)
+        self.xlab_box = QCheckBox("x numbers and label")
+        self.ylab_box = QCheckBox("y numbers and label")
+        self.xlab_box.toggled.connect(lambda v: self._set_shown("x_labels", v))
+        self.ylab_box.toggled.connect(lambda v: self._set_shown("y_labels", v))
+        form.addRow("Show", self._pair(self.xlab_box, self.ylab_box))
+        self.panel_font = spin(0.0, 0, 40, 1, 0.5,
+                               "This panel's font size; 0 follows the figure "
+                               "(an inset usually wants a smaller one).", 80)
+        self.panel_font.valueChanged.connect(
+            lambda v: self.apply(lambda p: setattr(p, "font_pt", float(v))))
+        form.addRow("Font size (pt)", self.panel_font)
 
         buttons = QWidget()
         row = QHBoxLayout(buttons)
         row.setContentsMargins(0, 0, 0, 0)
         add = QPushButton("Add panel...")
-        add.setToolTip("Put another dataset from the file list into the figure.")
+        add.setToolTip("A new panel holding a dataset from the main list.")
         add.clicked.connect(self.window_.add_panel_from_list)
         remove = QPushButton("Remove")
         remove.clicked.connect(self._remove_panel)
-        letter = QPushButton("Letter")
+        letter = QPushButton("Re-letter")
+        letter.setToolTip("(a), (b), (c)... in reading order.")
         letter.clicked.connect(self._letter)
         row.addWidget(add)
         row.addWidget(remove)
         row.addWidget(letter)
+        row.addStretch(1)
         form.addRow("", buttons)
+        outer.addWidget(group)
+        outer.addStretch(1)
 
-        order = QWidget()
-        order_row = QHBoxLayout(order)
-        order_row.setContentsMargins(0, 0, 0, 0)
-        up = QPushButton("Earlier")
-        down = QPushButton("Later")
-        up.clicked.connect(lambda: self._move(-1))
-        down.clicked.connect(lambda: self._move(+1))
-        order_row.addWidget(up)
-        order_row.addWidget(down)
-        form.addRow("", order)
+    def _arrange(self):
+        """Arrange the panels as the grid the boxes say, adding empty
+        panels to fill it when asked."""
+        figure = self.figure
+        self._remember()
+        rows, cols = int(self.rows_box.value()), int(self.cols_box.value())
+        figure.freeze()
+        if self.fill_slots.isChecked():
+            while len(figure.main_panels()) < rows * cols:
+                slot = Panel(data=nf.empty_data())
+                slot.frame = (0.0, 1e6 + len(figure.panels), 1.0, 1.0)  # last in reading order
+                figure.panels.append(slot)
+        figure.arrange_grid(rows, cols)
+        figure.letter_panels()
+        self.sync()
+
+    def _set_shown(self, name, value):
+        """Tick numbers on or off for a panel: a page laid out by hand from
+        then on, since a grid decides them by itself."""
+        if self._syncing:
+            return
+        self.figure.freeze()
+        self.apply(lambda p: setattr(p, name, bool(value)))
+
+    def _set_frame(self, *_):
+        if self._syncing:
+            return
+        panel = self.panel()
+        if panel is None:
+            return
+        self._remember()
+        self.figure.freeze()
+        self.figure.move_panel(panel, (self.pos_x.value(), self.pos_y.value(),
+                                       self.pos_w.value(), self.pos_h.value()))
+        self.redraw()
+
+    def _set_role(self, index):
+        if self._syncing:
+            return
+        panel = self.panel()
+        if panel is None:
+            return
+        self._remember()
+        self.figure.freeze()
+        panel.role = "inset" if index == 1 else "panel"
+        if panel.role == "panel":
+            panel.zoom_of = ""
+        self.figure.letter_panels()
+        self.sync()
 
     def _set_style(self, name, value):
         if self._syncing:
             return
+        self._remember()
         setattr(self.figure.style, name, value)
+        if name == "edge_labels_only" and self.figure.free:
+            self.figure.auto_edge_labels()
+            self._resync()
         self.redraw()
 
     def _set_grid(self, *_):
-        if self._syncing:
-            return
+        if self._syncing or self.figure.free:
+            return          # a page laid out by hand changes on "Arrange"
+        self._remember()
         self.figure.rows = int(self.rows_box.value())
         self.figure.cols = int(self.cols_box.value())
         self.redraw()
 
     def _auto_grid(self):
+        count = len(self.figure.main_panels())
+        cols = min(count, max(1, int(round(np.sqrt(count * 1.4))))) if count else 1
+        if self.figure.free:
+            self._syncing = True
+            self.cols_box.setValue(cols)
+            self.rows_box.setValue(int(np.ceil(max(count, 1) / cols)))
+            self._syncing = False
+            return
         self.figure.fit_grid()
         self._syncing = True
         self.rows_box.setValue(self.figure.rows)
@@ -1171,6 +2132,7 @@ class FigureToolsDialog(QDialog):
         self.redraw()
 
     def _letter(self):
+        self._remember()
         self.figure.letter_panels()
         self.sync()
 
@@ -1178,6 +2140,11 @@ class FigureToolsDialog(QDialog):
         index = self.panel_combo.currentIndex()
         if len(self.figure.panels) <= 1 or index < 0:
             return
+        if self.figure.free:
+            self.window_.canvas.selection = ("panel", index)
+            self.window_.canvas.delete_selection()
+            return
+        self._remember()
         self.figure.panels.pop(index)
         self.figure.fit_grid(self.figure.cols)
         self.window_.canvas.selected = min(index, len(self.figure.panels) - 1)
@@ -1587,68 +2554,13 @@ class FigureToolsDialog(QDialog):
         inner.addRow("", row)
         layout.addWidget(group)
 
-        group = QGroupBox("Text and arrows")
-        inner = QFormLayout(group)
-        self.note_text = QLineEdit()
-        self.note_text.setPlaceholderText("Γ, M, \"gap\" ...")
-        self.note_color = ColorButton("#ffffff")
-        self.note_bold = QCheckBox("Bold")
-        inner.addRow("Text", self.note_text)
-        inner.addRow("Colour", self.note_color)
-        inner.addRow("", self.note_bold)
-        row = QWidget()
-        box = QHBoxLayout(row)
-        box.setContentsMargins(0, 0, 0, 0)
-        place = QPushButton("Place text...")
-        place.setToolTip("Then click where it should go.")
-        place.clicked.connect(self._place_text)
-        arrow = QPushButton("Arrow...")
-        arrow.setToolTip("Click the tail, then the head.")
-        arrow.clicked.connect(self._place_arrow)
-        clear = QPushButton("Clear")
-        clear.clicked.connect(lambda: self.apply(
-            lambda p: (p.texts.clear(), p.arrows.clear())))
-        box.addWidget(place)
-        box.addWidget(arrow)
-        box.addWidget(clear)
-        inner.addRow("", row)
-        layout.addWidget(group)
-
-        group = QGroupBox("Inset")
-        inner = QFormLayout(group)
-        self.inset_box = QCheckBox("Show a magnified region")
-        self.inset_box.toggled.connect(self._set_inset)
-        inner.addRow("", self.inset_box)
-        self.inset_x0 = spin(0, -1e9, 1e9, 4, 0.05, "")
-        self.inset_x1 = spin(1, -1e9, 1e9, 4, 0.05, "")
-        self.inset_y0 = spin(0, -1e9, 1e9, 4, 0.05, "")
-        self.inset_y1 = spin(1, -1e9, 1e9, 4, 0.05, "")
-        self.inset_position = QComboBox()
-        self.inset_position.addItems(list(CORNERS))
-        self.inset_size = spin(0.38, 0.1, 0.9, 2, 0.02,
-                               "Fraction of the panel's short side.")
-        self.inset_frame = QCheckBox("Frame")
-        self.inset_frame.setChecked(True)
-        self.inset_indicate = QCheckBox("Outline the region on the panel")
-        self.inset_indicate.setChecked(True)
-        inner.addRow("x from / to", self._pair(self.inset_x0, self.inset_x1))
-        inner.addRow("y from / to", self._pair(self.inset_y0, self.inset_y1))
-        inner.addRow("Position", self.inset_position)
-        inner.addRow("Size", self.inset_size)
-        inner.addRow("", self.inset_frame)
-        inner.addRow("", self.inset_indicate)
-        for widget, signal in ((self.inset_x0, "valueChanged"), (self.inset_x1, "valueChanged"),
-                               (self.inset_y0, "valueChanged"), (self.inset_y1, "valueChanged"),
-                               (self.inset_position, "currentTextChanged"),
-                               (self.inset_size, "valueChanged"),
-                               (self.inset_frame, "toggled"),
-                               (self.inset_indicate, "toggled")):
-            getattr(widget, signal).connect(self._set_inset)
-        pick = QPushButton("Pick the region...")
-        pick.setToolTip("Click two opposite corners on the figure.")
-        pick.clicked.connect(self._pick_inset)
-        inner.addRow("", pick)
-        layout.addWidget(group)
+        note = QLabel(
+            "Arrows, lines, boxes and text are drawn straight on the page "
+            "with the tools on the left of the window; a magnified region "
+            "is the <b>Zoom-in inset</b> tool. The lines here sit at a "
+            "value of the data (E_F, k = 0) and follow the panel's axes.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
 
         group = QGroupBox("Curves drawn on the panel")
         inner = QVBoxLayout(group)
@@ -1665,13 +2577,13 @@ class FigureToolsDialog(QDialog):
         row = QWidget()
         box = QHBoxLayout(row)
         box.setContentsMargins(0, 0, 0, 0)
-        copy = QPushButton("Copy to all panels")
-        copy.setToolTip("The MATLAB tool's \"copy lines to all axes\".")
-        copy.clicked.connect(self._copy_overlays)
+        copy_all = QPushButton("Copy to all panels")
+        copy_all.setToolTip("The MATLAB tool's \"copy lines to all axes\".")
+        copy_all.clicked.connect(self._copy_overlays)
         clear = QPushButton("Clear")
         clear.clicked.connect(lambda: (self.apply(lambda p: p.overlays.clear()),
                                        self._resync()))
-        box.addWidget(copy)
+        box.addWidget(copy_all)
         box.addWidget(clear)
         box.addStretch(1)
         inner.addWidget(row)
@@ -1706,69 +2618,6 @@ class FigureToolsDialog(QDialog):
             self, "Reference line",
             "This dataset does not carry a fitted E_F. Fit the Fermi level "
             "first, or type the value above.")
-
-    def _place_text(self):
-        if not self.note_text.text().strip():
-            QMessageBox.information(self, "Text", "Type the text first.")
-            return
-        text, color = self.note_text.text(), self.note_color.color()
-        bold = self.note_bold.isChecked()
-
-        def placed(index, x, y):
-            self.figure.panels[index].texts.append(
-                TextNote(x=x, y=y, text=text, color=color, bold=bold))
-            self.redraw()
-        self.window_.pick_point("Click where the text should go", placed)
-
-    def _place_arrow(self):
-        color = self.note_color.color()
-        start = {}
-
-        def first(index, x, y):
-            start.update(index=index, x=x, y=y)
-            self.window_.pick_point("Now click the head of the arrow", second)
-
-        def second(index, x, y):
-            if index != start.get("index"):
-                return
-            self.figure.panels[index].arrows.append(
-                Arrow(x0=start["x"], y0=start["y"], x1=x, y1=y, color=color))
-            self.redraw()
-        self.window_.pick_point("Click the tail of the arrow", first)
-
-    def _pick_inset(self):
-        corner = {}
-
-        def first(index, x, y):
-            corner.update(index=index, x=x, y=y)
-            self.window_.pick_point("Now the opposite corner", second)
-
-        def second(index, x, y):
-            if index != corner.get("index"):
-                return
-            self._syncing = True
-            self.inset_x0.setValue(min(corner["x"], x))
-            self.inset_x1.setValue(max(corner["x"], x))
-            self.inset_y0.setValue(min(corner["y"], y))
-            self.inset_y1.setValue(max(corner["y"], y))
-            self.inset_box.setChecked(True)
-            self._syncing = False
-            self._set_inset()
-        self.window_.pick_point("Click one corner of the region to magnify", first)
-
-    def _set_inset(self, *_):
-        if self._syncing:
-            return
-        if not self.inset_box.isChecked():
-            self.apply(lambda p: setattr(p, "inset", None))
-            return
-        values = dict(x0=self.inset_x0.value(), x1=self.inset_x1.value(),
-                      y0=self.inset_y0.value(), y1=self.inset_y1.value(),
-                      position=self.inset_position.currentText(),
-                      size=self.inset_size.value(),
-                      frame=self.inset_frame.isChecked(),
-                      indicate=self.inset_indicate.isChecked())
-        self.apply(lambda p: setattr(p, "inset", Inset(**values)))
 
     def _copy_overlays(self):
         panel = self.panel()
@@ -1888,17 +2737,22 @@ class FigureToolsDialog(QDialog):
             self.bar_thickness.setValue(bar.thickness_pt)
             self.bar_unit.setText(bar.unit)
             self.bar_label_box.setChecked(bar.show_label)
-        inset = panel.inset
-        self.inset_box.setChecked(inset is not None)
-        if inset is not None:
-            self.inset_x0.setValue(inset.x0)
-            self.inset_x1.setValue(inset.x1)
-            self.inset_y0.setValue(inset.y0)
-            self.inset_y1.setValue(inset.y1)
-            self.inset_position.setCurrentText(inset.position)
-            self.inset_size.setValue(inset.size)
-            self.inset_frame.setChecked(inset.frame)
-            self.inset_indicate.setChecked(inset.indicate)
+        kind = panel.data.kind
+        self.content_label.setText(
+            "empty -- load a dataset or a picture" if kind == "empty"
+            else f"picture: {panel.data.name}" if kind == "picture"
+            else f"{panel.data.name or kind}"
+            + (" (magnified region)" if panel.zoom_of else ""))
+        frame = self.window_.canvas._frame_of(panel) \
+            if hasattr(self.window_, "canvas") else panel.frame
+        if frame is not None:
+            for box, value in zip((self.pos_x, self.pos_y, self.pos_w, self.pos_h), frame):
+                box.setValue(float(value))
+        self.role_combo.setCurrentIndex(1 if panel.role == "inset" else 0)
+        index = self.figure.panels.index(panel)
+        self.xlab_box.setChecked(self.figure.shows_x_labels(index))
+        self.ylab_box.setChecked(self.figure.shows_y_labels(index))
+        self.panel_font.setValue(panel.font_pt)
         for attribute in ("top_axis", "right_axis"):
             axis = getattr(panel, attribute) or nf.SecondaryAxis()
             enabled, scale_box, offset_box, label_box = getattr(
@@ -1913,7 +2767,8 @@ class FigureToolsDialog(QDialog):
                 overlay.name or f"{len(overlay.xs)} points")
 
     def closeEvent(self, event):
-        self.window_._tools = None
+        if not self.embedded:
+            self.window_._tools = None
         super().closeEvent(event)
 
 
@@ -2142,27 +2997,160 @@ def slice_panels(cube, axes, labels, *, axis: int, values, half_width: float = 0
 # --------------------------------------------------------------------------
 # The window
 # --------------------------------------------------------------------------
-class FigureWindow(QMainWindow):
-    """Where a figure for a paper is put together.
+class ShapeEditor(QGroupBox):
+    """The selected drawing's colour, line, fill and text -- above the
+    figure tools while a drawing is selected."""
 
-    Seeded with one panel by "Figure composer..." in a frozen slice, or with a
-    page of them by a map's multi-slice button. The canvas is the figure
-    itself at the size it will be printed; everything else is in the tools.
+    def __init__(self, window: "FigureWindow"):
+        super().__init__("Selected drawing")
+        self.window_ = window
+        self.shape = None
+        self._syncing = False
+        form = QFormLayout(self)
+        self.kind = QLabel("")
+        form.addRow("Kind", self.kind)
+        self.color = ColorButton("#000000")
+        self.color.colorChanged.connect(lambda c: self._set("color", c))
+        form.addRow("Colour", self.color)
+        self.width = spin(0.8, 0.1, 12, 2, 0.1, "Line width (pt).")
+        self.width.valueChanged.connect(lambda v: self._set("width_pt", v))
+        form.addRow("Width (pt)", self.width)
+        self.style = QComboBox()
+        self.style.addItems(list(PEN_STYLES))
+        self.style.currentTextChanged.connect(lambda v: self._set("style", v))
+        form.addRow("Line", self.style)
+        self.head = spin(1.6, 0.3, 10, 1, 0.1, "Size of the arrow head (mm).")
+        self.head.valueChanged.connect(lambda v: self._set("head_mm", v))
+        form.addRow("Head (mm)", self.head)
+        self.double = QCheckBox("Heads at both ends")
+        self.double.toggled.connect(lambda v: self._set("double", bool(v)))
+        form.addRow("", self.double)
+        fill_row = QWidget()
+        box = QHBoxLayout(fill_row)
+        box.setContentsMargins(0, 0, 0, 0)
+        self.filled = QCheckBox("Fill")
+        self.fill = ColorButton("#ffffff")
+        self.filled.toggled.connect(self._set_fill)
+        self.fill.colorChanged.connect(self._set_fill)
+        box.addWidget(self.filled)
+        box.addWidget(self.fill)
+        box.addStretch(1)
+        form.addRow("", fill_row)
+        self.text = QLineEdit()
+        self.text.setPlaceholderText("k_x, E_F, Å^-1 ...")
+        self.text.editingFinished.connect(lambda: self._set("text", self.text.text()))
+        form.addRow("Text", self.text)
+        self.size = spin(0.0, 0, 60, 1, 0.5, "Text size (pt); 0 follows the figure.")
+        self.size.valueChanged.connect(lambda v: self._set("size_pt", v))
+        form.addRow("Size (pt)", self.size)
+        self.bold = QCheckBox("Bold")
+        self.bold.toggled.connect(lambda v: self._set("bold", bool(v)))
+        form.addRow("", self.bold)
+        delete = QPushButton("Delete")
+        delete.clicked.connect(self.window_.canvas.delete_selection)
+        form.addRow("", delete)
+        self._rows = {"line": (self.width, self.style), "arrow": (self.head, self.double),
+                      "fill": (fill_row,), "text": (self.text, self.size, self.bold)}
+        self._form = form
+
+    def show_shape(self, shape):
+        self.shape = shape
+        self.setVisible(shape is not None)
+        if shape is None:
+            return
+        self._syncing = True
+        try:
+            self.kind.setText({"arrow": "Arrow", "line": "Line", "rect": "Box",
+                               "ellipse": "Ellipse", "text": "Text"}[shape.kind])
+            self.color.set_color(shape.color)
+            self.width.setValue(shape.width_pt)
+            self.style.setCurrentText(shape.style)
+            self.head.setValue(shape.head_mm)
+            self.double.setChecked(shape.double)
+            self.filled.setChecked(bool(shape.fill))
+            if shape.fill:
+                self.fill.set_color(shape.fill)
+            self.text.setText(shape.text)
+            self.size.setValue(shape.size_pt)
+            self.bold.setChecked(shape.bold)
+        finally:
+            self._syncing = False
+        text = shape.kind == "text"
+        visible = {"line": not text, "arrow": shape.kind == "arrow",
+                   "fill": shape.kind in ("rect", "ellipse"), "text": text}
+        for group, widgets in self._rows.items():
+            for widget in widgets:
+                widget.setVisible(visible[group])
+                label = self._form.labelForField(widget)
+                if label is not None:
+                    label.setVisible(visible[group])
+
+    def _set(self, name, value):
+        if self._syncing or self.shape is None:
+            return
+        self.window_.remember("shape")
+        setattr(self.shape, name, value)
+        self.window_.refresh()
+
+    def _set_fill(self, *_):
+        self._set("fill", self.fill.color() if self.filled.isChecked() else "")
+
+
+class FigureWindow(QMainWindow):
+    """Where a figure for a paper is put together, like the page it will
+    be printed on.
+
+    It starts as a page of empty panels -- (a), (b), (c), (d) -- or with
+    the panels it was opened with. Every panel can be dragged and resized
+    on the page, a small inset put on top of one (a magnified region of it,
+    or another dataset), and each slot filled from the main list or with a
+    picture from a file. Arrows, lines, boxes and notes are drawn straight
+    on the page with the tools on the left. The figure tools on the right
+    set the axes, fonts, colours and the export of the selected panel.
     """
 
     closed = pyqtSignal(object)
 
+    #: the drawing tools on the left: (tool, label, what it does)
+    TOOL_BUTTONS = (
+        ("select", "↖  Select / move",
+         "Click a panel or a drawing to select it; drag it to move it, drag "
+         "a handle to resize it. Del removes it, the arrow keys nudge it "
+         "(Shift: 5 mm)."),
+        ("slot", "▭  Panel",
+         "Drag out a new empty panel. Drawn inside another panel, it becomes "
+         "an inset (no letter)."),
+        ("zoom", "⊕  Zoom-in inset",
+         "Drag out a region of a panel: an inset magnifying it appears in "
+         "the panel's corner, and the region is outlined."),
+        ("arrow", "→  Arrow", "Drag from the tail to the head. Shift: "
+         "horizontal, vertical or 45°."),
+        ("line", "╱  Line", "Drag from one end to the other. Shift: "
+         "horizontal, vertical or 45°."),
+        ("rect", "□  Box", "Drag out a box round a feature."),
+        ("ellipse", "○  Ellipse", "Drag out an ellipse."),
+        ("text", "T  Text", "Click where the text goes. _ and ^ make sub- "
+         "and superscripts: k_x, Å^-1."),
+    )
+
     def __init__(self, panels, title="Figure", parent=None, dataset_source=None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.figure = Figure(list(panels), style=FigureStyle())
-        self.figure.fit_grid()
+        panels = list(panels)
+        blank = not panels
+        self.figure = Figure(panels, style=FigureStyle())
+        if blank:
+            self.figure.panels = [Panel(data=nf.empty_data()) for _ in range(4)]
+            self.figure.fit_grid(2)
+            self.figure.arrange_grid(2, 2)
+        else:
+            self.figure.fit_grid()
         self.figure.letter_panels()
-        self.painter = FigurePainter(self.figure)
         #: ``() -> [(label, key)]`` and ``key -> data``, so a panel can be
         #: taken from the launcher's list
         self.dataset_source = dataset_source
-        self._tools = None
+        self._undo, self._redo = [], []
+        self._last_memory = (None, 0.0)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -2170,38 +3158,96 @@ class FigureWindow(QMainWindow):
         root.setContentsMargins(4, 4, 4, 4)
 
         bar = QHBoxLayout()
-        self.tools_button = QPushButton("Figure tools...")
-        self.tools_button.setToolTip(
-            "Everything that dresses the figure up: panels, axes, text, "
-            "colour, annotations and export.")
-        self.tools_button.clicked.connect(self.open_tools)
-        bar.addWidget(self.tools_button)
         self.add_button = QPushButton("Add panel...")
+        self.add_button.setToolTip("A new panel holding a dataset from the main list.")
         self.add_button.clicked.connect(self.add_panel_from_list)
         bar.addWidget(self.add_button)
+        self.undo_button = QPushButton("↶ Undo")
+        self.undo_button.clicked.connect(self.undo)
+        self.redo_button = QPushButton("↷ Redo")
+        self.redo_button.clicked.connect(self.redo)
+        bar.addWidget(self._separator())
+        bar.addWidget(self.undo_button)
+        bar.addWidget(self.redo_button)
         bar.addWidget(self._separator())
         for text, fmt in (("PDF", "pdf"), ("PNG", "png"), ("SVG", "svg")):
             button = QPushButton(text)
             button.setMaximumWidth(56)
             button.clicked.connect(lambda _c, f=fmt: self.export_figure(f))
             bar.addWidget(button)
-        copy = QPushButton("Copy")
-        copy.setMaximumWidth(56)
-        copy.setToolTip("Put the figure on the clipboard.")
-        copy.clicked.connect(self.copy_to_clipboard)
-        bar.addWidget(copy)
+        copy_button = QPushButton("Copy")
+        copy_button.setMaximumWidth(56)
+        copy_button.setToolTip("Put the figure on the clipboard.")
+        copy_button.clicked.connect(self.copy_to_clipboard)
+        bar.addWidget(copy_button)
+        bar.addWidget(self._separator())
+        bar.addWidget(QLabel("Zoom"))
+        self.zoom_combo = QComboBox()
+        self.zoom_combo.addItems(["Fit", "100 %", "150 %", "200 %", "300 %"])
+        self.zoom_combo.setToolTip("100 % is the printed size on a 96-dpi screen.")
+        self.zoom_combo.currentIndexChanged.connect(self._zoom_changed)
+        bar.addWidget(self.zoom_combo)
+        self.snap_box = QCheckBox("Snap")
+        self.snap_box.setChecked(True)
+        self.snap_box.setToolTip("Panels snap to each other's edges and to a "
+                                 "0.5 mm grid while they are dragged.")
+        bar.addWidget(self.snap_box)
         bar.addStretch(1)
+        self.tools_button = QPushButton("Figure tools")
+        self.tools_button.setCheckable(True)
+        self.tools_button.setChecked(True)
+        self.tools_button.setToolTip("Show or hide the figure tools on the right.")
+        bar.addWidget(self.tools_button)
         root.addLayout(bar)
 
+        body = QSplitter(Qt.Horizontal)
+        body.addWidget(self._tool_palette())
         self.canvas = FigureCanvas(self.figure, self)
-        self.canvas.panelPicked.connect(self._panel_picked)
-        root.addWidget(self.canvas, 1)
+        self.painter = self.canvas.painter
+        self.snap_box.toggled.connect(lambda on: setattr(self.canvas, "snap", bool(on)))
+        scroller = QScrollArea()
+        scroller.setWidgetResizable(True)
+        scroller.setWidget(self.canvas)
+        self.scroller = scroller
+        body.addWidget(scroller)
+
+        side = QWidget()
+        side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        self.shape_editor = ShapeEditor(self)
+        self.shape_editor.hide()
+        side_layout.addWidget(self.shape_editor)
+        self._tools = FigureToolsDialog(self, embedded=True)
+        side_layout.addWidget(self._tools, 1)
+        self.side = side
+        body.addWidget(side)
+        body.setStretchFactor(0, 0)
+        body.setStretchFactor(1, 1)
+        body.setStretchFactor(2, 0)
+        body.setSizes([170, 700, 440])
+        self.tools_button.toggled.connect(side.setVisible)
+        root.addWidget(body, 1)
 
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
         root.addWidget(self.hint)
+
+        self.canvas.panelPicked.connect(self._panel_picked)
+        self.canvas.selectionChanged.connect(self._selection_changed)
+        self.canvas.aboutToChange.connect(lambda: self.remember("canvas", force=True))
+        self.canvas.changed.connect(self._canvas_changed)
+        self.canvas.toolFinished.connect(self._tool_finished)
+        self.canvas.panelActivated.connect(self._panel_activated)
+        self.canvas.menuRequested.connect(self._context_menu)
+        for keys, slot in ((QKeySequence.Undo, self.undo), (QKeySequence.Redo, self.redo),
+                           ("Ctrl+Shift+Z", self.redo)):
+            shortcut = QShortcut(QKeySequence(keys), self)
+            shortcut.activated.connect(slot)
+
         self.statusBar()
-        self.resize(900, 760)
+        self.resize(1320, 820)
+        self._update_undo()
+        self.set_tool("select")
         self.refresh()
 
     @staticmethod
@@ -2211,26 +3257,97 @@ class FigureWindow(QMainWindow):
         line.setFrameShadow(QFrame.Sunken)
         return line
 
+    def _tool_palette(self) -> QWidget:
+        palette = QWidget()
+        column = QVBoxLayout(palette)
+        column.setContentsMargins(2, 2, 2, 2)
+        heading = QLabel("<b>Draw</b>")
+        column.addWidget(heading)
+        self.tool_buttons = {}
+        for tool, text, tip in self.TOOL_BUTTONS:
+            button = QPushButton(text)
+            button.setCheckable(True)
+            button.setToolTip(tip)
+            button.setStyleSheet("text-align: left; padding: 4px 8px;")
+            button.clicked.connect(lambda _c, t=tool: self.set_tool(t))
+            column.addWidget(button)
+            self.tool_buttons[tool] = button
+        column.addSpacing(8)
+        column.addWidget(QLabel("<b>Selected panel</b>"))
+        for text, slot, tip in (
+                ("Load from list...", lambda: self.load_from_list(),
+                 "Put a dataset from the main list into the selected panel."),
+                ("Load picture...", lambda: self.load_picture(),
+                 "Put a picture from a file (PNG, JPEG, TIFF...) into the "
+                 "selected panel."),
+                ("Empty it", lambda: self.empty_panel(),
+                 "Take the content out; the panel stays as a slot."),
+                ("Delete", lambda: self.canvas.delete_selection(),
+                 "Remove the selected panel or drawing (Del).")):
+            button = QPushButton(text)
+            button.setToolTip(tip)
+            button.setStyleSheet("text-align: left; padding: 4px 8px;")
+            button.clicked.connect(slot)
+            column.addWidget(button)
+        column.addSpacing(8)
+        column.addWidget(QLabel("<b>Page</b>"))
+        letter = QPushButton("Re-letter (a), (b)...")
+        letter.setToolTip("Letter the panels again in reading order: top to "
+                          "bottom, left to right. Insets take no letter.")
+        letter.setStyleSheet("text-align: left; padding: 4px 8px;")
+        letter.clicked.connect(self.reletter)
+        column.addWidget(letter)
+        column.addStretch(1)
+        palette.setMinimumWidth(150)
+        palette.setMaximumWidth(220)
+        return palette
+
+    # -- tools ---------------------------------------------------------------
+    def set_tool(self, tool: str):
+        self.canvas.set_tool(tool)
+        for name, button in self.tool_buttons.items():
+            button.setChecked(name == tool)
+        tip = next(t for name, _x, t in self.TOOL_BUTTONS if name == tool)
+        self.hint.setText(tip if tool != "select" else
+                          "Click a panel or a drawing to select it, drag to move, "
+                          "drag a handle to resize. Double-click an empty panel to "
+                          "fill it. Right-click for more.")
+
+    def _tool_finished(self):
+        self.set_tool(self.canvas.tool)
+
+    def _zoom_changed(self, index):
+        self.canvas.zoom = None if index == 0 else (
+            (100, 150, 200, 300)[index - 1] / 100.0 * 96.0 / nf.MM_PER_INCH)
+        self.canvas.refresh()
+
     # -- state -------------------------------------------------------------
     def refresh(self):
         self.canvas.refresh()
         width, height = self.painter.size_mm()
+        mains = len(self.figure.main_panels())
+        insets = len(self.figure.panels) - mains
         self.statusBar().showMessage(
-            f"{len(self.figure.panels)} panel(s), "
-            f"{self.figure.rows} x {self.figure.cols} — "
-            f"{width:.1f} x {height:.1f} mm at {self.figure.style.dpi} dpi")
+            f"{mains} panel(s)" + (f", {insets} inset(s)" if insets else "")
+            + (f", {len(self.figure.shapes)} drawing(s)" if self.figure.shapes else "")
+            + f" — {width:.1f} x {height:.1f} mm at {self.figure.style.dpi} dpi")
+
+    def _canvas_changed(self):
+        self.refresh()
+        if self._tools is not None:
+            self._tools.sync()
 
     def _panel_picked(self, index):
         if self._tools is not None:
             self._tools.panel_combo.setCurrentIndex(index)
 
+    def _selection_changed(self):
+        self.shape_editor.show_shape(self.canvas.selected_shape())
+
     def open_tools(self):
-        if self._tools is not None and self._tools.isVisible():
-            self._tools.raise_()
-            self._tools.activateWindow()
-            return self._tools
-        self._tools = FigureToolsDialog(self)
-        self._tools.show()
+        """Show the figure tools (they live on the right of the window)."""
+        self.tools_button.setChecked(True)
+        self.side.setVisible(True)
         return self._tools
 
     def pick_point(self, message, callback):
@@ -2238,41 +3355,271 @@ class FigureWindow(QMainWindow):
         self.canvas.start_point_picking(
             lambda index, x, y: (self.hint.setText(""), callback(index, x, y)))
 
+    # -- undo ----------------------------------------------------------------
+    def _snapshot(self):
+        figure = self.figure
+        return {"panels": [(p, {k: copy.deepcopy(v) for k, v in vars(p).items()
+                                if k != "data"}, p.data) for p in figure.panels],
+                "shapes": copy.deepcopy(figure.shapes),
+                "style": copy.deepcopy(figure.style),
+                "grid": (figure.rows, figure.cols), "title": figure.title}
+
+    def _restore(self, state):
+        figure = self.figure
+        figure.panels = []
+        for panel, fields, data in state["panels"]:
+            for name, value in fields.items():
+                setattr(panel, name, copy.deepcopy(value))
+            panel.data = data
+            figure.panels.append(panel)
+        figure.shapes = copy.deepcopy(state["shapes"])
+        figure.style = copy.deepcopy(state["style"])
+        figure.rows, figure.cols = state["grid"]
+        figure.title = state["title"]
+        self.canvas.selection = None
+        self._selection_changed()
+        if self._tools is not None:
+            self._tools.sync()
+        self.refresh()
+
+    def remember(self, source="property", force=False):
+        """Keep an undo step before a change. A burst of changes from one
+        control (a spin box held down) is one step."""
+        last_source, when = self._last_memory
+        now = time.monotonic()
+        if not force and source == last_source and now - when < 1.0:
+            self._last_memory = (source, now)
+            return
+        self._last_memory = (source, now)
+        self._undo.append(self._snapshot())
+        del self._undo[:-60]
+        self._redo.clear()
+        self._update_undo()
+
+    def undo(self):
+        if not self._undo:
+            return False
+        self._redo.append(self._snapshot())
+        self._restore(self._undo.pop())
+        self._last_memory = (None, 0.0)
+        self._update_undo()
+        return True
+
+    def redo(self):
+        if not self._redo:
+            return False
+        self._undo.append(self._snapshot())
+        self._restore(self._redo.pop())
+        self._last_memory = (None, 0.0)
+        self._update_undo()
+        return True
+
+    def _update_undo(self):
+        self.undo_button.setEnabled(bool(self._undo))
+        self.redo_button.setEnabled(bool(self._redo))
+
     # -- panels ------------------------------------------------------------
     def add_panels(self, panels, cols=None):
-        self.figure.panels.extend(panels)
-        self.figure.fit_grid(cols or self.figure.cols)
+        if self.figure.free:
+            self.remember("add", force=True)
+            for panel in panels:
+                self.figure.place_new(panel)
+                self.figure.panels.append(panel)
+            self.figure.auto_edge_labels()
+        else:
+            self.figure.panels.extend(panels)
+            self.figure.fit_grid(cols or self.figure.cols)
         self.figure.letter_panels()
         if self._tools is not None:
             self._tools.sync()
         self.refresh()
 
-    def add_panel_from_list(self):
-        """Take another dataset from the launcher's list."""
+    def _choose_dataset(self, title):
+        """``(data, name)`` picked from the launcher's list, or None."""
         source = self.dataset_source
         if not source or not callable(source.get("entries")):
-            QMessageBox.information(self, "Add panel",
-                                     "No dataset list is available here.")
+            QMessageBox.information(self, title, "No dataset list is available here.")
             return None
         listed = source["entries"]()
         if not listed:
-            QMessageBox.information(self, "Add panel", "The list is empty.")
+            QMessageBox.information(self, title, "The list is empty.")
             return None
         labels = [label for label, _key in listed]
-        choice, ok = QInputDialog.getItem(self, "Add panel", "Dataset:",
-                                           labels, 0, False)
+        choice, ok = QInputDialog.getItem(self, title, "Dataset:", labels, 0, False)
         if not ok:
             return None
         key = listed[labels.index(choice)][1]
         try:
-            data = source["loader"](key)
-            panel = panel_from_dataset(data, choice.split("   [")[0])
+            return source["loader"](key), choice.split("   [")[0]
+        except Exception as exc:
+            QMessageBox.warning(self, title, f"Could not read it:\n{exc}")
+            return None
+
+    def add_panel_from_list(self):
+        """Take another dataset from the launcher's list, as a new panel."""
+        chosen = self._choose_dataset("Add panel")
+        if chosen is None:
+            return None
+        try:
+            panel = panel_from_dataset(*chosen)
         except Exception as exc:
             QMessageBox.warning(self, "Add panel",
-                                 f"That dataset cannot be a panel:\n{exc}")
+                                f"That dataset cannot be a panel:\n{exc}")
             return None
         self.add_panels([panel])
         return panel
+
+    def _target_panel(self, what):
+        panel = self.canvas.selected_panel()
+        if panel is None:
+            QMessageBox.information(self, what, "Click a panel on the page first.")
+        return panel
+
+    def fill_panel(self, panel, source: Panel):
+        """Put ``source``'s content (its data and how it is drawn) into
+        ``panel``, which keeps its place, size, letter and role."""
+        self.remember("fill", force=True)
+        keep = {name: getattr(panel, name) for name in
+                ("frame", "role", "label", "uid", "x_labels", "y_labels", "font_pt")}
+        for name, value in vars(source).items():
+            setattr(panel, name, value)
+        for name, value in keep.items():
+            setattr(panel, name, value)
+        panel.zoom_of = ""
+        # Insets that magnified the old content no longer show it.
+        self.figure.panels = [p for p in self.figure.panels if p.zoom_of != panel.uid]
+        if self._tools is not None:
+            self._tools.sync()
+        self.refresh()
+        return panel
+
+    def load_from_list(self, panel=None):
+        """Fill the selected panel with a dataset from the main list."""
+        panel = panel or self._target_panel("Load from list")
+        if panel is None:
+            return None
+        chosen = self._choose_dataset("Load from list")
+        if chosen is None:
+            return None
+        try:
+            source = panel_from_dataset(*chosen)
+        except Exception as exc:
+            QMessageBox.warning(self, "Load from list",
+                                f"That dataset cannot be a panel:\n{exc}")
+            return None
+        return self.fill_panel(panel, source)
+
+    PICTURE_FILTER = "Pictures (*.png *.jpg *.jpeg *.tif *.tiff *.bmp *.gif *.svg)"
+
+    def load_picture(self, panel=None, path=None):
+        """Fill the selected panel with a picture from a file; the panel
+        takes the picture's shape."""
+        panel = panel or self._target_panel("Load picture")
+        if panel is None:
+            return None
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(self, "Load a picture", "",
+                                                  self.PICTURE_FILTER)
+            if not path:
+                return None
+        image = QImage(path)
+        if image.isNull():
+            QMessageBox.warning(self, "Load picture", f"Could not read {path}.")
+            return None
+        rgba = _qimage_array(image)
+        source = Panel(data=nf.picture_data(rgba, os.path.basename(path)))
+        self.figure.freeze()
+        self.fill_panel(panel, source)
+        x, y, w, h = panel.frame
+        height, width = rgba.shape[:2]
+        panel.frame = (x, y, w, w * height / max(width, 1))
+        panel.x_labels = panel.y_labels = False
+        self.refresh()
+        return panel
+
+    def empty_panel(self, panel=None):
+        panel = panel or self._target_panel("Empty it")
+        if panel is None:
+            return None
+        return self.fill_panel(panel, Panel(data=nf.empty_data()))
+
+    def reletter(self):
+        self.remember("letter", force=True)
+        self.figure.freeze()
+        self.figure.letter_panels()
+        if self._tools is not None:
+            self._tools.sync()
+        self.refresh()
+
+    def _panel_activated(self, index):
+        panel = self.figure.panels[index]
+        if panel.data.kind != "empty":
+            self.open_tools()
+            return
+        menu = QMenu(self)
+        menu.addAction("Load from the list...", lambda: self.load_from_list(panel))
+        menu.addAction("Load a picture...", lambda: self.load_picture(panel))
+        menu.exec_(QCursor.pos())
+
+    def _context_menu(self, what, index, position):
+        menu = QMenu(self)
+        if what == "panel":
+            panel = self.figure.panels[index]
+            menu.addAction("Load from the list...", lambda: self.load_from_list(panel))
+            menu.addAction("Load a picture...", lambda: self.load_picture(panel))
+            if panel.data.kind != "empty":
+                menu.addAction("Empty it", lambda: self.empty_panel(panel))
+            if panel.data.is_plot() and panel.role != "inset":
+                menu.addAction("Zoom-in inset of a region...",
+                               lambda: self.set_tool("zoom"))
+            menu.addSeparator()
+            role = "Make it a panel (lettered)" if panel.role == "inset" \
+                else "Make it an inset (no letter)"
+            menu.addAction(role, lambda: self._toggle_role(panel))
+            menu.addAction("Bring to front", lambda: self._restack(panel, +1))
+            menu.addAction("Send to back", lambda: self._restack(panel, -1))
+            menu.addSeparator()
+            menu.addAction("Delete", self.canvas.delete_selection)
+        elif what == "shape":
+            menu.addAction("Bring to front", lambda: self._restack_shape(index, +1))
+            menu.addAction("Send to back", lambda: self._restack_shape(index, -1))
+            menu.addAction("Delete", self.canvas.delete_selection)
+        else:
+            menu.addAction("Add an empty panel here",
+                           lambda: self.set_tool("slot"))
+            menu.addAction("Arrange as grid...", self.open_tools)
+        menu.exec_(position)
+
+    def _toggle_role(self, panel):
+        self.remember("role", force=True)
+        self.figure.freeze()
+        panel.role = "panel" if panel.role == "inset" else "inset"
+        if panel.role == "panel":
+            panel.zoom_of = ""
+        self.figure.letter_panels()
+        self._canvas_changed()
+
+    def _restack(self, panel, direction):
+        self.remember("order", force=True)
+        panels = self.figure.panels
+        panels.remove(panel)
+        if direction > 0:
+            panels.append(panel)
+        else:
+            panels.insert(0, panel)
+        self.canvas.selection = ("panel", panels.index(panel))
+        self._canvas_changed()
+
+    def _restack_shape(self, index, direction):
+        self.remember("order", force=True)
+        shapes = self.figure.shapes
+        shape = shapes.pop(index)
+        if direction > 0:
+            shapes.append(shape)
+        else:
+            shapes.insert(0, shape)
+        self.canvas.selection = ("shape", shapes.index(shape))
+        self._canvas_changed()
 
     # -- output ------------------------------------------------------------
     def _default_name(self, suffix):
@@ -2309,7 +3656,12 @@ class FigureWindow(QMainWindow):
         """Write the figure. Returns every file written."""
         if fmt == "layers":
             return self._write_layers(path)
-        return write_figure(self.painter, path, fmt)
+        return write_figure(self.file_painter(), path, fmt)
+
+    def file_painter(self) -> FigurePainter:
+        """A painter for files and the clipboard: the canvas's own draws
+        the empty slots, which never belong in the figure."""
+        return FigurePainter(self.figure)
 
     def _write_layers(self, path: str):
         """The two-file route: the data as a raster and the axes as vector
@@ -2318,12 +3670,12 @@ class FigureWindow(QMainWindow):
         One panel only -- a page of panels is what the PDF is for.
         """
         panel = self.figure.panels[self.canvas.selected]
-        if panel.data.kind == "scene3d":
-            raise ValueError("a 3-D view has no separate data layer and axes; "
-                             "save it as PDF, SVG or PNG")
+        if not panel.data.is_plot():
+            raise ValueError("only a panel of data has a separate data layer "
+                             "and axes; save this one as PDF, SVG or PNG")
         (x0, x1), (y0, y1) = self.figure.panel_ranges(panel)
         _w, _h, rects = self.figure.layout()
-        rect = rects[self.canvas.selected]
+        rect = next(r for r in rects if r["index"] == self.canvas.selected)
         dpi_scale = self.figure.style.dpi / nf.MM_PER_INCH
         rgba = self.painter._raster(
             panel, QRectF(0, 0, rect["w"], rect["h"]), (x0, x1), (y0, y1),
@@ -2344,7 +3696,7 @@ class FigureWindow(QMainWindow):
         return [path, eps]
 
     def copy_to_clipboard(self):
-        QApplication.clipboard().setImage(self.painter.to_image())
+        QApplication.clipboard().setImage(self.file_painter().to_image())
         self.statusBar().showMessage("Figure copied to the clipboard")
 
     def closeEvent(self, event):

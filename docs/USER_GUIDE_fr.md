@@ -490,6 +490,21 @@ Deux outils de l'onglet Advanced ajustent des pics ligne par ligne :
 
 ![Panneau d'ajustement MDC](images/mdc_fit_panel.png)
 
+**Guided fit (step by step)**, en haut du panneau, guide tout l'ajustement
+pas à pas à côté des réglages, en disant à quoi sert chaque étape et en
+encadrant la partie du panneau qu'elle utilise : ce que fait un ajustement
+MDC (EDC), la forme de pic, l'intervalle (*Start here* / *End here* à la
+ligne bleue), les bandes, les points de départ (le guide place la ligne en
+cinq endroits de l'intervalle — cliquez à chaque fois le pic de la bande sur
+la courbe), une ligne d'essai, la série et le résultat. *Next* attend que
+l'étape ait ce qu'il faut à l'ajustement.
+
+Les images et les réglages se partagent la fenêtre avec une poignée entre
+eux : les réglages restent visibles ; la molette sur une image fait défiler
+la fenêtre quand elle est trop courte (Ctrl + molette zoome l'image).
+
+À la main :
+
 1. Onglet **Bands** : **Add band** pour chaque branche ; sélectionnez une
    bande, appuyez sur **Place a seed** et cliquez sur le pic, sur la courbe (à
    droite). Quatre ou cinq points de départ le long d'une bande suffisent ;
@@ -703,7 +718,10 @@ qui l'ont produit.
   s'ouvrent avec un conseil : toutes deux amplifient le bruit, et marchent
   donc mieux sur des données déjà lissées — lancez **Smooth...**,
   sélectionnez son résultat dans la liste et ouvrez le filtre sur celui-ci,
-  ou augmentez les largeurs de pré-lissage dans la fenêtre même.
+  ou augmentez les largeurs de pré-lissage dans la fenêtre même. Un résultat
+  lissé porte l'étiquette **‹smoothed›** dans la liste (tout ce qui en est
+  tiré aussi) ; sur ces données le conseil laisse place à une ligne « déjà
+  lissé » et les largeurs de pré-lissage partent de 0.
 - **Shape** : *Square pixels* (un point de données est carré — sans
   distorsion pour une coupe angle-énergie), *Equal axes* (une unité a la même
   longueur sur les deux axes — adapté à angle-angle ou k-k ; choisi
@@ -992,21 +1010,45 @@ droit sur un panneau donne les deux intégrations :
 
 ### 17.1 Composeur de figures
 
-Sélectionnez des coupes (ou des courbes) dans la liste → panneau → Advanced →
-**Figure composer...**, un panneau par jeu sélectionné (ou, depuis une
-tranche figée, son bouton **Figure composer...** ; un empilement de courbes
-ou une vue 3D a son propre bouton **To figure composer**). Le composeur dispose les panneaux pour un article : une même
-taille par colonne, des étiquettes seulement sur les bords extérieurs, des
-lettres (a)/(b)/(c), et des échelles de couleurs partagées si on le souhaite.
+Panneau → Advanced → **Figure composer...** **sans rien sélectionner** ouvre
+une page vierge, comme une figure d'article : quatre panneaux vides (a),
+(b), (c), (d) à la largeur de colonne d'une revue. Avec des coupes (ou des
+courbes) sélectionnées, chacune devient un panneau (de même pour le bouton
+**Figure composer...** d'une tranche figée ; un empilement de courbes ou une
+vue 3D a son propre bouton **To figure composer**).
 
 ![Composeur de figures](images/figure_composer.png)
 
-**Figure tools...** règle tout (taille en mm, polices, graduations, barres de
-couleurs, lignes, flèches, texte, encarts, barres d'échelle) — à ne pas
-confondre avec les **Plot tools** d'une fenêtre, qui dessinent des guides sur
-le graphique affiché ; **Add
-panel...** ajoute un autre jeu de données ; **PDF**, **PNG**, **SVG**
-exportent, **Copy** copie dans le presse-papiers.
+- **Mise en page.** Cliquez un panneau pour le sélectionner ; faites-le
+  glisser pour le déplacer, tirez ses poignées pour le redimensionner (Maj
+  sur un coin garde ses proportions). Les panneaux s'alignent sur les bords
+  des autres et sur une grille de 0,5 mm (**Snap**) ; les flèches du clavier
+  le décalent de 0,5 mm (Maj : 5 mm). *Arrange as grid* (onglet Panels à
+  droite) les remet en lignes × colonnes. **Re-letter** les nomme (a), (b)…
+  dans l'ordre de lecture.
+- **Remplir un panneau.** Double-cliquez un panneau vide, ou **Load from
+  list...** / **Load picture...** à gauche : un jeu de la liste principale,
+  ou une image d'un fichier (PNG, JPEG, TIFF… — un schéma ou une figure
+  faite ailleurs ; elle garde ses proportions et n'a pas d'axes).
+- **Encarts.** **Zoom-in inset** : tracez une région d'un panneau — un
+  petit panneau qui l'agrandit apparaît dans le coin, et la région est
+  encadrée. Un **Panel** tracé dans un autre panneau est un encart à remplir
+  avec un autre jeu. Les encarts n'ont pas de lettre et suivent leur panneau.
+- **Dessiner.** **Arrow**, **Line**, **Box**, **Ellipse**, **Text** :
+  faites glisser (ou cliquez, pour le texte) sur la page. Un dessin
+  sélectionné se déplace, ses extrémités ou coins se tirent, et sa couleur,
+  son épaisseur, son trait, son remplissage et son texte se règlent au-dessus
+  des outils. Double-cliquez un texte pour le modifier ; Suppr efface la
+  sélection ; clic droit pour le reste.
+- **Axes et polices.** Les outils à côté de la page agissent sur le panneau
+  sélectionné (ou sur tous) : bornes, graduations, étiquettes, bords
+  numérotés, taille de police propre au panneau, carte de couleurs, barre de
+  couleurs, lignes de référence.
+- **Undo / Redo** (Ctrl+Z / Ctrl+Y) couvrent tout. **PDF**, **PNG**, **SVG**
+  exportent, **Copy** copie dans le presse-papiers ; les panneaux vides ne
+  sont jamais écrits. Les **Figure tools** du composeur ne sont pas les
+  **Plot tools** d'une fenêtre, qui dessinent des guides sur le graphique
+  affiché.
 
 ### 17.2 Figure en série de tranches
 

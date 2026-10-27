@@ -485,6 +485,21 @@ Two tools of the tool panel's Advanced tab fit peaks line by line:
 
 ![MDC fit panel](images/mdc_fit_panel.png)
 
+**Guided fit (step by step)**, at the top of the panel, walks through the
+whole fit beside the controls, one step at a time, saying what each step is
+for and outlining the part of the panel it uses: what an MDC (EDC) fit
+does, the line shape, the range (*Start here* / *End here* at the blue
+line), the bands, the seeds (the guide moves the line to five places in the
+range — click the band's peak on the curve at each), one test line, the
+series, and the result. *Next* waits until a step has what the fit needs.
+
+The pictures and the controls share the window with a handle between them,
+so the settings are always in sight; the mouse wheel over a picture scrolls
+the window when it is too short for everything (Ctrl + wheel zooms the
+picture).
+
+By hand:
+
 1. **Bands** tab: **Add band** for each branch; select a band, press **Place
    a seed** and click the peak on the curve (right). Four or five seeds down a
    band are enough; **Line at** moves the line being looked at.
@@ -682,6 +697,9 @@ Every result is a new dataset carrying the steps that made it.
   tip: both amplify noise, so they usually work better on data smoothed
   first — run **Smooth...**, select its result in the list, and open the
   filter on that, or raise the pre-smooth widths in the window itself.
+  A smoothed result carries the tag **‹smoothed›** in the list (and so does
+  anything made from it); on such data the tip is replaced by a short
+  "already smoothed" line and the pre-smooth widths start at 0.
 - **Shape**: *Square pixels* (one data point is square — undistorted for an
   angle-vs-energy cut), *Equal axes* (one unit is the same length on both
   axes — right for angle-vs-angle or k-vs-k; chosen automatically when both
@@ -951,19 +969,41 @@ panel for the two integrations:
 
 ### 17.1 Figure composer
 
-Select cuts (or curves) in the list → tool panel → Advanced → **Figure
-composer...**, one panel per selected dataset (or, from a frozen slice, its
-**Figure composer...** button; a stack plot or a 3-D view has its own **To
-figure composer** button). The
-composer lays panels out for a paper: one size per column, labels only on
-the outer edges, (a)/(b)/(c) letters, shared colour scales if you want them.
+Tool panel → Advanced → **Figure composer...** with **nothing selected**
+opens a blank page, like a figure of a manuscript: four empty panels (a),
+(b), (c), (d) at a journal's column width. With cuts (or curves) selected,
+each becomes a panel (so does a frozen slice's **Figure composer...**
+button; a stack plot or a 3-D view has its own **To figure composer**
+button).
 
 ![Figure composer](images/figure_composer.png)
 
-**Figure tools...** sets everything (size in mm, fonts, ticks, colour bars,
-lines, arrows, text, insets, scale bars) — not to be confused with a viewer's
-**Plot tools**, which draw guides on the live plot; **Add panel...** adds another dataset;
-**PDF**, **PNG**, **SVG** export, **Copy** puts it on the clipboard.
+- **Lay out the page.** Click a panel to select it; drag it to move it and
+  drag its handles to resize it (Shift on a corner keeps its shape). Panels
+  snap to each other's edges and to a 0.5 mm grid (**Snap**); the arrow keys
+  nudge by 0.5 mm (Shift: 5 mm). *Arrange as grid* (figure tools, Panels
+  tab) puts them back on rows × columns. **Re-letter** names them (a), (b)…
+  in reading order.
+- **Fill a panel.** Double-click an empty panel, or use **Load from
+  list...** / **Load picture...** on the left: a dataset from the main list,
+  or a picture from a file (PNG, JPEG, TIFF… — a sketch or a figure made
+  elsewhere; it keeps its shape and has no axes).
+- **Insets.** **Zoom-in inset**: drag out a region of a panel — a small
+  panel magnifying it appears in the corner and the region is outlined.
+  **Panel** drawn inside another panel makes an inset to fill with another
+  dataset. Insets take no letter and move with their panel.
+- **Draw.** **Arrow**, **Line**, **Box**, **Ellipse**, **Text**: drag (or
+  click, for text) on the page. A selected drawing can be moved, its ends
+  or corners dragged, and its colour, width, line style, fill and text set
+  above the figure tools. Double-click a text to edit it; Del removes the
+  selection; right-click for more (bring to front, delete…).
+- **Axes and fonts.** The figure tools beside the page act on the selected
+  panel (or all of them): ranges, ticks, labels, which edges carry numbers,
+  the panel's own font size, colour map, colour bar, reference lines.
+- **Undo / Redo** (Ctrl+Z / Ctrl+Y) cover every change. **PDF**, **PNG**,
+  **SVG** export, **Copy** puts it on the clipboard; empty panels are never
+  written. The composer's **Figure tools** are not a viewer's **Plot
+  tools**, which draw guides on the live plot.
 
 ### 17.2 Slice series figure
 

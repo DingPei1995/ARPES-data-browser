@@ -54,6 +54,7 @@ import numpy as np
 
 from loader.nxs_file import list_datasets, save_dataset, CUBE_KINDS, CURVE_KINDS
 from tools.processing.dataops import axis_summary, same_format, ARRAY_AXES
+from tools.processing import process as process_tools
 from ui.viewers.widgets import NxsData, MemoryData, DEFAULT_COLORMAP
 # Imported under short names, not as `import ui.common.jobs`: the launcher's own
 # global `ui` (the built main window, used on nearly every line below) would
@@ -314,14 +315,15 @@ def add_memory_dataset(data, label: str):
     loaded_items[key] = {"path": getattr(data, "path", ""), "name": label,
                          "entry": None, "kind": kind, "title": None,
                          "start_time": None, "memory": data,
-                         "backing": backing, "exported": False}
+                         "backing": backing, "exported": False,
+                         "tags": process_tools.tags_of(data)}
     if backing is not None:
         session.budget.put(backing, data)
-    item = QListWidgetItem(f"{label}   [{kind}]")
+    item = QListWidgetItem(_row_label(key))
     item.setData(QtCore.Qt.UserRole, key)
     where = (f"auto-saved to {os.path.basename(backing)}" if backing
              else "computed in this session, not auto-saved")
-    item.setToolTip(f"{label}\n{where}\n{kind}")
+    item.setToolTip(f"{label}\n{where}\n{kind}" + _tags_tip(key))
     ui.FilePathListWidget.addItem(item)
     # Make the new row the *only* selection, so a right-click straight after
     # a conversion acts on it alone rather than on it plus whatever was
@@ -432,7 +434,33 @@ def _row_label(key) -> str:
         if len(siblings) > 1:
             label = (f"{record['name']}  \u00b7  {record['entry']}   "
                      f"[{record['kind']}]")
+    for tag in record.get("tags") or ():
+        label += f"  \u2039{tag}\u203a"
     return label
+
+
+def _tags_tip(key) -> str:
+    """The tooltip line that explains a row's tags (empty without any)."""
+    tags = (loaded_items.get(key) or {}).get("tags") or ()
+    if "smoothed" in tags:
+        return ("\nsmoothed: made from smoothed data -- the second "
+                "derivative and curvature panels need no pre-smoothing")
+    return ""
+
+
+def _refresh_row_tags(key, data):
+    """Read a row's tags off its dataset once it is loaded -- a file saved
+    from a smoothed result says so in its history -- and show them."""
+    record = loaded_items.get(key)
+    if record is None or data is None:
+        return
+    tags = process_tools.tags_of(data)
+    if tags == list(record.get("tags") or ()):
+        return
+    record["tags"] = tags
+    item = _row_for_key(key)
+    if item is not None:
+        item.setText(_row_label(key))
 
 
 def show_list_menu(position):
@@ -622,7 +650,11 @@ def plot_selected_as_figure():
 
     keys = selected_keys()
     if not keys:
-        return None
+        # A blank page of empty panels, (a) to (d), to fill one by one.
+        window = figure_window([])
+        ui.statusbar.showMessage("A blank figure: select a panel and load "
+                                 "a dataset or a picture into it")
+        return window
     panels, problems = [], []
     QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
     try:
@@ -930,6 +962,7 @@ def load_selected(item=None):
         ui.statusbar.showMessage(f"Failed to load {current_label()}: {exc}")
         return None
 
+    _refresh_row_tags(key, current_data)
     info = ensure_info_window()
     info.TitleLabel.setText(current_label())
     info.KindLabel.setText(f"kind: {current_data.kind}")

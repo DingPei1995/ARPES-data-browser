@@ -471,9 +471,20 @@ class PreviewPair(QWidget):
 # ==========================================================================
 # The 2-D processing panel
 # ==========================================================================
-def smooth_first_hint(what: str, presmooth: bool = True) -> QLabel:
+def smooth_first_hint(what: str, presmooth: bool = True,
+                      smoothed: bool = False) -> QLabel:
     """The note at the top of the second-derivative and curvature panels:
-    both multiply the noise, so they read best on smoothed data."""
+    both multiply the noise, so they read best on smoothed data.
+
+    ``smoothed``: the data carries the *smoothed* tag already, so there is
+    nothing to warn about -- a quiet line saying so takes the tip's place.
+    """
+    if smoothed:
+        label = QLabel(f"\u2713 <b>{P.SMOOTHED_TAG}</b> data: already "
+                       f"smoothed, so no pre-smoothing is needed.")
+        label.setWordWrap(True)
+        label.setStyleSheet("color: #2f6b2f; padding: 2px;")
+        return label
     label = QLabel(
         f"<b>Tip:</b> {what} amplifies noise, so it usually works better on "
         f"data that has been smoothed first: run <b>Smooth...</b> from the "
@@ -527,6 +538,9 @@ class ProcessDialog(QDialog):
         self.axes = [np.asarray(scan.x, dtype=float), np.asarray(scan.y, dtype=float)]
         self.labels = [scan.labels.get("x", "x"), scan.labels.get("y", "y")]
         self.preview_values, self.preview_axes = _decimate(self.values, self.axes)
+        # Every selected dataset already smoothed: the derivative and
+        # curvature tabs neither warn nor pre-smooth by default.
+        self.smoothed = all(P.is_smoothed(d) for _, d in self.datasets)
 
         layout = QVBoxLayout(self)
         names = ", ".join(name for name, _ in self.datasets[:3])
@@ -659,7 +673,8 @@ class ProcessDialog(QDialog):
     def _derivative_tab(self):
         page = QWidget()
         form = QFormLayout(page)
-        form.addRow(smooth_first_hint("A second derivative"))
+        form.addRow(smooth_first_hint("A second derivative",
+                                      smoothed=self.smoothed))
         self.deriv_kind = QComboBox()
         self.deriv_kind.addItems([
             f"-d²/d{self._short(1)}²  (sharpens EDC peaks)",
@@ -671,6 +686,9 @@ class ProcessDialog(QDialog):
                                    self._span(0) / 200, 5)
         self.deriv_smooth_y = spin(self._span(1) / 60, 0.0, self._span(1),
                                    self._span(1) / 200, 5)
+        if self.smoothed:
+            self.deriv_smooth_x.setValue(0.0)
+            self.deriv_smooth_y.setValue(0.0)
         form.addRow(f"Pre-smooth along {self.labels[0]}", self._watch(self.deriv_smooth_x))
         form.addRow(f"Pre-smooth along {self.labels[1]}", self._watch(self.deriv_smooth_y))
         self.deriv_window = spin(0.0, 0.0, max(self._span(0), self._span(1)),
@@ -679,7 +697,9 @@ class ProcessDialog(QDialog):
         note = QLabel(
             "<i>A second derivative multiplies the noise by roughly the "
             "square of the sampling rate, so it is only readable after "
-            "smoothing. The border is fitted, not forced to zero.</i>")
+            "smoothing. The border is fitted, not forced to zero.</i>"
+            if not self.smoothed else
+            "<i>The border is fitted, not forced to zero.</i>")
         note.setWordWrap(True)
         form.addRow("", note)
         return page
@@ -687,7 +707,8 @@ class ProcessDialog(QDialog):
     def _curvature_tab(self):
         page = QWidget()
         form = QFormLayout(page)
-        form.addRow(smooth_first_hint("The curvature"))
+        form.addRow(smooth_first_hint("The curvature",
+                                      smoothed=self.smoothed))
         self.curv_mode = QComboBox()
         self.curv_mode.addItems(["2D (isotropic)",
                                  f"1D along {self._short(1)}",
@@ -725,6 +746,9 @@ class ProcessDialog(QDialog):
                                   self._span(0) / 200, 5)
         self.curv_smooth_y = spin(self._span(1) / 60, 0.0, self._span(1),
                                   self._span(1) / 200, 5)
+        if self.smoothed:
+            self.curv_smooth_x.setValue(0.0)
+            self.curv_smooth_y.setValue(0.0)
         form.addRow(f"Pre-smooth along {self.labels[0]}", self._watch(self.curv_smooth_x))
         form.addRow(f"Pre-smooth along {self.labels[1]}", self._watch(self.curv_smooth_y))
         note = QLabel(

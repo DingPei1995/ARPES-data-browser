@@ -56,7 +56,10 @@ def _select(lv, *texts):
 def test_tool_buttons_follow_the_selection(launcher):
     lv = launcher
     _select(lv)
-    assert not any(b.isEnabled() for b in lv.ui.ToolButtons.values())
+    # all but the figure composer, which opens a blank page
+    assert not any(b.isEnabled() for name, b in lv.ui.ToolButtons.items()
+                   if name != "figure")
+    assert lv.ui.ToolButtons["figure"].isEnabled()
     assert "Select a dataset" in lv.ui.ToolButtons["smooth"].toolTip()
     _select(lv, "c")
     tools = lv.ui.ToolButtons

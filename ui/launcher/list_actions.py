@@ -34,7 +34,8 @@ PLANES = frozenset({"cut"}) | CUBES
 #: different panels -- so a selection has to be one or the other.
 PROCESSING = frozenset({"smooth", "derivative", "curvature", "symmetry"})
 
-#: action -> (how many rows: "one", "two", "many" (two or more) or "any", the kinds it takes
+#: action -> (how many rows: "one", "two", "many" (two or more), "any", or
+#: "optional" (none, or any number), the kinds it takes
 #: (None = every known kind), what to call those kinds in a tooltip)
 RULES = {
     "open": ("one", None, "a dataset"),
@@ -42,7 +43,8 @@ RULES = {
     "rename": ("one", None, "a dataset"),
     "slit_cut": ("any", CUBES, "maps"),
     "deflector_cut": ("any", CUBES, "maps"),
-    "figure": ("any", frozenset({"cut"}) | CURVES, "cuts or curves"),
+    # Nothing selected opens a blank page of empty panels.
+    "figure": ("optional", frozenset({"cut"}) | CURVES, "cuts or curves"),
     "stack": ("one", frozenset({"cut"}), "a cut"),
     "mdcfit": ("one", frozenset({"cut"}), "a cut in momentum (k)"),
     "edcfit": ("one", frozenset({"cut"}), "a cut"),
@@ -100,7 +102,7 @@ def availability(action: str, rows):
     """
     count, kinds, wanted = RULES[action]
     n = len(rows)
-    if count == "none":
+    if count == "none" or (count == "optional" and n == 0):
         return True, ""
     if n == 0:
         return False, "Select a dataset in the list first."
