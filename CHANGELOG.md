@@ -16,6 +16,30 @@ A large rework of where things are: every tool is a button in sight, one
 window per tool. (The version number stays 1.1.0; later changes are added
 here.)
 
+- **Multi-slice figure is the Advanced tool "Slice series figure"**
+  (*3D only — maps*, beside the 3-D views), instead of an entry of a map
+  viewer's Functions menu. The new name says what it makes -- a page of
+  flat 2-D slices at a series of energies or angles, one figure for a paper
+  -- and keeps it apart from *3D slices*, whose tooltip now points to it.
+  From the list it slices a hidden contour of the map, closed again once
+  the figure is made.
+- **The tool panel's text is larger**: buttons at 10.5 pt, headings at
+  10 pt, the Basic / Advanced tabs at 10.5 pt.
+- **Tall windows fit the screen.** The Brillouin-zone dialog needed 958 px
+  and could not be made shorter; other tool windows (k conversions, kz
+  conversion, Fermi fit, de-grid, kz alignment, the filters, the loader,
+  curve fit, spin analysis, plot tools, cut arithmetic, the fit panel) had
+  the same problem on a laptop screen. `ui/common/screen.py`'s
+  `fits_screen` puts a window's contents in a scroll area, keeps its
+  trailing button row (Apply / Close) outside it, and opens the window no
+  larger than the available screen; every one of them can now be resized
+  freely. A test opens each and checks its minimum height.
+- **User guides (en, zh, fr), their PDFs and screenshots updated** for
+  everything in 1.1.0: the tool panel and its tabs, the list buttons and
+  right-click menu, a table of where each tool moved, the Fermi fit per cut
+  of a map, the Γ line of the cut conversion, the remembered settings, the
+  Brillouin zone as a property, the separate filter windows, the three 3-D
+  views and the slice series figure.
 - **The tool panel has two tabs, Basic and Advanced**, and opens on
   Basic; switching to Advanced shows only the advanced tools. Each tab is
   grouped by the dimension of data as before. *Basic* holds the steps

@@ -46,6 +46,8 @@ from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
                              QStackedWidget, QTableWidget, QTableWidgetItem,
                              QVBoxLayout, QWidget)
 
+from ui.common.screen import fits_screen
+
 from tools.spectra import curves as C
 from tools.processing import process as P
 from tools.spectra import spin as S
@@ -598,6 +600,7 @@ class CurveWindow(FunctionsMenuMixin, QMainWindow):
 # ==========================================================================
 # Curve fitting
 # ==========================================================================
+@fits_screen
 class CurveFitDialog(QDialog):
     """Fit one channel of the viewer's curve."""
 
@@ -1081,6 +1084,7 @@ class CurveFitDialog(QDialog):
 # ==========================================================================
 # Spin analysis
 # ==========================================================================
+@fits_screen
 class SpinAnalysisDialog(QDialog):
     """Polarisation, instrumental asymmetry and spin-resolved spectra from
     the viewer's spin channels."""

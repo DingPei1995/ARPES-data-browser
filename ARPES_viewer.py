@@ -601,6 +601,7 @@ def run_list_action(name):
         "kcut": lambda: open_k_conversion("cut"),
         "kzconv": open_kz_conversion,
         "bz": open_brillouin_zone,
+        "slicefig": open_slice_series,
         "kzalign": open_kz_alignment,
         "save": save_selected,
         "log": show_operations_log,
@@ -1247,6 +1248,31 @@ def open_brillouin_zone():
         window.close()
         return None
     return window.open_brillouin_zone(bound=True)
+
+
+def open_slice_series():
+    """A page of 2-D slices through the selected map -- constant-energy
+    contours at a series of energies, or cuts at a series of angles -- as one
+    figure (the contour's own dialog, see ui.panels.figure.SliceSeriesDialog).
+    Not the 3-D slices: this is flat panels laid out for a paper. The figure
+    is a window of its own; a contour opened only to make it is closed."""
+    from ui.viewers.windows import keep_alive
+
+    key = selected_key()
+    if key is None:
+        return None
+    contour = map_contour(key)
+    if contour is None:
+        return None
+    made_for_it = not contour.isVisible()
+    try:
+        window = contour.open_slice_figure()
+    finally:
+        if made_for_it and not contour.cut_windows:
+            contour.close()
+    if window is not None:
+        keep_alive(window)
+    return window
 
 
 def open_kz_conversion():

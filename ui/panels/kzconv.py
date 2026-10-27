@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QHBoxLayout, QLabel, QPushButton, QSpinBox,
                              QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
+from ui.common.screen import fits_screen
 from tools.crystal import cleavage
 from tools.momentum import kzconv
 from tools.crystal.lattice import LatticeParams, validate_lattice_parameters
@@ -46,6 +47,7 @@ __all__ = ["KzConversionDialog"]
 FLATNESS_WARNING_EV = 0.03
 
 
+@fits_screen
 class KzConversionDialog(QDialog):
     """Convert a kz map to momentum, choosing the inner potential."""
 

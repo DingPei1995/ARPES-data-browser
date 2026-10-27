@@ -29,6 +29,7 @@ from PyQt5.QtWidgets import (QComboBox, QDialog, QDialogButtonBox,
                              QTableWidgetItem, QVBoxLayout, QWidget,
                              QAbstractItemView, QHeaderView)
 
+from ui.common.screen import fits_screen
 from tools.processing import cutops
 from tools.processing import process as P
 from ui.panels.process import PreviewPair
@@ -49,6 +50,7 @@ _SUFFIX = {
 }
 
 
+@fits_screen
 class CutArithmeticDialog(QDialog):
     """Combine two cuts. ``a`` and ``b`` are ``(name, data)`` pairs.
 

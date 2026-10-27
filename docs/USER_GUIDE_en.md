@@ -2,7 +2,7 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-*Last updated: 25 October 2026 — for ARPES viewer v1.0.2*
+*Last updated: 27 October 2026 — for ARPES viewer v1.1.0*
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
@@ -33,7 +33,7 @@ beamtime (see [Trying it with demo data](#2-trying-it-with-demo-data)).
 8. [From angles to momentum for a map, and the Brillouin zone](#8-from-angles-to-momentum-for-a-map-and-the-brillouin-zone)
 9. [Arbitrary cuts and Fermi-surface correction](#9-arbitrary-cuts-and-fermi-surface-correction)
 10. [Processing: smoothing, derivatives, curvature](#10-processing-smoothing-derivatives-curvature)
-11. [Stack plots and the 3-D view](#11-stack-plots-and-the-3-d-view)
+11. [Stack plots and the 3-D views](#11-stack-plots-and-the-3-d-views)
 12. [Cut arithmetic: dichroism and reference division](#12-cut-arithmetic-dichroism-and-reference-division)
 13. [Photon-energy scans (kz)](#13-photon-energy-scans-kz)
 14. [Removing the detector grid](#14-removing-the-detector-grid)
@@ -98,47 +98,69 @@ The main window is a **browser**: one row per *dataset*, not per file (one
 kind is written after the name: `[Cut]`, `[Map]`, `[kz map]`, `[k-map]`,
 `[SPEM]`, `[EDC]`, `[Spin EDC]` …
 
+It has three parts:
+
+- **The tool panel** (left) — every analysis and processing tool, as a
+  button, in two tabs. **Basic** (shown at start) holds what nearly every
+  dataset goes through: Fermi edge fit, detector-grid removal, background
+  subtraction, the three k conversions, the core-level check, aligning a kz
+  map's Fermi levels and the Brillouin zone. **Advanced** holds the rest:
+  figure composer, smoothing and the band-sharpening filters, symmetrising,
+  stack plots, MDC and EDC fits, cut arithmetic, the slice series figure and
+  the three 3-D views. Within a tab the tools are grouped by the data they
+  take (*2D & 3D — cuts, maps*, *2D only — cuts*, *3D only — maps* …).
+- **The list** (right), with its buttons.
+- **The Memory box** (bottom left) and the version line (bottom right).
+
+![The Advanced tab of the tool panel](images/main_window_advanced.png)
+
+**The tool buttons follow the selection.** A button lights up only when the
+rows selected in the list are what it takes — a k conversion (cut) needs one
+angle cut, cut arithmetic exactly two cuts, a 3-D view a map. A greyed button
+says why when you hover over it.
+
 | Action | How |
 |---|---|
 | Open a dataset in its own window | **double-click** the row (or right-click → **Open**) |
-| Stack several cuts into one map (temperature, gate voltage, photon energy → kz map ...), or join a map / kz map measured in segments | select them → **Combine datasets...** (or right-click → **Combine N datasets...**) |
-| Everything else that works on datasets | **right-click** the row (or a selection of rows) |
-| Read the axes: first/last value, points, step | right-click → **Show information** (fills *Data Information*) |
-| Change the grid or scale — crop to a range, bin points, normalise each spectrum to itself — for several datasets at once | **Crop / bin / normalise...** |
-| Bring out the bands — smooth, second derivative, curvature, background subtraction, symmetrise | **Smooth / derivative...** |
-| See and free memory | the **Memory** box at the bottom |
+| Run a tool on the selected rows | its button in the **tool panel** |
+| Stack several cuts into one map, or join a map / kz map measured in segments | **Combine...** under the list (or right-click → **Combine N datasets...**) |
+| Crop to a range, bin points, normalise each spectrum to itself | **Truncate...**, **Compress...**, **Self-normalise...** under the list |
+| Open, save, remove, rename, read the axes | **right-click** the row (or a selection of rows) |
+| See and free memory, close every viewer, open the autosave folder | the **Memory** box, bottom left |
 | See which version you are running, report a bug, get the latest version | the title bar and the last line of the window (link to GitHub) |
 
-The three buttons under the list sit in a box called **With the selected
-datasets**: each acts on the rows selected above it, and each makes new rows
-— the originals are never changed.
+The four buttons under the list act on the rows selected above them, and each
+makes new rows — the originals are never changed.
 
-### Which name does what
+**The right-click menu** holds only what is done *to the rows*, in three
+groups: **Open**, **Open slit cut**, **Open scan-axis cut** (for a map) |
+**Combine**, **Save**, **Remove from list** | **Rename...**, **Show
+information**, **Session log...**. An entry that does not fit the selection
+is greyed, with the reason in its tooltip.
 
-Several buttons were renamed (v1.0.0) so that the name says what happens. If
-you knew the old names:
+### Where things are now (v1.1.0)
 
-| Now | Was | What it does |
-|---|---|---|
-| **Combine datasets...** | Combine data... | stack cuts into a map, or join pieces of one measurement |
-| **Crop / bin / normalise...** | Data operations... | changes the grid or scale: crop (truncate), bin (compress), self-normalise |
-| **Smooth / derivative...** | Process... | filters that bring out bands: smooth, derivative, curvature, background, symmetrise |
-| Functions section **Transform** | Data operations | conversions and corrections in a viewer's Functions menu |
-| **Fermi edge fit...** | Fermi level... | fit E_F (and resolution) on a cut |
-| **Convert to momentum (k)...** | Cut / Map k conversion... | angle → k∥ |
-| **Align Fermi levels (kz map)...** | kz map processing... | fit and align E_F of every photon energy |
-| **Convert to momentum (kz, k∥)...** | kz -> momentum... | photon-energy scan → (k_z, k∥) |
-| **Straighten bands (FS correction)...** | FS correction... | flatten a curved Fermi edge or feature |
-| **Remove detector grid...** | De-grid... / De-grid map... | remove the MCP / mesh pattern |
-| **Multi-slice figure...** | Slice figure... | a page of slices through a map |
-| **Freeze slice in a new window** | Open slice in a new panel | a frozen copy of the slice on screen |
-| **Plot tools** (viewer top row) | — (new) | guide lines and labels drawn on the live plot |
-| **Figure composer...** (frozen slice), **Open in figure composer...** (list) | Plot tools, Plot as a figure... | make a figure for a paper |
-| **Figure tools...** (inside the figure composer) | Plot tools | size, fonts, ticks, colour bars, annotations of that figure |
+If you used an earlier version: the tools moved out of the right-click menu
+and the viewers' *Functions* menus into the tool panel, so each has one way
+in, always in sight.
 
-The right-click menu only offers what fits the selection. A greyed entry says
-why when you hover over it — for example, *Cut arithmetic* needs exactly two
-cuts, the *3D view* needs a map.
+| Now | Was |
+|---|---|
+| Tool panel → Basic → **Fermi edge fit...** (cuts and maps) | viewer *Functions → Fermi edge fit* |
+| Tool panel → Basic → **Remove detector grid...** | viewer *Functions → Remove detector grid* |
+| Tool panel → Basic → **k conversion (cut)** / **(map)**, **kz conversion** | viewer *Functions → Convert to momentum* |
+| Tool panel → Basic → **Align Fermi levels (kz)...** | viewer *Functions → Align Fermi levels (kz map)* |
+| Tool panel → Basic → **Brillouin zone...** | k-map viewer *Functions → Brillouin zone* |
+| Tool panel → Basic → **Core-level check...** | right-click → Core-level check |
+| Tool panel → Basic/Advanced → **Background subtraction**, **Smooth**, **Second derivative**, **Curvature**, **Symmetrise** (one window each) | **Smooth / derivative...** (one window with tabs) |
+| **Truncate...**, **Compress...**, **Self-normalise...** under the list | **Crop / bin / normalise...** |
+| Tool panel → Advanced → **MDC fit (k-cut only)**, **EDC fit** | viewer *Functions → MDC / EDC fit* |
+| Tool panel → Advanced → **Cut arithmetic (two cuts)** | right-click / viewer *Functions → Cut arithmetic* |
+| Tool panel → Advanced → **Slice series figure...** | map viewer *Functions → Multi-slice figure* |
+| Tool panel → Advanced → **3D slices**, **Notched cube**, **Volume projection** | right-click → 3D view (one window, three modes) |
+| Tool panel → Advanced → **Figure composer...** | right-click → Open in figure composer |
+| Right-click → **Open scan-axis cut**, viewer button **Scan-axis cut** | Open deflector cut, Deflector cut |
+| Memory box → **Free memory**, **Close all viewers**, **Open auto-save folder** | under the list |
 
 **Show information** also opens the full metadata of the dataset in a window
 of its own, with a filter box and **Export metadata (.csv)**:
@@ -150,7 +172,7 @@ session that has not been saved yet. Files on disk are never deleted.
 
 ### Combining datasets: stacking and joining
 
-**Combine datasets...** (under the list, or right-click → **Combine N
+**Combine...** (under the list, or right-click → **Combine N
 datasets...**) does two different things, and asks which:
 
 - **Stack** — *cuts only*. Each cut becomes one slice of a new map, along an
@@ -165,8 +187,8 @@ datasets...**) does two different things, and asks which:
 
 **Stacking cuts**
 
-1. Select the cuts in the list (Ctrl/Shift-click) and press **Combine
-   datasets...**. Stacking needs the same axes point for point (same number
+1. Select the cuts in the list (Ctrl/Shift-click) and press
+   **Combine...**. Stacking needs the same axes point for point (same number
    of points, same values, same units); if they differ, *Stack* is greyed
    with the first difference named, and *Join* is offered instead.
 2. It asks whether to combine them **in the list's order**. *Yes* keeps that
@@ -188,7 +210,7 @@ axis is marked as not an angle, so no k conversion is offered for it.
 **Joining pieces of a measurement**
 
 1. Select the pieces (all maps, or all kz maps, or all cuts …) and press
-   **Combine datasets...**. Maps and kz maps go straight to *Join*.
+   **Combine...**. Maps and kz maps go straight to *Join*.
 2. **Join along**: the axis the measurement was split along. It starts on
    the axis whose range differs between the pieces — a map's deflector
    axis, a kz map's photon energy, or the energy of cuts taken in two
@@ -303,16 +325,23 @@ another file side by side.
   **Plot tools**, and a **Figure composer...** button to make a figure of it
   ([§17](#17-figures-and-export)).
 
-The **Functions** menu is organised in sections:
+The **Functions** menu now holds only what works on the window itself —
+the tools that take a dataset are in the launcher's tool panel
+([§3](#3-the-main-window)):
 
-| Viewer | Analysis | Transform | Visualization |
-|---|---|---|---|
-| map / kz map / k-map | | Arbitrary cut, Convert to momentum (k), Align Fermi levels (kz map), Convert to momentum (kz, k∥), Remove detector grid | Brillouin zone (k-maps), Multi-slice figure |
-| cut | Fermi edge fit, MDC / EDC fit | Straighten bands (FS correction), Convert to momentum (k), Cut arithmetic, Remove detector grid | |
-| curve | Curve fit, Spin analysis | Crop, Bin, Normalise, Background, Shift axis, Add √N errors | Figure composer |
+| Viewer | Functions |
+|---|---|
+| map / kz map / k-map (contour) | Arbitrary cut; Slice: save / freeze the slice |
+| cut | Straighten bands (FS correction); Slice: save / freeze |
+| a map's slit cut | Straighten bands (FS correction) for the whole cube; Show the map |
+| curve | Curve fit, Spin analysis; Crop, Bin, Normalise, Background, Shift axis, Add √N errors |
 
-An entry that does not apply is not shown; one that applies but cannot run
-yet is greyed, with the reason in its tooltip.
+An entry that applies but cannot run yet is greyed, with the reason in its
+tooltip.
+
+**Brillouin zone tick box.** A k-map or converted kz map on which a zone has
+been plotted ([§8.2](#82-brillouin-zone)) keeps it: its viewer has a
+**Brillouin zone** tick box on the top row that shows or hides it.
 
 ### Plot tools: guide lines and labels on the plot
 
@@ -350,14 +379,17 @@ the **figure composer** and its **Figure tools** ([§17](#17-figures-and-export)
 
 A map opens on its **constant-energy contour**. The slider at the top picks
 the energy (**Pos** in eV, or **Ind** as an index; **±** integrates over a
-window, **mean** or **sum**). **Deflector cut** and **Slit cut** open the two
-orthogonal cuts, each in its own window.
+window, **mean** or **sum**). **Scan-axis cut** and **Slit cut** open the two
+orthogonal cuts, each in its own window. (The scan axis is whatever was
+scanned to make the map — usually the deflector angle, but a manipulator
+rotation or, for a kz map, the photon energy — so the button is named for
+that.)
 
 ![Constant-energy contour of a map](images/map_contour.png)
 
-| Slit cut (slit angle vs energy) | Deflector cut (deflector angle vs energy) |
+| Slit cut (slit angle vs energy) | Scan-axis cut (deflector angle vs energy) |
 |---|---|
-| ![Slit cut](images/map_slit_cut.png) | ![Deflector cut](images/map_deflector_cut.png) |
+| ![Slit cut](images/map_slit_cut.png) | ![Scan-axis cut](images/map_scan_axis_cut.png) |
 
 **One cursor for all three windows.** Switching the readout cursor on in any
 of them switches it on in the others, and moving it anywhere re-slices the
@@ -368,7 +400,7 @@ colour. Integration widths (the ± boxes) belong to each window and are never
 shared.
 
 From the list you can also open a map's cut straight away (right-click →
-**Open slit cut** / **Open deflector cut**); the contour then stays hidden
+**Open slit cut** / **Open scan-axis cut**); the contour then stays hidden
 until you ask for it (*Functions → Show the map*).
 
 ---
@@ -376,12 +408,15 @@ until you ask for it (*Functions → Show the map*).
 ## 7. Cuts: from raw spectrum to band parameters
 
 The usual order for a single cut is: **Fermi edge fit → offset the energy axis →
-convert to momentum → MDC/EDC fit**.
+convert to momentum → MDC/EDC fit**. Each step is a button of the tool panel:
+select the cut in the list and press it.
 
 ### 7.1 Fermi edge fit
 
-*Functions → Fermi edge fit...* fits a Fermi edge (Fermi–Dirac × linear DOS,
-convolved with a Gaussian resolution) to the EDC summed over a box.
+Tool panel → Basic → **Fermi edge fit...** fits a Fermi edge (Fermi–Dirac ×
+linear DOS, convolved with a Gaussian resolution) to the EDC summed over a
+box. It opens the cut's viewer together with the fit window; the two belong
+together, and closing either closes the other.
 
 ![Fermi level dialog](images/fermi_dialog.png)
 
@@ -399,26 +434,54 @@ convolved with a Gaussian resolution) to the EDC summed over a box.
 The *Advanced* corner divides the Fermi cut-off out (for gaps and reference
 samples) or fits E_F channel by channel.
 
+**On a map.** Select a map (angle map or k-map) and press the same button:
+the map's **slit cut** opens with the fit window, and the slit cut's slider
+picks which cut is fitted. After a fit, **Offset energy axis** asks whether
+to shift **the whole map by this cut's E_F** (*Yes*) or to fit **one E_F per
+cut** (*No*). With one per cut, the **Fitted cuts** list on the right fills
+as you go: move the slider, press **Fit**, repeat. A second fit at the same
+place replaces the first, and every E_F in the list can be edited by hand.
+Cuts between two fitted ones are shifted by a straight line between their
+neighbours (beyond the first and the last, by the nearest fit), shown in the
+plot under the list. **Offset energy axis by these fits** lists the
+corrected map.
+
+![Fermi fit on a map, one E_F per cut](images/fermi_map_cuts.png)
+
 ### 7.2 Converting a cut to momentum
 
-*Functions → Convert to momentum (k)...* converts the angle axis to k∥ (Å⁻¹). A cut
-is a line in the (kx, ky) plane that generally misses Γ, so the dialog asks
-where Γ is: type the angles, or **From a converted map...** to inherit them
-from a map already converted.
+Tool panel → Basic → **k conversion (cut)...** converts the angle axis to k∥
+(Å⁻¹). A **vertical line** is drawn on the cut: drag it to the slit angle of
+Γ. The cut is then taken to run through Γ — not exact if it misses Γ, but
+the only choice when only this cut was measured.
+
+![The Γ line on the cut](images/cut_k_line.png)
 
 ![Cut k conversion](images/cut_k_dialog.png)
 
-If the cut is already on E − E_F, the dialog fills in **Energy offset** with
-the E_F that was subtracted (the note under it says so): the conversion uses
-true kinetic energies, and the result stays on E − E_F.
+- **Advanced: Γ off this cut** is for a cut that does not run through Γ: type
+  the deflector and slit angles of Γ, or **From a converted map...** to
+  inherit them from a map of the same sample already converted.
+- If the cut is already on E − E_F, **Energy offset** is filled in with the
+  E_F that was subtracted (the note under it says so): the conversion uses
+  true kinetic energies, and the result stays on E − E_F.
+- **Remembered settings.** The dialog starts from the last conversion of a
+  cut of the same size (same number of points on each axis) — the usual case
+  for a series of cuts of one sample. The map and kz conversions do the same.
 
 ![The cut in momentum](images/cut_in_k.png)
 
-### 7.3 MDC / EDC fit
+### 7.3 MDC fit and EDC fit
 
-*Functions → MDC / EDC fit...* fits peaks line by line and reads the band
-off the fitted centres. It only accepts a cut whose axis is already in Å⁻¹ —
-a velocity in eV·deg would be meaningless.
+Two tools of the tool panel's Advanced tab fit peaks line by line:
+
+- **MDC fit (k-cut only)...** fits the momentum distribution curves and reads
+  the band off the fitted centres: Fermi velocity, effective mass,
+  self-energy. It only takes a cut whose axis is already in Å⁻¹ — a velocity
+  in eV·deg would be meaningless — and its button is greyed otherwise.
+- **EDC fit...** fits the energy distribution curves, on any cut, optionally
+  with the Fermi cut-off in the model. v_F and m\* from the fitted band need a
+  cut in momentum.
 
 ![MDC fit panel](images/mdc_fit_panel.png)
 
@@ -426,9 +489,9 @@ a velocity in eV·deg would be meaningless.
    a seed** and click the peak on the curve (right). Four or five seeds down a
    band are enough; **Line at** moves the line being looked at.
 2. **Try this line** shows the fit of the current line (dashed: the guess).
-3. **Fit settings** tab: MDC or EDC, peak shape (Lorentzian, Gaussian,
-   Voigt), background, step, then **Fit the series**. Fitted positions are
-   drawn on the image, sized by amplitude.
+3. **Fit settings** tab: peak shape (Lorentzian, Gaussian, Voigt),
+   background, step, then **Fit the series**. Fitted positions are drawn on
+   the image, sized by amplitude.
 4. **Dispersion...** fits the band: **v_F** (straight line), **m\*** (parabola)
    — and checks how far out the fit is stable. **Self-energy...** gives Re Σ
    and Im Σ.
@@ -440,8 +503,8 @@ the main list.
 
 ### 7.4 Core-level check
 
-A wide scan of the core levels is listed as a cut too. Right-click it in the
-main list → **Core-level check...** to find out what its peaks are.
+A wide scan of the core levels is listed as a cut too. Select it and press
+tool panel → Basic → **Core-level check...** to find out what its peaks are.
 
 1. Type the sample's elements — `NbSCl` or `Nb, S, Cl` — and press **Next**.
    *Match within* (0.5 eV) is how close a peak must be to a tabulated level
@@ -497,16 +560,19 @@ higher-order light move.
 
 ### 8.1 Converting a map to momentum
 
-*Functions → Convert to momentum (k)...* on the contour window. Drag the readout
-cursor to the point that should become **k = (0, 0)** — the dialog follows
-it — then **Convert**. The result is a new `k-map` row in the list.
+Select an angle map and press tool panel → Basic → **k conversion (map)...**.
+The map opens on a bare constant-energy contour — no cuts, no other
+functions, just the picture — next to the conversion window; the two close
+together. Drag the readout cursor to the point that should become
+**k = (0, 0)** — the dialog follows it — then **Convert**. The result is a
+new `k-map` row in the list.
 
-![Map k conversion](images/map_k_dialog.png)
+| The contour for picking Γ | The conversion |
+|---|---|
+| ![Map conversion contour](images/map_k_contour.png) | ![Map k conversion](images/map_k_dialog.png) |
 
 - **Γ deflector angle / Γ slit angle**: the angles of the point that becomes
-  k = (0, 0), filled in from the cursor. (These were called *Theta offset*
-  and *Phi offset*; they are the same two numbers the cut conversion asks
-  for.)
+  k = (0, 0), filled in from the cursor.
 - **Sample rotation** turns the map about the surface normal; **Set rotation
   from contour...** reads it off a direction you click on the contour (two
   points along a mirror line, say).
@@ -516,12 +582,16 @@ it — then **Convert**. The result is a new `k-map` row in the list.
 - **Energy offset** is added to the energy axis before converting, for an
   axis that is not a true kinetic energy (filled in automatically for a map on
   E − E_F).
+- The settings start from the last conversion of a map of the same size, so
+  a second map of a series needs no retyping.
 
 ![The converted k-map](images/k_map_contour.png)
 
 ### 8.2 Brillouin zone
 
-On a k-map: *Functions → Visualization → Brillouin zone...*.
+Select a k-map (or a converted kz map) and press tool panel → Basic →
+**Brillouin zone...**. Like the map conversion, it opens a contour of its
+own with the zone window, and the two close together.
 
 ![Brillouin-zone dialog](images/brillouin_dialog.png)
 
@@ -541,7 +611,20 @@ On a k-map: *Functions → Visualization → Brillouin zone...*.
 4. **Moiré** adds a second, twisted or mismatched layer and its moiré zone.
 5. **Plot**.
 
-![k-map with the zone overlaid](images/k_map_with_bz.png)
+The window is tall; it scrolls, and can be resized like every other window.
+
+**The zone stays with the dataset.** Once plotted, it is a property of the
+k-map: it is saved with it into a `.nxs` file, and its viewer shows it with
+the **Brillouin zone** tick box on the top row. **Clear overlay** removes it.
+
+![k-map with the zone shown by its tick box](images/k_map_with_bz.png)
+
+Its exports can draw it too: **Export → Image...** has **Include the
+Brillouin zone**, and **Axes only (.eps)...** has **Draw the Brillouin zone in
+the box**, so the zone comes out as vector lines over the image in
+Illustrator.
+
+![Export with the zone](images/export_dialog_bz.png)
 
 ---
 
@@ -578,16 +661,27 @@ map's slit cut the same shift is applied to the whole cube.
 
 ## 10. Processing: smoothing, derivatives, curvature
 
-Select one or more cuts (or maps) in the list and press **Smooth /
-derivative...**.
+Each filter has a window of its own, opened from the tool panel with one or
+more cuts (or maps) selected:
+
+| Tab | Button | What it does |
+|---|---|---|
+| Basic | **Background subtraction...** | removes the intensity that is not the bands: Shirley or Tougaard inelastic background, a floor common to every angle, a smooth polynomial — or divides out the Fermi cut-off |
+| Advanced | **Smooth...** | Gaussian, Savitzky–Golay or moving average, with optional spike removal |
+| Advanced | **Second derivative...** | −d²I/dE² or −d²I/dk² after a pre-smooth, to sharpen the bands |
+| Advanced | **Curvature...** | 1-D or 2-D curvature (Zhang et al.), which follows the band better than a second derivative |
+| Advanced | **Symmetrise...** | mirror a cut about a line; for a map, mirror or rotate its constant-energy planes |
+
 Every result is a new dataset carrying the steps that made it.
 
-![2-D processing](images/process_dialog.png)
+![The curvature window](images/process_dialog.png)
 
-- Tabs: **Smooth** (Gaussian, box, …; optional despiking), **Derivative**,
-  **Curvature** (1-D and 2-D), **Background**, **Symmetrise**.
 - **Source** and **Result** are shown side by side on the same scale, so you
   can see when a setting has eaten the band. They pan and zoom together.
+- **Smooth first.** The second-derivative and curvature windows open with a
+  tip: both amplify noise, so they usually work better on data smoothed
+  first — run **Smooth...**, select its result in the list, and open the
+  filter on that, or raise the pre-smooth widths in the window itself.
 - **Shape**: *Square pixels* (one data point is square — undistorted for an
   angle-vs-energy cut), *Equal axes* (one unit is the same length on both
   axes — right for angle-vs-angle or k-vs-k; chosen automatically when both
@@ -595,27 +689,28 @@ Every result is a new dataset carrying the steps that made it.
 - **Live preview** re-computes as you change a value; **Apply** lists the
   result.
 - Starting values: **Symmetrise** mirrors about a vertical line through
-  angle (or k) = 0, i.e. k → −k; the **Fermi cut-off** under *Background*
-  starts at the E_F the file records, or else at the steepest fall of the
-  angle-integrated EDC, with the file's temperature and resolution.
+  angle (or k) = 0, i.e. k → −k; the **Fermi cut-off** under *Background
+  subtraction* starts at the E_F the file records, or else at the steepest
+  fall of the angle-integrated EDC, with the file's temperature and
+  resolution.
 
-For a map the panel works plane by plane, and asks **which planes** first —
+For a map the window works plane by plane, and asks **which planes** first —
 constant-energy maps or dispersions — since the curvature of a contour and
 the curvature of a cut are different quantities. **Preview at** picks the
 plane shown; **Apply to the whole cube** runs it on every plane. The
 operations and widths are named after the chosen plane's own axes
-(*Second derivative along Kinetic energy*, *Normalise each line along
-Angle, slit*…), and the smoothing widths start at 1/100 of each axis.
+(*Second derivative along Kinetic energy*…), and the smoothing widths start
+at 1/100 of each axis.
 
-![3-D processing](images/volume_process_dialog.png)
+![Smoothing a map](images/volume_process_dialog.png)
 
-**Crop / bin / normalise...** (main window) changes the grid or the scale
-of one or several datasets at once — as long as they have the same kind and
-the same number of points on every axis. Tabs: **Crop (truncate)** to a
-range, **Normalise** each spectrum to itself, **Bin (compress)** points
-together.
+**Truncate...**, **Compress...** and **Self-normalise...** (under the list)
+change the grid or the scale of one or several datasets at once — as long as
+they have the same kind and the same number of points on every axis:
+**Truncate** crops to a range, **Compress** bins points together,
+**Self-normalise** divides each spectrum by its own total.
 
-**Normalise** divides each piece of the data by its own total (or peak):
+**Self-normalise** divides each piece of the data by its own total (or peak):
 
 - **Normalise** picks the piece in ARPES terms, and starts on the usual
   one: *each EDC* for a cut, *each cut (slit × energy at one scan step)*
@@ -629,31 +724,55 @@ together.
 - **Sum only over** restricts the sum to a window on one of the summed axes
   — the energy by default — for example the energies of a core level.
 
-![Crop / bin / normalise](images/data_operations.png)
+![Self-normalise](images/data_operations.png)
 
 ---
 
-## 11. Stack plots and the 3-D view
+## 11. Stack plots and the 3-D views
 
-**Stack plot** (right-click a cut): a waterfall of EDCs or MDCs, with the
-number of curves, binning, normalisation, offset, shear and colouring
-controls; **Send to figure composer** makes it a figure panel.
+**Stack plot (EDC / MDC)...** (tool panel → Advanced, with a cut selected): a
+waterfall of EDCs or MDCs, with the number of curves, binning,
+normalisation, offset, shear and colouring controls; **Send to figure
+composer** makes it a figure panel.
 
 ![Stack plot](images/stack_plot.png)
 
-**3D view** (right-click a map) first asks for the region and the sampling,
-since every frame resamples the cube — *Fast*, *Balanced* or *Fine* decide
-whether it keeps up with the mouse.
+Three tools of the Advanced tab show a map in 3-D, each in a window of its
+own — drag the picture to turn it:
 
-![3-D view: region and sampling](images/volume_range_dialog.png)
+- **3D slices...** — the three orthogonal planes through the cube, each
+  placed where you choose (tick box, slider or typed position per axis).
+- **Notched cube...** — the cube with one corner cut away: a constant-energy
+  map and two dispersions in one picture.
+- **Volume projection...** — the whole volume projected along the view:
+  maximum intensity, sum, alpha composite, or a shaded isosurface.
 
-Then drag the picture to turn it. **Slices** shows three orthogonal planes at
-the positions you set, **Notched cube** cuts a corner out of the cube, and
-**Projection** sums along an axis. Colormap, levels, gamma, azimuth,
-elevation and depth aspect are on the right; **Save the view...** exports
-the picture.
+| 3D slices | Notched cube |
+|---|---|
+| ![3D slices](images/volume_slices.png) | ![Notched cube](images/volume_view.png) |
 
-![3-D view](images/volume_view.png)
+- **Sampling.** Every frame resamples the cube, so each window opens at
+  *Balanced* sampling, which keeps up with the mouse. The current sampling is
+  written under **Save the view...**; **Change sampling...** picks the region
+  and *Fast*, *Balanced* or *Fine*, and redraws from the full cube.
+
+  ![Change sampling](images/volume_range_dialog.png)
+
+- **Colour.** *Apply to* sets the colours of **all slices** at once or of
+  one orientation (the energy plane in one colormap, the dispersions in
+  another): colormap (and *reversed*), levels (**Auto**, or **Each its own**
+  for one scale per slice), gamma, **Opacity** and **Fade low values**, which
+  makes the weak intensity see-through so the planes behind show.
+- **Axes.** **Draw the axes, with ticks and values**. *Placement* is
+  automatic — on the outer edges facing you, following the view as it turns —
+  or chosen: for each axis, the edge of the cube it runs along and whether it
+  counts **from min** or **from max**.
+- **Camera**: azimuth, elevation, depth aspect; **Look into it** faces a
+  chosen plane. **Outline the faces** and an **Orientation tripod** are
+  optional.
+- **Save the view...** exports the picture through the same export window as
+  any panel (PNG, TIFF, JPEG at a chosen size and dpi). **To figure
+  composer...** adds the view as a panel of a figure.
 
 ---
 
@@ -661,9 +780,9 @@ the picture.
 
 Two cuts combined into a third: linear dichroism (LH − LV), circular
 dichroism, dividing by a gold reference, or plain differences, ratios and
-sums. Select two cuts in the list → right-click → **Cut arithmetic on the
-two...** (the first selected is A), or in a cut's viewer *Functions → Cut
-arithmetic...* and then click the other cut in the list.
+sums. Select two cuts in the list and press tool panel → Advanced → **Cut
+arithmetic (two cuts)...** (the first selected is A; the window can swap
+them). The button is greyed until exactly two cuts are selected.
 
 ![Cut arithmetic](images/cut_arithmetic.png)
 
@@ -693,7 +812,9 @@ against angle at one energy.
 ### 13.1 Aligning the Fermi levels of a kz map
 
 Nothing in the files says where each spectrum's Fermi level really is.
-*Functions → Align Fermi levels (kz map)...* measures it from the spectra themselves.
+Tool panel → Basic → **Align Fermi levels (kz)...** measures it from the
+spectra themselves; the kz map's slit cut opens with it, and the two close
+together.
 
 1. The slit cut opens with a box on it. Drag the box over a Fermi edge — the
    angle range sets the channels summed, the energy range the fit window.
@@ -713,7 +834,8 @@ neighbours.
 
 ### 13.2 Converting a kz map to momentum
 
-*Functions → Convert to momentum (kz, k∥)...* converts the scan to (k_z, k∥).
+Tool panel → Basic → **kz conversion...** converts the scan to (k_z, k∥). It
+starts from the last conversion of a scan of the same size.
 
 ![Convert to momentum (kz, k∥)](images/kz_conversion_dialog.png)
 
@@ -740,8 +862,8 @@ first**: only data still on the detector's pixels can be de-gridded, so the
 button refuses anything already converted, corrected or smoothed, and says
 why.
 
-*Functions → Remove detector grid...* on a map (or its slit cut), or on a
-cut. For a map, no reference is needed — the grid stays on the same pixels in
+Select a map (or kz map) or a cut and press tool panel → Basic → **Remove
+detector grid...**. For a map, no reference is needed — the grid stays on the same pixels in
 every slice while the photoemission moves. **Find and remove the grid**:
 
 ![De-grid](images/degrid_dialog.png)
@@ -829,8 +951,10 @@ panel for the two integrations:
 
 ### 17.1 Figure composer
 
-Select cuts (or curves) in the list → right-click → **Open in figure
-composer...** (or, from a frozen slice, its **Figure composer...** button). The
+Select cuts (or curves) in the list → tool panel → Advanced → **Figure
+composer...**, one panel per selected dataset (or, from a frozen slice, its
+**Figure composer...** button; a stack plot or a 3-D view has its own **To
+figure composer** button). The
 composer lays panels out for a paper: one size per column, labels only on
 the outer edges, (a)/(b)/(c) letters, shared colour scales if you want them.
 
@@ -841,15 +965,18 @@ lines, arrows, text, insets, scale bars) — not to be confused with a viewer's
 **Plot tools**, which draw guides on the live plot; **Add panel...** adds another dataset;
 **PDF**, **PNG**, **SVG** export, **Copy** puts it on the clipboard.
 
-### 17.2 Multi-slice figure
+### 17.2 Slice series figure
 
-From a map: *Functions → Multi-slice figure...* lays out a series of slices through
-the cube — constant-energy contours, or cuts — evenly spaced or at chosen
-values, with integration, one shared colour scale and titles.
+Select a map → tool panel → Advanced → **Slice series figure...** lays out a
+page of flat 2-D slices through the cube as one figure for a paper —
+constant-energy contours at a series of energies, or cuts at a series of
+angles or momenta — evenly spaced or at chosen values, with integration,
+one shared colour scale, and labels on the outer edges only. (Not to be
+confused with **3D slices**, which draws three planes in a 3-D view.)
 
 | Settings | Result |
 |---|---|
-| ![Slice figure settings](images/slice_figure_dialog.png) | ![Slice figure](images/slice_figure.png) |
+| ![Slice series settings](images/slice_figure_dialog.png) | ![Slice series figure](images/slice_figure.png) |
 
 ### 17.3 Exporting a panel
 
@@ -857,8 +984,10 @@ Right-click any image → **Export** → **Data (.nxs)...**, **Image...** or
 **Axes only (.eps)...**. It always exports exactly what the panel shows
 (range and all): the data as a dataset this program reads back; an image
 with the colormap applied (PNG, TIFF or JPEG, at a chosen size and dpi, with
-or without the axes, and with the Plot tools guides if there are any); or the frame, ticks and labels as vector PostScript to
-place the image in, in Illustrator.
+or without the axes, with the Plot tools guides if there are any, and with
+the Brillouin zone if the dataset has one); or the frame, ticks and labels as
+vector PostScript to place the image in, in Illustrator (optionally with the
+Brillouin zone drawn in the box — see [§8.2](#82-brillouin-zone)).
 
 ![Export](images/export_dialog.png)
 
@@ -882,12 +1011,12 @@ your own; several selected rows go into one file.
   datasets back, and it is deleted after three days.
 - **Operations log.** `~/.arpes_viewer/sessions/operations.log`, one line per
   store / save / discard — how to find what was where.
-- **Memory box.** This program's memory, the system's, how many viewers and
+- **Memory box** (bottom of the tool panel). This program's memory, the system's, how many viewers and
   HDF5 files are open, and how much computed data is held. **Free memory**
   drops cached copies of computed data (they are re-read from their autosaved
   file when needed); **Close all viewers** closes every window and then frees
   memory.
-- **Open auto-save folder** (below the Memory box) shows the session folders
+- **Open auto-save folder** (in the Memory box) shows the session folders
   in the system's file browser, to delete old working copies by hand. The
   folder of the session now running (named in the status bar) is in use.
 - **Long operations** (reading a big map, converting, de-gridding, assembling
@@ -898,8 +1027,14 @@ your own; several selected rows go into one file.
 
 ## 19. Tips and troubleshooting
 
-- **"Not available here" in the Functions menu** — hover over the entry: the
-  tooltip says why (e.g. the MDC/EDC fit needs a cut already in Å⁻¹).
+- **A greyed tool button** — hover over it: the tooltip says why (e.g. the
+  MDC fit needs a cut already in Å⁻¹, cut arithmetic two cuts). Select the
+  right rows in the list and it lights up.
+- **A tool is not in a viewer's Functions menu** — it is in the tool panel
+  (see *Where things are now* in [§3](#3-the-main-window)); check both tabs.
+- **A window is taller than the screen** — it opens no taller than the
+  screen, and its contents scroll; the Apply / Close buttons stay at the
+  bottom. Every window can be resized.
 - **A k conversion is not offered** — the first axis of the map is not an
   angle (a photon energy, temperature…). Check *First axis of a map is* in
   the loader.

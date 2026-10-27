@@ -38,6 +38,9 @@ from PyQt5.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog,
                              QLineEdit, QListWidget, QPushButton, QSpinBox,
                              QVBoxLayout)
 
+from ui.common.screen import fits_screen
+
+
 __all__ = ["Guide", "PlotToolsDialog", "plot_tools_button", "plot_targets",
            "guides_of", "draw_guides", "KINDS", "PALETTE"]
 
@@ -286,6 +289,7 @@ def draw_guides(rgba, guides, *, x_range, y_range, invert_x=False,
 # --------------------------------------------------------------------------
 # The window
 # --------------------------------------------------------------------------
+@fits_screen
 class PlotToolsDialog(QDialog):
     """Add, edit and remove guides on one of a window's plots.
 

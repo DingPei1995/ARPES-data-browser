@@ -99,6 +99,10 @@ def _quiet_message_boxes():
 def main():
     os.makedirs(OUT, exist_ok=True)
     app = QApplication(sys.argv[:1])
+    # The virtual screen is 800 x 600; the windows are shown as they open
+    # on a real one.
+    from ui.common import screen
+    screen.LIMIT_TO_SCREEN = False
     _quiet_message_boxes()
     app.setFont(QFont("DejaVu Sans", 9))
     from ui.common import gcguard
@@ -142,7 +146,8 @@ def demo_EF():
 
 class Shots:
     ORDER = ["main_window", "loader", "information", "map_viewer", "cut_viewer",
-             "fermi", "cut_k", "mdc_fit", "map_k", "brillouin", "arbitrary_cut",
+             "fermi", "fermi_map", "cut_k", "mdc_fit", "map_k", "brillouin",
+             "arbitrary_cut",
              "fs_correction", "process", "stack", "volume", "cut_arithmetic",
              "kz_processing", "kz_conversion", "degrid", "curves", "spin",
              "figure", "export", "data_operations", "spatial", "slice_figure",
@@ -165,7 +170,11 @@ class Shots:
         self.av.add_files(self.paths, background=False)
         self._select("FS_map_hv60")
         self.av.update_memory_status()
-        shot(self.av.win, "main_window", (620, 820))
+        shot(self.av.win, "main_window", (860, 900))
+        self.av.ui.ToolTabs.setCurrentIndex(1)
+        pump()
+        shot(self.av.win, "main_window_advanced", (860, 900))
+        self.av.ui.ToolTabs.setCurrentIndex(0)
 
     def _open(self, text):
         self._select(text)
@@ -183,7 +192,7 @@ class Shots:
     def information(self):
         self._select("Gamma_cut_LH")
         window = self.av.show_information()
-        shot(self.av.win, "main_window_info", (620, 820))
+        shot(self.av.win, "main_window_info", (860, 900))
         shot(window, "information_window", (520, 520))
         window.close()
 
@@ -197,7 +206,7 @@ class Shots:
         slit = contour.open_cut("slit")
         shot(slit, "map_slit_cut", (820, 760))
         defl = contour.open_cut("deflector")
-        shot(defl, "map_deflector_cut", (820, 760))
+        shot(defl, "map_scan_axis_cut", (820, 760))
         self.contour = contour
 
     def _newest(self, kind=None):
@@ -229,8 +238,9 @@ class Shots:
         self.cut = cut
 
     def fermi(self):
-        cut = self.cut
-        dialog = cut.open_fermi_fit()
+        self._select("Gamma_cut_LH")
+        dialog = self.av.open_fermi_fit()          # the tool panel's route
+        cut = dialog.window_
         pump()
         dialog.box_button.setChecked(True)
         dialog.energy_from.setValue(demo_EF() - 0.30)
@@ -248,11 +258,36 @@ class Shots:
         dialog.close()
         self.ef_cut = self._open_listed("Gamma_cut_LH")
 
-    def cut_k(self):
-        window = self.ef_cut
-        dialog = window.open_cut_k_conversion()
+    def fermi_map(self):
+        """A map's Fermi edge fitted cut by cut along the deflector."""
+        self._select("FS_map_hv60")
+        dialog = self.av.open_fermi_fit()
+        cut = dialog.window_
         pump()
-        shot(dialog, "cut_k_dialog")
+        dialog.energy_from.setValue(demo_EF() - 0.25)
+        dialog.energy_to.setValue(demo_EF() + 0.12)
+        dialog.estimate()
+        dialog.run_fit()
+        dialog.offset_energy_axis(whole_map=False)
+        size = cut.control.slider.maximum()
+        for index in (size // 6, size - size // 6):
+            cut.control.slider.setValue(index)
+            pump()
+            dialog.estimate()
+            dialog.run_fit()
+        pump(5)
+        shot(dialog, "fermi_map_cuts", (1050, 900))
+        shot(cut, "fermi_map_slit_cut", (820, 700))
+        dialog.close()
+
+    def cut_k(self):
+        self._select("Gamma_cut_LH [E-Ef]")
+        dialog = self.av.open_k_conversion("cut")   # the tool panel's route
+        pump()
+        dialog.gamma_line.setValue(0.0)
+        pump()
+        shot(dialog.window_, "cut_k_line", (1000, 700))
+        shot(dialog, "cut_k_dialog", (520, 760))
         dialog.accept()
         pump()
         self.k_cut = self._open_listed("[k]") if any(
@@ -262,7 +297,8 @@ class Shots:
 
     def mdc_fit(self):
         from tools.spectra import peaks as PK
-        panel = self.k_cut.open_mdc_edc_fit()
+        self._select("Gamma_cut_LH [E-Ef] [k]")
+        panel = self.av.open_curve_fit("mdc")       # the tool panel's route
         pump()
         right = panel.bands[0] if panel.bands else panel.add_band()
         left = panel.add_band()
@@ -292,13 +328,15 @@ class Shots:
         return [lw.item(i).text() for i in range(lw.count())]
 
     def map_k(self):
-        contour = self.contour
-        contour.view.move_readout_to(0.0, 0.0)
+        self._select("FS_map_hv60")
         before = len(self._rows())
-        contour.open_k_conversion()
+        dialog = self.av.open_k_conversion("map")   # a contour of its own
+        contour = dialog.contour
+        contour.e_control.set_index(int(np.argmin(abs(contour.E - (demo_EF() - 0.05)))))
+        contour.view.move_readout_to(0.0, 0.0)
         pump()
-        dialog = contour._kconv_dialog
-        shot(dialog, "map_k_dialog")
+        shot(contour, "map_k_contour", (700, 780))
+        shot(dialog, "map_k_dialog", (480, 820))
         dialog.accept()
         wait_for(lambda: len(self._rows()) > before)
         self.k_map = self._open_listed("[k-map]")
@@ -307,13 +345,11 @@ class Shots:
         shot(self.k_map, "k_map_contour", (760, 820))
 
     def brillouin(self):
-        window = self.k_map
-        window.open_brillouin_zone()
-        pump()
-        dialog = window._bz_dialog if hasattr(window, "_bz_dialog") else None
-        if dialog is None:
-            dialog = [c for c in window.findChildren(QWidget)
-                      if type(c).__name__ == "BrillouinZoneDialog"][-1]
+        self._select("[k-map]")
+        dialog = self.av.open_brillouin_zone()      # a contour of its own
+        window = dialog.contour
+        window.e_control.set_index(len(window.E) - 22)
+        dialog.mode_3d.setChecked(True)
         dialog.spacegroup_box.setValue(191)          # P6/mmm, hexagonal
         dialog.a_box.setValue(3.3)
         dialog.c_box.setValue(6.0)
@@ -321,8 +357,22 @@ class Shots:
         pump()
         dialog.plot()
         pump()
-        shot(dialog, "brillouin_dialog")
-        shot(window, "k_map_with_bz", (760, 820))
+        shot(dialog, "brillouin_dialog", (430, 760))
+        dialog.close()
+        pump()
+        # Kept with the dataset: its viewer shows it with the tick box.
+        self.k_map.bz_check.setVisible(True)
+        self.k_map.close()
+        self.k_map = self._open_listed("[k-map]")
+        self.k_map.e_control.set_index(len(self.k_map.E) - 22)
+        self.k_map.bz_check.setChecked(True)
+        pump()
+        shot(self.k_map, "k_map_with_bz", (760, 820))
+        dialog = self.k_map.view._open_export_dialog(2)
+        pump()
+        shot(dialog, "export_dialog_bz")
+        dialog.close()
+        self.k_map.bz_check.setChecked(False)
 
     def arbitrary_cut(self):
         contour = self.k_map
@@ -354,9 +404,9 @@ class Shots:
 
     def process(self):
         self._select("Gamma_cut_LH")
-        dialog = self.av.open_processing()
+        dialog = self.av.open_processing("curvature")
         pump()
-        shot(dialog, "process_dialog", (1250, 820))
+        shot(dialog, "process_dialog", (1100, 900))
         self.process_dialog = dialog
 
     def stack(self):
@@ -371,13 +421,21 @@ class Shots:
         self._select("FS_map_hv60")
         window = self.av.open_volume_view("notch")
         pump(20)
-        shot(window, "volume_view", (1100, 820))
+        shot(window, "volume_view", (1150, 860))
         grab_modal("volume_range_dialog", then="reject")
         window.change_sampling()
+        window.close()
+        window = self.av.open_volume_view("slices")
+        window.style_target.setCurrentIndex(0)
+        window.opacity.setValue(75.0)
+        window.fade.setValue(25.0)
+        pump(20)
+        shot(window, "volume_slices", (1150, 860))
+        window.close()
         self._select("FS_map_hv60")
-        dialog = self.av.open_processing()
+        dialog = self.av.open_processing("smooth")
         pump()
-        shot(dialog, "volume_process_dialog", (1250, 860))
+        shot(dialog, "volume_process_dialog", (1100, 880))
 
     def cut_arithmetic(self):
         lw = self.av.ui.FilePathListWidget
@@ -401,7 +459,9 @@ class Shots:
         contour.e_control.set_index(len(contour.E) - 20)
         pump()
         shot(contour, "kz_map_contour", (760, 820))
-        dialog = contour.open_kz_processing()
+        self._select("hv_scan_30-90eV")
+        dialog = self.av.open_kz_alignment()        # the tool panel's route
+        contour = dialog.contour
         pump()
         before = len(self._rows())
         dialog.run()
@@ -415,8 +475,15 @@ class Shots:
         self.kz_aligned = self._open_listed("[kz map]")
 
     def kz_conversion(self):
-        window = self.kz_aligned
-        dialog = window.open_kz_conversion()
+        self.kz_aligned.close()
+        self._select("[kz map]")
+        lw = self.av.ui.FilePathListWidget
+        for i in reversed(range(lw.count())):        # the aligned one
+            if "[kz map]" in lw.item(i).text():
+                lw.clearSelection()
+                lw.item(i).setSelected(True)
+                break
+        dialog = self.av.open_kz_conversion()       # the tool panel's route
         pump(10)
         shot(dialog, "kz_conversion_dialog", (1250, 860))
         before = len(self._rows())
@@ -428,8 +495,8 @@ class Shots:
         shot(kz_k, "kz_map_in_k", (760, 820))
 
     def degrid(self):
-        contour = self._open("FS_map_mesh")
-        dialog = contour.open_degrid()
+        self._select("FS_map_mesh")
+        dialog = self.av.open_degrid()              # the tool panel's route
         pump()
         dialog.run(background=False)
         dialog.slice_box.setValue(48)
@@ -504,11 +571,10 @@ class Shots:
         shot(window, "spatial_scan", (1250, 760))
 
     def slice_figure(self):
-        contour = self.contour
+        self._select("FS_map_hv60")
         grab_modal("slice_figure_dialog", then="accept")
-        contour.open_slice_figure()
+        window = self.av.open_slice_series()       # the tool panel's route
         pump(10)
-        window = contour.figure_windows[-1]
         shot(window, "slice_figure", (1250, 760))
 
     def plot_tools(self):

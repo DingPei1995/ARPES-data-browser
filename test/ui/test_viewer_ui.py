@@ -74,7 +74,7 @@ def test_map_keeps_only_its_cut_buttons(app):
     assert _toolbar_buttons(window) == ["Scan-axis cut", "Slit cut", "Plot tools"]
     texts = _visible_texts(window)
     for expected in ("Arbitrary cut...",
-                     "Multi-slice figure...", "Save slice to the main list",
+                     "Save slice to the main list",
                      "Freeze slice in a new window"):
         assert expected in texts
     # the tool panel's, so not repeated here
@@ -118,7 +118,8 @@ def test_menu_sections_and_hidden_entries(app):
     for gone in ("Convert to momentum (kz, k\u2225)...",
                  "Align Fermi levels (kz map)...", "Convert to momentum (k)..."):
         assert gone not in shown
-    assert shown.index("Slice") > shown.index("Visualization")
+    assert shown.index("Slice") > shown.index("Transform")
+    assert "Visualization" not in shown      # its tools are the tool panel's
     k_map = W.ContourWindow(_map("k_map"), "k", "gray", False)
     # the tool panel's; the viewer only shows a zone saved before
     assert "Brillouin zone..." not in _visible_texts(k_map)

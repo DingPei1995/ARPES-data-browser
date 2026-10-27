@@ -29,7 +29,7 @@ import version
 class Ui_MainWindow:
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(800, 940)
+        MainWindow.resize(840, 940)
         MainWindow.setWindowTitle(version.title())
         # The panel's colours. The disabled rules are not optional: a colour
         # set for every widget is also the colour of a *disabled* widget and
@@ -54,11 +54,15 @@ class Ui_MainWindow:
             "\nQFrame#ToolPanel, QFrame#MainPanel { "
             "border: 1px solid rgb(200, 204, 222); border-radius: 6px; }"
             "\nQFrame#ToolPanel QGroupBox { font-weight: bold; }"
+            # The tool panel's text is larger than the rest of the window's:
+            # it is what is read most, at a glance, in a narrow column.
             "\nQLabel#ToolHeading { font-weight: normal; font-style: italic;"
-            " color: rgb(120, 130, 160); padding-top: 3px; }"
+            " font-size: 10pt; color: rgb(120, 130, 160); padding-top: 4px; }"
             "\nQFrame#ToolPanel QPushButton { text-align: left; "
-            "padding: 3px 8px; font-weight: normal; }"
-            "\nQLabel#ToolPanelTitle { font-weight: bold; }"
+            "padding: 4px 8px; font-weight: normal; font-size: 10.5pt; }"
+            "\nQTabWidget#ToolTabs QTabBar::tab { font-size: 10.5pt;"
+            " padding: 4px 10px; min-width: 70px; }"
+            "\nQLabel#ToolPanelTitle { font-weight: bold; font-size: 11pt; }"
         )
 
         self.centralwidget = QtWidgets.QWidget(MainWindow)
@@ -209,7 +213,7 @@ class Ui_MainWindow:
         """
         panel = QtWidgets.QFrame(parent)
         panel.setObjectName("ToolPanel")
-        panel.setFixedWidth(228)
+        panel.setFixedWidth(262)
         layout = QtWidgets.QVBoxLayout(panel)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
@@ -374,8 +378,10 @@ TOOLS = {
              "shift each one to put its own edge at zero, and crop to the "
              "energy range they all still cover. Before the kz conversion."),
     "slices3d": ("3D slices...",
-             "The three orthogonal planes through the cube, each placed "
-             "where you choose, each with its own colours."),
+             "The three orthogonal planes through the cube drawn in 3-D, "
+             "turned with the mouse, each placed where you choose and with "
+             "its own colours. For flat panels on a page, see Slice series "
+             "figure."),
     "notch3d": ("Notched cube...",
              "The cube with one corner cut away: a constant-energy map and "
              "two dispersions in one picture."),
@@ -397,6 +403,12 @@ TOOLS = {
              "inner potential against the lattice's own period. Flatten the "
              "Fermi edge first. Starts from the last conversion of a scan of "
              "the same size."),
+    "slicefig": ("Slice series figure...",
+                 "A page of 2-D slices through the map as one figure for a "
+                 "paper: constant-energy contours at a series of energies, or "
+                 "cuts at a series of angles or momenta, with a shared colour "
+                 "scale and labels on the outer edges only. Flat panels, not "
+                 "a 3-D view (that is 3D slices)."),
     "bz": ("Brillouin zone...",
            "Overlay a Brillouin zone (or a moire zone) on a map in momentum "
            "-- a k-map or a converted kz map. Once plotted, the zone stays "
@@ -420,7 +432,8 @@ TOOL_SECTIONS = (
         ("2D && 3D \u2014 cuts, maps", ("smooth", "derivative", "curvature",
                                        "symmetry")),
         ("2D only \u2014 cuts", ("stack", "mdcfit", "edcfit", "arithmetic")),
-        ("3D only \u2014 maps", ("slices3d", "notch3d", "projection3d")),
+        ("3D only \u2014 maps", ("slicefig", "slices3d", "notch3d",
+                                  "projection3d")),
     )),
 )
 

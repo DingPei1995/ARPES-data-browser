@@ -1976,7 +1976,7 @@ class SliceSeriesDialog(QDialog):
 
     def __init__(self, parent, axes, labels, kind="map"):
         super().__init__(parent)
-        self.setWindowTitle("Multi-slice figure")
+        self.setWindowTitle("Slice series figure")
         self.axes = axes            # (x, y, z) arrays
         self.labels = labels        # (x, y, z) labels
         layout = QVBoxLayout(self)

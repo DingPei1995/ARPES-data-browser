@@ -35,6 +35,7 @@ from PyQt5.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox,
                              QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
                              QWidget)
 
+from ui.common.screen import fits_screen
 from tools.momentum import kzmap
 from tools.processing.process import Step, record_step
 from ui.common import jobs as nxs_jobs
@@ -43,6 +44,7 @@ from ui.viewers.widgets import add_button, ButtonRow, MemoryData
 __all__ = ["KzMapProcessDialog"]
 
 
+@fits_screen
 class KzMapProcessDialog(QDialog):
     """Fit the Fermi edge of every spectrum of a kz map and align them.
 

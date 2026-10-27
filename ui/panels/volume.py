@@ -36,6 +36,7 @@ from PyQt5.QtWidgets import (QSizePolicy, QWidget, QMainWindow, QVBoxLayout, QHB
                              QGroupBox, QMessageBox, QProgressDialog, QSlider,
                              QFileDialog, QScrollArea, QInputDialog)
 
+from ui.common.screen import fits_screen
 from tools.output import colormaps
 import tools.processing.process as P
 import tools.processing.volume as V
@@ -1490,6 +1491,7 @@ class VolumeWindow(QMainWindow):
 # ==========================================================================
 # 3-D processing
 # ==========================================================================
+@fits_screen
 class VolumeProcessDialog(QDialog):
     """The same operations as the 2-D panel, over a whole cube.
 

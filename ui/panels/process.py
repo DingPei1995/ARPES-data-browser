@@ -32,6 +32,8 @@ from PyQt5.QtWidgets import (QSizePolicy, QWidget, QMainWindow, QVBoxLayout, QHB
                              QDialogButtonBox, QApplication, QTabWidget,
                              QGroupBox, QMessageBox, QProgressDialog, QStyle)
 
+from ui.common.screen import fits_screen
+
 import tools.processing.process as P
 import tools.processing.volume as V
 from ui.viewers.widgets import (add_button, ButtonRow, MemoryData, apply_colormap,
@@ -483,6 +485,7 @@ def smooth_first_hint(what: str, presmooth: bool = True) -> QLabel:
     return label
 
 
+@fits_screen
 class ProcessDialog(QDialog):
     """Smooth, differentiate, symmetrise, subtract, normalise, repair and
     fit a 2-D dataset.

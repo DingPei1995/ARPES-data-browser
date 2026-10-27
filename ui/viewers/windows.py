@@ -32,6 +32,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPainterPath
+from ui.common.screen import fits_screen
 from ui.viewers.functions_menu import FunctionsMenuMixin
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                               QLabel, QPushButton, QFileDialog, QMessageBox,
@@ -1352,6 +1353,7 @@ class CutWindow(ViewerWindow):
 # --------------------------------------------------------------------------
 # Deflector map: contour first, cuts on demand
 # --------------------------------------------------------------------------
+@fits_screen
 class KConversionDialog(QDialog):
     """Settings for converting a Map from angle space to momentum space.
 
@@ -2160,6 +2162,7 @@ class CutPlanePreviewDialog(QDialog):
         super().closeEvent(event)
 
 
+@fits_screen
 class BrillouinZoneDialog(QDialog):
     """Overlay a Brillouin zone -- one crystal, or two twisted/mismatched
     layers' moire zone -- on a k-space constant-energy contour.
@@ -3547,14 +3550,9 @@ class ContourWindow(ViewerWindow):
             "Cut along a path of up to six points picked on this contour, "
             "instead of along one of the two axes.")
         # The k and kz conversions, aligning a kz map's Fermi levels,
-        # de-gridding and overlaying a Brillouin zone are the launcher tool
-        # panel's; a zone overlaid before is shown with the tick box above.
-        self.slices_action = self.add_function(
-            "Multi-slice figure...", self.open_slice_figure,
-            "A page of slices through this cube as one figure for a paper -- "
-            "a row of constant-energy contours, or a row of cuts -- with a "
-            "shared colour scale and labels only on the outer edges.",
-            section="Visualization")
+        # de-gridding, overlaying a Brillouin zone and the slice series
+        # figure are the launcher tool panel's; a zone overlaid before is
+        # shown with the tick box above.
         self.build_toolbar((self.defl_cut_button, self.slit_cut_button,
                             self.bz_check))
         self.figure_windows = []
@@ -3788,8 +3786,8 @@ class ContourWindow(ViewerWindow):
         if not panels:
             return None
 
-        window = FigureWindow(panels, f"Figure — {self.filename}", parent=None,
-                              dataset_source=self._figure_source())
+        window = FigureWindow(panels, f"Slice series — {self.filename}",
+                              parent=None, dataset_source=self._figure_source())
         window.figure.fit_grid(settings["cols"])
         window.figure.letter_panels()
         window.figure.style.shared_levels = settings["shared"]
@@ -5406,6 +5404,7 @@ class CutKConversionDialog(QDialog):
         super().closeEvent(event)
 
 
+@fits_screen
 class FermiFitDialog(_PickerDialog):
     """Fit the Fermi edge of the cut on screen.
 

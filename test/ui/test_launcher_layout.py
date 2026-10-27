@@ -458,3 +458,61 @@ def test_a_brillouin_zone_becomes_part_of_the_dataset(launcher, tmp_path):
     # and it is written to the file the row is saved to
     item, problem = lv._dataset_for_saving(key)
     assert problem is None and item["info"]["bz.overlay"]
+
+
+def test_a_tall_dialog_scrolls_and_keeps_its_buttons(app):
+    from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QScrollArea
+    from ui.common.screen import fit_to_screen
+    from ui.viewers.widgets import ButtonRow, add_button
+    dialog = QDialog()
+    layout = QVBoxLayout(dialog)
+    for i in range(80):
+        layout.addWidget(QLabel(f"row {i}"))
+    buttons = ButtonRow()
+    close = add_button(buttons, "Close", QDialogButtonBox.RejectRole)
+    layout.addWidget(buttons)
+    tall = dialog.minimumSizeHint().height()
+    fit_to_screen(dialog)
+    area = dialog.findChild(QScrollArea)
+    assert area is not None and not area.widget().isAncestorOf(close)
+    assert dialog.isAncestorOf(close)                     # kept below it
+    assert dialog.minimumSizeHint().height() < tall / 3   # can be made short
+    screen = QApplication.primaryScreen().availableGeometry()
+    assert dialog.height() <= screen.height()
+
+
+def test_the_tall_tool_windows_fit_the_screen(app):
+    """The windows found taller than a laptop screen open no taller than
+    the screen, and can be made shorter still."""
+    from PyQt5.QtWidgets import QScrollArea
+    import tools.spectra.fermi as F
+    energy = np.linspace(55.0, 56.0, 120)
+    cut = MemoryData("cut", (SLIT, energy),
+                     100 * F.fermi_function(energy, 55.6, 20.0)[None, :]
+                     * np.ones((SLIT.size, 1)) + 1,
+                     {"x": "Angle (deg)", "y": "Kinetic energy (eV)"},
+                     source_label="c")
+    window = W.CutWindow(cut, "c", "gray", False)
+    dialog = window.open_fermi_fit()
+    screen = QApplication.primaryScreen().availableGeometry()
+    assert dialog.findChild(QScrollArea) is not None
+    assert dialog.height() <= screen.height()
+    assert dialog.minimumSizeHint().height() < 300
+    dialog.close()
+    window.close()
+
+
+def test_the_slice_series_figure_is_a_tool(launcher, monkeypatch):
+    from PyQt5.QtWidgets import QDialog
+    from ui.panels import figure
+    lv = launcher
+    _select(lv, "m")
+    assert lv.ui.ToolButtons["slicefig"].text() == "Slice series figure..."
+    assert lv.ui.ToolSections["Advanced"].isAncestorOf(lv.ui.ToolButtons["slicefig"])
+    monkeypatch.setattr(figure.SliceSeriesDialog, "exec_", lambda self: QDialog.Accepted)
+    window = lv.open_slice_series()
+    assert window is not None and window.windowTitle().startswith("Slice series")
+    assert len(window.figure.panels) >= 2
+    assert not any(isinstance(w, W.ContourWindow) and w.isVisible()
+                   for w in lv.viewer_windows)          # no contour left behind
+    window.close()

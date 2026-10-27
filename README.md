@@ -470,27 +470,31 @@ is listed as an MDC even if it was the "EDC" of a constant-energy contour.
 
 Every viewer has **one row** along its top: the colormap (and Flip) and the
 view controls (axis ranges, Auto, Inv, Reset, Grid) side by side, a
-**Functions** menu, and **Plot tools**. A map's window also keeps its **Deflector cut** and
-**Slit cut** buttons there, since the cuts are how a map is navigated.
+**Functions** menu, and **Plot tools**. A map's window also keeps its **Scan-axis cut** and
+**Slit cut** buttons there, since the cuts are how a map is navigated, and,
+for a dataset with a Brillouin zone, its **Brillouin zone** tick box.
 
-Everything else a viewer can do is in **Functions**, in sections:
+Since 1.1.0 the tools that take a dataset -- Fermi edge fit, the k and kz
+conversions, Align Fermi levels (kz), Remove detector grid, Brillouin zone,
+the filters, MDC / EDC fit, cut arithmetic, Slice series figure, the 3-D
+views, the figure composer -- are buttons of the launcher's tool panel
+(Basic and Advanced tabs), not Functions entries. What is left in
+**Functions** works on the window itself:
 
-| Viewer | Analysis | Transform | Visualization | Slice |
-|---|---|---|---|---|
-| map / kz map / k-map | | Arbitrary cut, Convert to momentum (k) (angle maps), Align Fermi levels (kz map) and Convert to momentum (kz, k∥) (kz maps), Remove detector grid (maps as measured) | Brillouin zone (k-maps), Multi-slice figure | Save slice to the main list, Freeze slice in a new window |
-| cut | Fermi edge fit, MDC / EDC fit | Straighten bands (FS correction), Convert to momentum (k), Cut arithmetic, Remove detector grid | | same |
-| slit cut of a map | | Straighten bands (FS correction), Remove detector grid | | same |
-| curve (EDC, MDC, spin EDC) | Curve fit, Spin analysis (spin EDCs) | Crop, Bin, Normalise, Subtract a background, Shift the axis, Add counting errors (√N) | Figure composer | |
+| Viewer | Functions |
+|---|---|
+| map / kz map / k-map | Arbitrary cut; Slice: Save slice to the main list, Freeze slice in a new window |
+| cut | Straighten bands (FS correction); Slice: same |
+| slit cut of a map | Straighten bands (FS correction) of the whole cube; Show the map |
+| curve (EDC, MDC, spin EDC) | Curve fit, Spin analysis (spin EDCs); Crop, Bin, Normalise, Subtract a background, Shift the axis, Add counting errors (√N) |
 
-The section that was called *Data operations* is **Transform**, and several
-entries were renamed to say what they do -- *Fermi level* → **Fermi edge
-fit**, *Cut / Map k conversion* → **Convert to momentum (k)**, *kz map
-processing* → **Align Fermi levels (kz map)**, *kz -> momentum* → **Convert
-to momentum (kz, k∥)**, *FS correction* → **Straighten bands (FS
-correction)**, *De-grid* → **Remove detector grid**, *Slice figure* →
-**Multi-slice figure**, *Open slice in a new panel* → **Freeze slice in a
-new window**. The sections below keep the old names as headings where the
-history is easier to follow with them.
+Several entries were renamed over time to say what they do -- *Fermi level*
+→ **Fermi edge fit**, *FS correction* → **Straighten bands (FS
+correction)**, *De-grid* → **Remove detector grid**, *Slice figure* /
+*Multi-slice figure* → **Slice series figure**, *Open slice in a new panel* →
+**Freeze slice in a new window**, *Deflector cut* → **Scan-axis cut**. The
+sections below keep the old names as headings where the history is easier
+to follow with them.
 
 **Plot tools** (every viewer and every frozen slice, on the top row) draws
 on the live plot: vertical, horizontal or angled guide lines and text
@@ -981,8 +985,8 @@ the scale applied to B and the settings in its processing history.
 The **figure composer** lays panels out for a paper: shared colour scales,
 labels only on the outer edges, and a slice-series page (a row of
 constant-energy contours, or of cuts) from one cube. It is reached from the
-list (right-click → **Open in figure composer...**), from a frozen slice's
-**Figure composer...** button, or from a map's **Multi-slice figure...**;
+list (tool panel → Advanced → **Figure composer...**), from a frozen slice's
+**Figure composer...** button, or from a map's **Slice series figure...**;
 its **Figure tools...** set sizes, fonts, ticks, colour bars and
 annotations.
 

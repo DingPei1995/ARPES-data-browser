@@ -35,6 +35,7 @@ from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QPushButton, QSpinBox, QVBoxLayout, QWidget)
 from scipy.ndimage import gaussian_filter
 
+from ui.common.screen import fits_screen
 from tools.processing import degrid as DG
 from tools.processing import process as P
 from ui.viewers.widgets import (add_button, ButtonRow, MemoryData, apply_colormap,
@@ -165,6 +166,7 @@ def open_degrid(parent, data, name, *, entries=None, loader=None,
                         existing_names=existing_names)
 
 
+@fits_screen
 class DegridDialog(QDialog):
     """``window`` is the viewer it came from; ``data`` a cut or a map."""
 

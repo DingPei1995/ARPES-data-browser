@@ -41,6 +41,8 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QAbstractItemView, QSizePolicy, QDialog,
                              QDialogButtonBox)
 
+from ui.common.screen import fits_screen
+
 import tools.spectra.peaks as PK
 import tools.spectra.dispersion as DISP
 from ui.viewers.widgets import (MemoryData, apply_colormap, strip_stock_menu,
@@ -124,6 +126,7 @@ def fermi_defaults(data):
 # ==========================================================================
 # The panel
 # ==========================================================================
+@fits_screen
 class FitPanel(QMainWindow):
     """Seed the bands on the picture, fit every line, read off the band."""
 

@@ -35,6 +35,9 @@ from PyQt5.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                              QLineEdit, QListWidget, QListWidgetItem,
                              QPushButton, QVBoxLayout, QWidget)
 
+from ui.common.screen import fits_screen
+
+
 from loader import registry
 from loader.registry import AXIS_ROLES, LoadOptions
 
@@ -56,6 +59,7 @@ PERMUTATIONS_2D = [
 ]
 
 
+@fits_screen
 class LoaderDialog(QDialog):
     """Pick files, pick a loader, set the axis options, add them to the list.
 
