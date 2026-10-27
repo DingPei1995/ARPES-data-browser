@@ -135,7 +135,6 @@ def test_kz_conversion_window_draws_the_cut_for_any_normal(app):
 def test_brillouin_zone_dialog_is_offered_and_draws_on_a_kz_map(app):
     from ui.viewers import windows as W
     contour = W.ContourWindow(_kz_map("kz_map_k"), "kz", "gray", False)
-    assert contour.bz_action.isVisible()
     info = contour.data.scan.info
     info.update({"bz.space_group": 225, "bz.a": np.pi, "bz.h": 1,
                  "bz.k": 1, "bz.l": 1})

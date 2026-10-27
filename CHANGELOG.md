@@ -16,14 +16,32 @@ A large rework of where things are: every tool is a button in sight, one
 window per tool. (The version number stays 1.1.0; later changes are added
 here.)
 
-- **The tool panel has two sections, Basic and Advanced**, each grouped by
-  the dimension of data as before. *Basic* holds the steps nearly every
-  dataset goes through: Fermi edge fit, Remove detector grid, Background
-  subtraction, the three k conversions, Core-level check, Align Fermi levels
-  (kz). *Advanced* holds the analysis after them: the figure composer, the
-  filters, the stack plot, the MDC and EDC fits, cut arithmetic, the 3-D
-  views. The list scrolls when the window is too short for all of it; the
-  memory box stays at the bottom.
+- **The tool panel has two tabs, Basic and Advanced**, and opens on
+  Basic; switching to Advanced shows only the advanced tools. Each tab is
+  grouped by the dimension of data as before. *Basic* holds the steps
+  nearly every dataset goes through: Fermi edge fit, Remove detector grid,
+  Background subtraction, the three k conversions, Core-level check, Align
+  Fermi levels (kz), Brillouin zone. *Advanced* holds the analysis after
+  them: the figure composer, the filters, the stack plot, the MDC and EDC
+  fits, cut arithmetic, the 3-D views. A tab scrolls when the window is too
+  short for it; the memory box stays at the bottom.
+- **Brillouin zone is a Basic tool**, for a map in momentum (a k-map or a
+  converted kz map), instead of an entry of the contour's Functions menu.
+  It opens like the k conversion: the contour on its own, showing only its
+  picture, tied to the dialog.
+  - **A plotted zone becomes a property of the dataset**: the zone as drawn
+    (every layer's polygons and the labelled points, as JSON in
+    `scan.info["bz.overlay"]`) and its settings (`bz.*`) are kept with the
+    row in the launcher (`_set_row_properties`), put back on the dataset
+    every time it is loaded, and written into the file it is saved to.
+    *Clear overlay* forgets it again.
+  - A map's viewer then has a **Brillouin zone** tick box beside its cut
+    buttons, shown only when the dataset has a zone, to draw or hide it.
+  - **Export draws it too**: the Export dialog's Image tab has *Include the
+    Brillouin zone*, and its Axes (.eps) tab *Draw the Brillouin zone in the
+    box* -- the axes and the zone, with its labelled points, as vectors in
+    one file (`export.axes_eps(paths=, points=)`). Both appear only when a
+    zone is drawn on the panel.
 - **The k conversions are tool-panel buttons** -- *k conversion (map)*,
   *k conversion (cut)*, *kz conversion* -- and no longer entries of the
   viewers' Functions menus.

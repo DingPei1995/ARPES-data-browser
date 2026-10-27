@@ -54,7 +54,6 @@ class Ui_MainWindow:
             "\nQFrame#ToolPanel, QFrame#MainPanel { "
             "border: 1px solid rgb(200, 204, 222); border-radius: 6px; }"
             "\nQFrame#ToolPanel QGroupBox { font-weight: bold; }"
-            "\nQGroupBox#ToolSection { font-size: 11pt; }"
             "\nQLabel#ToolHeading { font-weight: normal; font-style: italic;"
             " color: rgb(120, 130, 160); padding-top: 3px; }"
             "\nQFrame#ToolPanel QPushButton { text-align: left; "
@@ -202,8 +201,9 @@ class Ui_MainWindow:
 
         One button per tool, so every one of them is in sight -- they used
         to be behind a right-click or on a tab of a window the user had to
-        know to open. In two sections, Basic and Advanced (TOOL_SECTIONS),
-        each grouped by the dimension of data a tool takes, and each button
+        know to open. On two tabs, Basic (shown first) and Advanced
+        (TOOL_SECTIONS), each grouped by the dimension of data a tool
+        takes, and each button
         greyed out until the list's selection is something it can take; its
         tooltip then says why (ARPES_viewer.update_tool_buttons()).
         """
@@ -219,43 +219,42 @@ class Ui_MainWindow:
         title.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(title)
 
-        # Basic, then Advanced; in each, a small heading per dimension of
-        # data and the buttons under it. In a scroll area, so a short screen
-        # scrolls the tools rather than squeezing them -- the memory box
-        # below stays put.
-        holder = QtWidgets.QWidget()
-        holder.setObjectName("ToolHolder")
-        tools_layout = QtWidgets.QVBoxLayout(holder)
-        tools_layout.setContentsMargins(0, 0, 0, 0)
-        tools_layout.setSpacing(4)
+        # Two tabs, Basic and Advanced, with Basic up front: the steps nearly
+        # every dataset goes through, without the analysis tools crowding
+        # them. In each, a small heading per dimension of data and the
+        # buttons under it, in a scroll area so a short screen scrolls the
+        # tools rather than squeezing them -- the memory box below stays put.
+        self.ToolTabs = QtWidgets.QTabWidget(panel)
+        self.ToolTabs.setObjectName("ToolTabs")
         self.ToolButtons = {}
         self.ToolSections = {}
         for section, groups in TOOL_SECTIONS:
-            box = QtWidgets.QGroupBox(section, holder)
-            box.setObjectName("ToolSection")
-            column = QtWidgets.QVBoxLayout(box)
+            page = QtWidgets.QWidget()
+            page.setObjectName("ToolSection")
+            column = QtWidgets.QVBoxLayout(page)
             column.setContentsMargins(4, 4, 4, 4)
             column.setSpacing(2)
             for heading, names in groups:
-                label = QtWidgets.QLabel(heading.replace("&&", "&"), box)
+                label = QtWidgets.QLabel(heading.replace("&&", "&"), page)
                 label.setObjectName("ToolHeading")
                 column.addWidget(label)
                 for name in names:
                     text, tooltip = TOOLS[name]
-                    button = QtWidgets.QPushButton(text, box)
+                    button = QtWidgets.QPushButton(text, page)
                     button.setToolTip(tooltip)
                     button.setProperty("description", tooltip)
                     column.addWidget(button)
                     self.ToolButtons[name] = button
-            tools_layout.addWidget(box)
-            self.ToolSections[section] = box
-        tools_layout.addStretch(1)
-        scroller = QtWidgets.QScrollArea(panel)
-        scroller.setWidgetResizable(True)
-        scroller.setFrameShape(QtWidgets.QFrame.NoFrame)
-        scroller.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        scroller.setWidget(holder)
-        layout.addWidget(scroller, stretch=1)
+            column.addStretch(1)
+            scroller = QtWidgets.QScrollArea()
+            scroller.setWidgetResizable(True)
+            scroller.setFrameShape(QtWidgets.QFrame.NoFrame)
+            scroller.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            scroller.setWidget(page)
+            self.ToolTabs.addTab(scroller, section)
+            self.ToolSections[section] = page
+        self.ToolTabs.setCurrentIndex(0)
+        layout.addWidget(self.ToolTabs, stretch=1)
 
         # -- memory: how much this program is holding, and a way to give
         # some of it back. Several spatial scans open at once is where it
@@ -398,9 +397,14 @@ TOOLS = {
              "inner potential against the lattice's own period. Flatten the "
              "Fermi edge first. Starts from the last conversion of a scan of "
              "the same size."),
+    "bz": ("Brillouin zone...",
+           "Overlay a Brillouin zone (or a moire zone) on a map in momentum "
+           "-- a k-map or a converted kz map. Once plotted, the zone stays "
+           "with the dataset: its viewer shows it with the Brillouin zone "
+           "tick box, and its exports can draw it."),
 }
 
-#: The tool panel's layout: two sections -- Basic, the steps nearly every
+#: The tool panel's layout: two tabs -- Basic, the steps nearly every
 #: dataset goes through (E_F, the detector grid, the background, the k
 #: conversions, the core levels), and Advanced, the analysis that follows --
 #: each grouped by the dimension of data a tool takes: 1D curves (EDC, MDC),
@@ -409,7 +413,7 @@ TOOL_SECTIONS = (
     ("Basic", (
         ("2D && 3D \u2014 cuts, maps", ("fermi", "degrid")),
         ("2D only \u2014 cuts", ("background", "kcut", "corelevel")),
-        ("3D only \u2014 maps", ("kmap", "kzalign", "kzconv")),
+        ("3D only \u2014 maps", ("kmap", "kzalign", "kzconv", "bz")),
     )),
     ("Advanced", (
         ("1D && 2D \u2014 curves, cuts", ("figure",)),

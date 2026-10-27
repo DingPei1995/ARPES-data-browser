@@ -600,6 +600,7 @@ def run_list_action(name):
         "kmap": lambda: open_k_conversion("map"),
         "kcut": lambda: open_k_conversion("cut"),
         "kzconv": open_kz_conversion,
+        "bz": open_brillouin_zone,
         "kzalign": open_kz_alignment,
         "save": save_selected,
         "log": show_operations_log,
@@ -791,6 +792,9 @@ def _dataset_for_saving(key):
         # fifth hand-written copy of it, and the one that quietly wrote a
         # 4-D spatial scan with only three of its four axes.
         item = nxs_session.scan_to_dict(data.kind, data.scan, record["name"])
+        # The row's own properties (a Brillouin zone) go into the file too.
+        item["info"] = {**dict(item.get("info") or {}),
+                        **dict(record.get("properties") or {})}
         # Saving means writing every point, lazy array or not.
         item["value"] = np.asarray(item["value"])
         return item, None
@@ -1227,6 +1231,24 @@ def open_k_conversion(what: str = "map"):
     return window.open_k_conversion(bound=True)
 
 
+def open_brillouin_zone():
+    """Overlay a Brillouin zone on the selected map in momentum (a k-map,
+    or a converted kz map). Opened like the k conversion: the contour on
+    its own, showing only its picture, tied to the dialog. Once plotted,
+    the zone belongs to the dataset -- its viewers can show it again with
+    their "Brillouin zone" tick box, and its exports can draw it."""
+    key = selected_key()
+    if key is None:
+        return None
+    window = _window_for_tool(key)
+    if window is None:
+        return None
+    if not isinstance(window, viewer_windows_module.ContourWindow):
+        window.close()
+        return None
+    return window.open_brillouin_zone(bound=True)
+
+
 def open_kz_conversion():
     """Convert the selected photon-energy scan to (k_z, k_par). Its dialog
     has its own preview, so the map is not put on screen for it; the
@@ -1294,6 +1316,11 @@ def _adopt_viewer(window, key=None):
     # file is re-read on every load, so the same row hands back a different
     # object each time.
     window._list_key = key
+    # What a viewer learns about its dataset that should stay with the row
+    # (a Brillouin zone overlaid on it): kept on the record and put back on
+    # the dataset every time it is loaded.
+    window._set_row_properties = (
+        lambda properties, key=key: _set_row_properties(key, properties))
     if hasattr(window, "kMapCreated"):
         window.kMapCreated.connect(
             lambda data: add_memory_dataset(data, getattr(data, "source_label", "k map")))
@@ -1310,8 +1337,34 @@ def listed_datasets():
             for key in loaded_items]
 
 
+def _set_row_properties(key, properties):
+    """Keep ``properties`` (``scan.info`` keys; None removes one) with a
+    row, so they are on its dataset however often it is re-read, and in
+    the file it is saved to."""
+    record = loaded_items.get(key)
+    if record is None:
+        return
+    kept = record.setdefault("properties", {})
+    for name, value in properties.items():
+        if value is None:
+            kept.pop(name, None)
+        else:
+            kept[name] = value
+
+
+def _with_row_properties(key, data):
+    """``data`` with its row's properties on it (see _set_row_properties)."""
+    record = loaded_items.get(key) or {}
+    if data is not None and record.get("properties"):
+        info = data.scan.info
+        for name, value in record["properties"].items():
+            info[name] = value
+    return data
+
+
 def load_dataset(key):
-    """The dataset behind one row, loaded if it is not already in memory.
+    """The dataset behind one row, loaded if it is not already in memory,
+    with the row's own properties on it (_set_row_properties).
 
     Three cases, in this order:
 
@@ -1321,6 +1374,10 @@ def load_dataset(key):
       what makes a row cost a path rather than a cube;
     * read from a file -- open the file, as always.
     """
+    return _with_row_properties(key, _load_dataset(key))
+
+
+def _load_dataset(key):
     record = loaded_items[key]
     if record.get("memory") is not None:
         return record["memory"]

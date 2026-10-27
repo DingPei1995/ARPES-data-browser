@@ -1175,6 +1175,7 @@ class _InteractiveImageBase(pg.ImageView):
         self._overlay_curve = None
         self._bz_layers = {}
         self._bz_labels = []
+        self._bz_drawn = {}           # what the two hold, as plain data
         self._colormap_name, self._colormap_flip = DEFAULT_COLORMAP, False
 
         # What an export calls this panel and what metadata travels with it.
@@ -1749,7 +1750,15 @@ class _InteractiveImageBase(pg.ImageView):
             item = self._bz_layers.pop(name, None)
             if item is not None:
                 self.view_box.removeItem(item)
+            self._bz_drawn.get("layers", {}).pop(name, None)
             return
+        # Six significant figures: far finer than a pixel, and small enough
+        # that a tiled zone still fits the file attribute it is saved in.
+        self._bz_drawn.setdefault("layers", {})[name] = {
+            "color": str(color), "width": float(width),
+            "polygons": [[[float(f"{v:.6g}") for v in np.asarray(px, dtype=float)],
+                          [float(f"{v:.6g}") for v in np.asarray(py, dtype=float)]]
+                         for px, py in polygons]}
         xs, ys = [], []
         for px, py in polygons:
             if xs:
@@ -1774,6 +1783,9 @@ class _InteractiveImageBase(pg.ImageView):
         for item in self._bz_labels:
             self.view_box.removeItem(item)
         self._bz_labels = []
+        self._bz_drawn["labels"] = [[str(t), float(x), float(y)]
+                                    for t, x, y in (labels or [])]
+        self._bz_drawn["label_color"] = str(color)
         if not labels:
             return
         xs = [float(x) for _text, x, _y in labels]
@@ -1796,6 +1808,31 @@ class _InteractiveImageBase(pg.ImageView):
         for name in list(self._bz_layers):
             self.set_bz_layer(name, [])
         self.set_bz_labels([])
+
+    def bz_overlay_state(self):
+        """What the zone overlay draws now, as plain lists (JSON as it
+        stands): ``{"layers": {name: {"color", "width", "polygons"}},
+        "labels": [[text, x, y], ...], "label_color"}``; None when nothing
+        is drawn. The zone is kept with the dataset in this form, so it can
+        be shown again and exported without the dialog that worked it out."""
+        layers = self._bz_drawn.get("layers") or {}
+        if not layers:
+            return None
+        return {"layers": {name: dict(layer) for name, layer in layers.items()},
+                "labels": list(self._bz_drawn.get("labels") or []),
+                "label_color": self._bz_drawn.get("label_color", "#ffd166")}
+
+    def show_bz_overlay(self, state):
+        """Draw a zone kept by :meth:`bz_overlay_state` (None clears)."""
+        self.clear_bz_overlay()
+        if not state:
+            return
+        for name, layer in (state.get("layers") or {}).items():
+            self.set_bz_layer(name, [tuple(polygon) for polygon in layer["polygons"]],
+                              color=layer.get("color", "#39c2ff"),
+                              width=float(layer.get("width", 1.4)))
+        self.set_bz_labels([tuple(label) for label in state.get("labels") or []],
+                           color=state.get("label_color", "#ffd166"))
 
     def enable_swap_action(self, enabled: bool, text: str = None):
         self.action_swap.setVisible(enabled)
@@ -2643,6 +2680,12 @@ class ExportDialog(QDialog):
             "image, as they are on screen.")
         self.with_guides.setVisible(bool(guides_of(self.view)))
         form.addRow("", self.with_guides)
+        self.with_zone = QCheckBox("Include the Brillouin zone")
+        self.with_zone.setChecked(True)
+        self.with_zone.setToolTip("Draw the zone shown on the panel, and its "
+                                  "labelled points, on the image.")
+        self.with_zone.setVisible(self._zone() is not None)
+        form.addRow("", self.with_zone)
 
         self.image_size_label = QLabel("")
         self.image_size_label.setWordWrap(True)
@@ -2693,7 +2736,30 @@ class ExportDialog(QDialog):
         self.eps_inward = QCheckBox("Ticks inside the box")
         self.eps_inward.setChecked(True)
         form.addRow("", self.eps_inward)
+        self.eps_zone = QCheckBox("Draw the Brillouin zone in the box")
+        self.eps_zone.setChecked(True)
+        self.eps_zone.setToolTip(
+            "The zone shown on the panel and its labelled points, as vector "
+            "lines in the box: the axes and the zone in one file, for the "
+            "image to go under.")
+        self.eps_zone.setVisible(self._zone() is not None)
+        form.addRow("", self.eps_zone)
         return page
+
+    def _zone(self):
+        """The Brillouin zone drawn on the panel, or None."""
+        state = getattr(self.view, "bz_overlay_state", None)
+        return state() if callable(state) else None
+
+    def _zone_paths(self):
+        """The zone as ``axes_eps``'s ``paths`` and ``points``."""
+        state = self._zone() or {}
+        paths = []
+        for layer in (state.get("layers") or {}).values():
+            for xs, ys in layer["polygons"]:
+                paths.append((list(xs), list(ys), layer.get("color", "#39c2ff"),
+                              0.8 * float(layer.get("width", 1.4))))
+        return paths, [tuple(label) for label in state.get("labels") or []]
 
     # -- state ------------------------------------------------------------
     def ranges(self):
@@ -2829,6 +2895,12 @@ class ExportDialog(QDialog):
                 invert_x=self.view.axis_inverted(0),
                 invert_y=self.view.axis_inverted(1),
                 scale=max(1.0, self.width_box.value() / max(shown, 1.0)))
+        if self.with_zone.isChecked() and self._zone() is not None:
+            shown = self.view.view_box.sceneBoundingRect().width()
+            rgba = draw_zone(rgba, self._zone(), x_range=x_range, y_range=y_range,
+                             invert_x=self.view.axis_inverted(0),
+                             invert_y=self.view.axis_inverted(1),
+                             scale=max(1.0, self.width_box.value() / max(shown, 1.0)))
         if not self.with_axes.isChecked():
             return rgba
         return render_framed(rgba, x_range=x_range, y_range=y_range,
@@ -2863,12 +2935,72 @@ class ExportDialog(QDialog):
             font_size=self.eps_font.value(), line_width=self.eps_line.value(),
             minor_ticks=self.eps_minor.value(),
             ticks_inward=self.eps_inward.isChecked(),
-            invert_x=self.view.axis_inverted(0), invert_y=self.view.axis_inverted(1))
+            invert_x=self.view.axis_inverted(0), invert_y=self.view.axis_inverted(1),
+            **(dict(zip(("paths", "points"), self._zone_paths()))
+               if self.eps_zone.isChecked() and self._zone() is not None else {}))
         self.status.setText(
             f"Wrote {os.path.basename(path)}. Place the image (axes off) at "
             f"x {box['x']:.1f} pt, y {box['y']:.1f} pt, "
             f"{box['width']:.1f} x {box['height']:.1f} pt -- the empty box.")
         return box
+
+
+def draw_zone(rgba, state, *, x_range, y_range, invert_x=False,
+              invert_y=False, scale: float = 1.0) -> np.ndarray:
+    """``rgba`` (the inside of a panel's frame, as exported) with the
+    Brillouin zone ``state`` (``bz_overlay_state``) drawn on it, as on
+    screen; ``scale`` multiplies line widths and text sizes."""
+    rgba = np.ascontiguousarray(np.asarray(rgba, dtype=np.uint8))
+    if not state:
+        return rgba
+    height, width = rgba.shape[:2]
+    image = QImage(rgba.data, width, height, width * 4,
+                   QImage.Format_RGBA8888).copy()
+    x0, x1 = float(min(x_range)), float(max(x_range))
+    y0, y1 = float(min(y_range)), float(max(y_range))
+
+    def point(x, y):
+        fx = (x - x0) / (x1 - x0) if x1 != x0 else 0.0
+        fy = (y - y0) / (y1 - y0) if y1 != y0 else 0.0
+        return ((1 - fx if invert_x else fx) * width,
+                (fy if invert_y else 1 - fy) * height)
+
+    from PyQt5.QtCore import QPointF
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    for layer in (state.get("layers") or {}).values():
+        pen = QPen(QColor(layer.get("color", "#39c2ff")))
+        pen.setWidthF(float(layer.get("width", 1.4)) * scale)
+        painter.setPen(pen)
+        for xs, ys in layer["polygons"]:
+            run = []
+            for x, y in zip(xs, ys):
+                if np.isfinite(x) and np.isfinite(y):
+                    run.append(QPointF(*point(x, y)))
+                    continue
+                for a, b in zip(run, run[1:]):
+                    painter.drawLine(a, b)
+                run = []
+            for a, b in zip(run, run[1:]):
+                painter.drawLine(a, b)
+    color = QColor(state.get("label_color", "#ffd166"))
+    font = QFont("Helvetica")
+    font.setPixelSize(max(6, int(round(11 * scale))))
+    painter.setFont(font)
+    for text, x, y in state.get("labels") or []:
+        px, py = point(float(x), float(y))
+        painter.setPen(QPen(QColor("#111111")))
+        painter.setBrush(color)
+        painter.drawEllipse(QPointF(px, py), 3.0 * scale, 3.0 * scale)
+        painter.setPen(color)
+        painter.drawText(QPointF(px + 4 * scale, py - 4 * scale), str(text))
+    painter.end()
+    out = image.convertToFormat(QImage.Format_RGBA8888)
+    ptr = out.constBits()
+    ptr.setsize(out.sizeInBytes() if hasattr(out, "sizeInBytes")
+                else out.byteCount())
+    return np.frombuffer(ptr, dtype=np.uint8).reshape(
+        height, out.bytesPerLine() // 4, 4)[:, :width].copy()
 
 
 def _pin_axis_geometry(image_view, curve_readout, left_width: int = 62,

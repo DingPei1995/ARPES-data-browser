@@ -69,6 +69,10 @@ RULES = {
     "kcut": ("one", frozenset({"cut"}), "a cut in angle"),
     "kzconv": ("one", frozenset({"kz_map"}),
                "a photon-energy scan (kz map) not yet in momentum"),
+    # A Brillouin zone is a statement about momentum-space periodicity, so
+    # only a map whose axes are momenta takes one.
+    "bz": ("one", frozenset({"k_map", "kz_map_k"}),
+           "a map in momentum (a k-map, or a converted kz map)"),
     "kzalign": ("one", frozenset({"kz_map"}),
                 "a photon-energy scan (kz map) before its k conversion"),
     "degrid": ("one", frozenset({"cut", "map", "kz_map"}),

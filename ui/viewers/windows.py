@@ -442,6 +442,7 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
         no plot tools, no cut buttons. For a window opened to serve one tool
         (a k conversion picks Γ on it), where anything else on offer would
         be a way to wander off from the job."""
+        self._picture_only = True
         for widget in getattr(self, "_toolbar_tools", ()):
             widget.setVisible(False)
         return self
@@ -2178,11 +2179,11 @@ class BrillouinZoneDialog(QDialog):
     (see :meth:`_InteractiveImageBase.set_bz_layer`); "Clear overlay" is the
     explicit way to take it off again.
 
-    Only ever opened on a k-space map (:attr:`ContourWindow.bz_action` is
-    hidden otherwise, matching ``kconv_action``'s own gating the other way
-    round): a Brillouin zone is a statement about the crystal's momentum-
-    space periodicity, so it only means something once the contour's axes
-    are actually momenta.
+    Only ever opened on a k-space map (the tool panel's button takes only
+    k-maps and converted kz maps): a Brillouin zone is a statement about
+    the crystal's momentum-space periodicity, so it only means something
+    once the contour's axes are actually momenta. Each Plot keeps the zone
+    with the dataset (:meth:`ContourWindow.bz_recorded`).
 
     On a converted photon-energy scan (``kz_map_k``) the contour is the
     plane holding the surface normal and the slit, ``(k_z, k_par)``, so
@@ -3325,6 +3326,8 @@ class BrillouinZoneDialog(QDialog):
 
     def _clear_overlay(self):
         self.contour.view.clear_bz_overlay()
+        # Cleared on purpose: the dataset forgets it too.
+        self.contour.bz_recorded(None)
         self.note.setText("Overlay cleared.")
 
     # -- persistence: data.scan.info["bz.*"], flat scalars like kconv/arbcut -
@@ -3426,12 +3429,17 @@ class BrillouinZoneDialog(QDialog):
             pass    # a convenience: an unwritable home must not stop Plot
 
     def _save_settings(self):
-        """Keep the settings with the dataset, and as the last used."""
+        """Keep the settings with the dataset, and as the last used -- and
+        the zone as drawn, which makes it a property of the dataset: its
+        viewers can show it again, and its exports draw it, without this
+        dialog working it out anew."""
         values = self._current_settings()
         info = self.contour.data.scan.info
         for key, value in values.items():
             info[self._PREFIX + key] = value
         self._remember(values)
+        self.contour.bz_recorded(self.contour.view.bz_overlay_state(),
+                                 {self._PREFIX + k: v for k, v in values.items()})
 
     def _current_settings(self) -> dict:
         return {
@@ -3524,31 +3532,31 @@ class ContourWindow(ViewerWindow):
             "Open the slit-vs-energy cut, integrated over the deflector-angle window.")
         self.defl_cut_button.clicked.connect(lambda: self.open_cut("deflector"))
         self.slit_cut_button.clicked.connect(lambda: self.open_cut("slit"))
+        # The Brillouin zone once overlaid on this dataset (tool panel:
+        # Brillouin zone...), kept with it: shown or hidden here.
+        self.bz_check = QCheckBox("Brillouin zone")
+        self.bz_check.setToolTip(
+            "Show the Brillouin zone overlaid on this dataset before. To draw "
+            "another, use Brillouin zone... in the tool panel.")
+        self.bz_check.toggled.connect(self._show_saved_zone)
+        self.bz_check.setVisible(self.saved_zone() is not None)
 
         # Everything else is in the Functions menu.
         self.arbcut_action = self.add_function(
             "Arbitrary cut...", self.open_arbitrary_cut,
             "Cut along a path of up to six points picked on this contour, "
             "instead of along one of the two axes.")
-        # The k and kz conversions, aligning a kz map's Fermi levels and
-        # de-gridding are the launcher tool panel's.
-        # A Brillouin zone is a statement about momentum-space periodicity,
-        # so it only means something once the axes are actually k, not
-        # angle.
-        self.bz_action = self.add_function(
-            "Brillouin zone...", self.open_brillouin_zone,
-            "Overlay a Brillouin zone (or a moire zone) on this contour. "
-            "Needs momentum, not angle -- only available once a map has "
-            "been converted to k-space, or a photon-energy scan to "
-            "(k_z, k_par).",
-            section="Visualization", visible=data.kind in MOMENTUM_KINDS)
+        # The k and kz conversions, aligning a kz map's Fermi levels,
+        # de-gridding and overlaying a Brillouin zone are the launcher tool
+        # panel's; a zone overlaid before is shown with the tick box above.
         self.slices_action = self.add_function(
             "Multi-slice figure...", self.open_slice_figure,
             "A page of slices through this cube as one figure for a paper -- "
             "a row of constant-energy contours, or a row of cuts -- with a "
             "shared colour scale and labels only on the outer edges.",
             section="Visualization")
-        self.build_toolbar((self.defl_cut_button, self.slit_cut_button))
+        self.build_toolbar((self.defl_cut_button, self.slit_cut_button,
+                            self.bz_check))
         self.figure_windows = []
 
         self.e_control = _SliceControl("Energy (eV)", "eV", 0.05, self)
@@ -4101,7 +4109,46 @@ class ContourWindow(ViewerWindow):
         return kdata
 
     # -- Brillouin-zone overlay ---------------------------------------------
-    def open_brillouin_zone(self):
+    #: where the drawn zone is kept in the dataset's info, as JSON
+    BZ_KEY = "bz.overlay"
+
+    def saved_zone(self):
+        """The zone overlaid on this dataset before, or None."""
+        import json
+        text = (self.data.scan.info or {}).get(self.BZ_KEY)
+        if not text:
+            return None
+        try:
+            return json.loads(text) if isinstance(text, str) else None
+        except ValueError:
+            return None
+
+    def _show_saved_zone(self, on: bool):
+        self.view.show_bz_overlay(self.saved_zone() if on else None)
+
+    def bz_recorded(self, state, settings=None):
+        """The Brillouin-zone dialog drew ``state`` (None: cleared): keep it
+        with the dataset -- here, and on its row in the launcher's list, so
+        it outlives this window and the dataset being re-read -- and offer
+        it in the tick box."""
+        import json
+        text = json.dumps(state, separators=(",", ":")) if state else None
+        info = self.data.scan.info
+        if text:
+            info[self.BZ_KEY] = text
+        else:
+            info.pop(self.BZ_KEY, None)
+        properties = dict(settings or {})
+        properties[self.BZ_KEY] = text
+        keep = getattr(self, "_set_row_properties", None)
+        if callable(keep):
+            keep(properties)
+        self.bz_check.blockSignals(True)
+        self.bz_check.setChecked(bool(text))
+        self.bz_check.blockSignals(False)
+        self.bz_check.setVisible(bool(text) and not getattr(self, "_picture_only", False))
+
+    def open_brillouin_zone(self, bound: bool = False):
         """Open the Brillouin-zone dialog, or raise it if already open.
 
         Modeless and left running, like ``open_arbitrary_cut``'s dialog:
@@ -4117,6 +4164,14 @@ class ContourWindow(ViewerWindow):
         dialog = BrillouinZoneDialog(self)
         self._bz_dialog = dialog
         dialog.finished.connect(lambda *_: setattr(self, "_bz_dialog", None))
+        if bound:
+            # Opened for the zone alone (the tool panel): the two close
+            # together. The zone stays with the dataset.
+            dialog.finished.connect(lambda *_: self.close())
+            self.closed.connect(lambda *_: dialog.isVisible() and dialog.close())
+            saved = self.saved_zone()
+            if saved:
+                self.view.show_bz_overlay(saved)
         dialog.show()
         dialog.raise_()
         return dialog
@@ -4215,6 +4270,7 @@ class MapCutWindow(ViewerWindow):
         no plot tools, no cut buttons. For a window opened to serve one tool
         (a k conversion picks Γ on it), where anything else on offer would
         be a way to wander off from the job."""
+        self._picture_only = True
         for widget in getattr(self, "_toolbar_tools", ()):
             widget.setVisible(False)
         return self

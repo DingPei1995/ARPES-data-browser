@@ -294,8 +294,14 @@ def axes_eps(path: str, *, x_range, y_range, x_label: str = "", y_label: str = "
              tick_length: float = 4.0, minor_ticks: int = 1,
              ticks_inward: bool = True, invert_x: bool = False,
              invert_y: bool = False, x_targets: int = 5, y_targets: int = 5,
-             title: str = "") -> dict:
+             title: str = "", paths=(), points=()) -> dict:
     """Write the axis frame alone as an EPS, and report where the box is.
+
+    ``paths`` are lines to draw inside the box as vectors, in data
+    coordinates and clipped to it -- ``[(xs, ys, "#rrggbb", width_pt), ...]``,
+    NaN breaking a line -- and ``points`` named points, ``[(text, x, y),
+    ...]``: a Brillouin zone and its high-symmetry points, say, exported with
+    the axes they belong to.
 
     Nothing is drawn inside the frame: the point is to place the raster
     export (rendered over the same ``x_range``/``y_range``) in the box and
@@ -397,6 +403,41 @@ def axes_eps(path: str, *, x_range, y_range, x_label: str = "", y_label: str = "
                              [y_ticks - y_step * (i + 1) / (minor_ticks + 1)
                               for i in range(minor_ticks)]) if y_ticks.size else y_ticks
         yticks(sub, False)
+
+    # what is drawn inside the box, clipped to it
+    if paths or points:
+        out.append("gsave")
+        out.append(f"newpath {left:.3f} {bottom:.3f} moveto "
+                   f"{box_w:.3f} 0 rlineto 0 {box_h:.3f} rlineto "
+                   f"{-box_w:.3f} 0 rlineto closepath clip")
+        for xs, ys, color, width in paths:
+            r, g, b = (int(str(color).lstrip("#")[i:i + 2], 16) / 255.0
+                       for i in (0, 2, 4))
+            out.append(f"{r:.3f} {g:.3f} {b:.3f} setrgbcolor "
+                       f"{float(width):.3f} setlinewidth")
+            run = []
+            for x, y in zip(xs, ys):
+                if np.isfinite(x) and np.isfinite(y):
+                    run.append((px(float(x)), py(float(y))))
+                    continue
+                if len(run) > 1:
+                    out.append("newpath " + " ".join(
+                        f"{a:.3f} {c:.3f} {'moveto' if i == 0 else 'lineto'}"
+                        for i, (a, c) in enumerate(run)) + " stroke")
+                run = []
+            if len(run) > 1:
+                out.append("newpath " + " ".join(
+                    f"{a:.3f} {c:.3f} {'moveto' if i == 0 else 'lineto'}"
+                    for i, (a, c) in enumerate(run)) + " stroke")
+        if points:
+            out.append("0 setgray")
+            for text, x, y in points:
+                a, c = px(float(x)), py(float(y))
+                out.append(f"newpath {a:.3f} {c:.3f} {font_size * 0.18:.3f} 0 360 arc fill")
+                out.append(f"{a + font_size * 0.3:.3f} {c + font_size * 0.3:.3f} "
+                           f"moveto ({_ps(text)}) show")
+        out.append("grestore")
+        out.append(f"{line_width:.3f} setlinewidth 0 setgray")
 
     # tick labels
     baseline = bottom - outward - gap - font_size * 0.78

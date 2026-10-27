@@ -120,7 +120,9 @@ def test_menu_sections_and_hidden_entries(app):
         assert gone not in shown
     assert shown.index("Slice") > shown.index("Visualization")
     k_map = W.ContourWindow(_map("k_map"), "k", "gray", False)
-    assert "Brillouin zone..." in _visible_texts(k_map)
+    # the tool panel's; the viewer only shows a zone saved before
+    assert "Brillouin zone..." not in _visible_texts(k_map)
+    assert k_map.bz_check.isHidden()
     window.close()
     k_map.close()
 

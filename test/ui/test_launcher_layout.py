@@ -388,3 +388,73 @@ def test_kz_conversion_remembers(app, monkeypatch):
     assert again.lat_c.value() == pytest.approx(7.25)
     again.close()
     contour.close()
+
+
+def test_the_panel_opens_on_its_basic_tab(launcher):
+    tabs = launcher.ui.ToolTabs
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Basic", "Advanced"]
+    assert tabs.currentIndex() == 0
+    basic = launcher.ui.ToolSections["Basic"]
+    assert tabs.currentWidget().isAncestorOf(basic) or tabs.currentWidget().widget() is basic
+    assert launcher.ui.ToolSections["Basic"].isAncestorOf(launcher.ui.ToolButtons["bz"])
+
+
+def _k_map():
+    kx = np.linspace(-1.2, 1.2, 25)
+    ky = np.linspace(-1.0, 1.0, 21)
+    data = MemoryData("k_map", (kx, ky, EKIN),
+                      np.random.default_rng(4).random((kx.size, ky.size, EKIN.size)) + 1,
+                      {"x": "kx (Å⁻¹)", "k": "ky (Å⁻¹)", "z": "Kinetic energy (eV)"},
+                      source_label="km")
+    # a hexagonal 2-D layer, so a plot needs no further typing
+    data.scan.info.update({"bz.mode": "2d", "bz.a2": 3.0, "bz.b2": 3.0,
+                           "bz.gamma2": 120.0, "bz.tile": 1})
+    return data
+
+
+def test_a_brillouin_zone_becomes_part_of_the_dataset(launcher, tmp_path):
+    lv = launcher
+    lv.add_memory_dataset(_k_map(), "km")
+    _select(lv, "m")
+    assert not lv.ui.ToolButtons["bz"].isEnabled()          # angle map
+    _select(lv, "km")
+    assert lv.ui.ToolButtons["bz"].isEnabled()
+    lv.ui.ToolButtons["bz"].click()
+    contour = lv.viewer_windows[-1]
+    dialog = contour._bz_dialog
+    assert not contour.functions_button.isVisibleTo(contour)
+    assert dialog.plot() is not None
+    key = lv.selected_key()
+    assert lv.loaded_items[key]["properties"]["bz.overlay"]
+    dialog.close()
+    QApplication.processEvents()
+    assert not contour.isVisible()                         # tied together
+
+    # a viewer opened later offers it, off until ticked
+    viewer = lv.open_selected()
+    assert viewer.bz_check.isVisibleTo(viewer) and not viewer.bz_check.isChecked()
+    assert viewer.view.bz_overlay_state() is None
+    viewer.bz_check.setChecked(True)
+    state = viewer.view.bz_overlay_state()
+    assert state and state["layers"]
+
+    # and its exports can draw it
+    from ui.viewers.widgets import ExportDialog
+    export = ExportDialog(viewer.view, ExportDialog.TAB_AXES)
+    assert export.eps_zone.isVisibleTo(export)
+    path = str(tmp_path / "axes.eps")
+    export.save_axes(path)
+    assert "setrgbcolor" in open(path, encoding="latin-1").read()
+    export.eps_zone.setChecked(False)
+    export.save_axes(path)
+    assert "setrgbcolor" not in open(path, encoding="latin-1").read()
+    export.with_axes.setChecked(False)
+    with_zone = export.rendered()
+    export.with_zone.setChecked(False)
+    assert not np.array_equal(with_zone, export.rendered())
+    export.close()
+    viewer.close()
+
+    # and it is written to the file the row is saved to
+    item, problem = lv._dataset_for_saving(key)
+    assert problem is None and item["info"]["bz.overlay"]
