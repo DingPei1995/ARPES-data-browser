@@ -41,7 +41,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QAbstractItemView, QSizePolicy, QDialog,
                              QDialogButtonBox)
 
-from ui.common.screen import fits_screen
+from ui.common.screen import fits_screen, wheel_scrolls_window
 
 import tools.spectra.peaks as PK
 import tools.spectra.dispersion as DISP
@@ -132,6 +132,10 @@ class FitPanel(QMainWindow):
 
     datasetsCreated = pyqtSignal(list)
     closed = pyqtSignal(object)
+    #: a seed was placed (the guide moves on to the next line)
+    seedPlaced = pyqtSignal()
+    #: the whole series was fitted
+    seriesFitted = pyqtSignal()
 
     def __init__(self, data, label: str, parent=None, colormap="gray",
                  flip=False, mode: str = "mdc"):
@@ -165,35 +169,83 @@ class FitPanel(QMainWindow):
 
         central = QWidget()
         root = QVBoxLayout(central)
+        root.setContentsMargins(6, 6, 6, 6)
+
+        # The guided fit, first in sight: most users do not know where a fit
+        # starts, and the button says it.
+        start_row = QWidget()
+        start_bar = QHBoxLayout(start_row)
+        start_bar.setContentsMargins(0, 0, 0, 0)
+        self.guide_button = QPushButton("\u25b6  Guided fit (step by step)")
+        self.guide_button.setToolTip(
+            "Walks through the fit one step at a time -- range, bands, "
+            "seeds, a test line, the series -- and says what each step is "
+            "for.")
+        self.guide_button.setStyleSheet("font-weight: bold; padding: 4px 10px;")
+        self.guide_button.clicked.connect(self.start_guide)
+        start_bar.addWidget(self.guide_button)
+        hint = QLabel("<i>New to this panel? The guide takes you from the "
+                      "cut to the fitted band.  Ctrl + wheel zooms a plot.</i>")
+        hint.setStyleSheet("color: #666;")
+        start_bar.addWidget(hint, 1)
+        root.addWidget(start_row)
+
+        # Plots above, controls below, with a handle between them: the
+        # controls are never pushed out of the window by the pictures, and
+        # the user decides how much room each gets.
+        self.splitter = QSplitter(Qt.Vertical)
+        self.splitter.setChildrenCollapsible(False)
         top = QSplitter(Qt.Horizontal)
         top.addWidget(self._image_side())
         top.addWidget(self._line_side())
         top.setSizes([620, 620])
-        root.addWidget(top, 1)
+        self.splitter.addWidget(top)
 
+        # The guide sits beside the tabs rather than above them, so opening
+        # it takes no height from the pictures.
+        controls = QWidget()
+        side_by_side = QHBoxLayout(controls)
+        side_by_side.setContentsMargins(0, 0, 0, 0)
+        self.guide = FitGuide(self)
+        self.guide.hide()
+        side_by_side.addWidget(self.guide, 2)
+        column = QWidget()
+        below = QVBoxLayout(column)
+        below.setContentsMargins(0, 0, 0, 0)
+        side_by_side.addWidget(column, 3)
         self.tabs = QTabWidget()
         self.tabs.addTab(self._bands_tab(), "Bands")
         self.tabs.addTab(self._settings_tab(), "Fit settings")
         self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        root.addWidget(self.tabs, 0)
+        below.addWidget(self.tabs, 0)
 
         self.note = QLabel("Add a band, then click on the curve to place a "
                            "seed at this line. Four or five seeds down the "
-                           "band are enough.")
+                           "band are enough -- or press “Guided fit” above.")
         self.note.setWordWrap(True)
-        root.addWidget(self.note)
+        below.addWidget(self.note)
+        below.addStretch(1)
+        self.splitter.addWidget(controls)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self.splitter.setSizes([480, 320])
+        root.addWidget(self.splitter, 1)
         self.setCentralWidget(central)
 
         self.show_image()
         self.add_band()
         self.refresh_line()
+        wheel_scrolls_window(self.image.ui.graphicsView, self.curve_plot,
+                             self.residual_plot)
 
     # -- layout ------------------------------------------------------------
     def _image_side(self) -> QWidget:
         box = QGroupBox("Cut")
+        self.cut_box = box
         layout = QVBoxLayout(box)
         layout.setContentsMargins(4, 4, 4, 4)
         self.image = plain_image_view(self.labels[0], self.labels[1])
+        self.image.setMinimumHeight(180)
         layout.addWidget(self.image)
 
         # The line being fitted, dragged with the mouse.
@@ -224,9 +276,11 @@ class FitPanel(QMainWindow):
 
     def _line_side(self) -> QWidget:
         box = QGroupBox("Line")
+        self.line_box = box
         layout = QVBoxLayout(box)
         layout.setContentsMargins(4, 4, 4, 4)
         self.curve_plot = pg.PlotWidget()
+        self.curve_plot.setMinimumHeight(140)
         self.curve_plot.addLegend(offset=(-10, 10))
         self.curve_plot.setLabel("left", "Intensity")
         strip_stock_menu(self.curve_plot.getPlotItem())
@@ -236,6 +290,7 @@ class FitPanel(QMainWindow):
         self.residual_plot = pg.PlotWidget()
         self.residual_plot.setLabel("left", "residual")
         self.residual_plot.setMaximumHeight(150)
+        self.residual_plot.setMinimumHeight(60)
         self.residual_plot.setXLink(self.curve_plot)
         strip_stock_menu(self.residual_plot.getPlotItem())
         layout.addWidget(self.residual_plot, 1)
@@ -251,6 +306,7 @@ class FitPanel(QMainWindow):
         self.seed_button.toggled.connect(self._arm_seeding)
         bar.addWidget(self.seed_button)
         preview = QPushButton("Try this line")
+        self.try_button = preview
         preview.setToolTip("Fit this one line, to check the settings before "
                            "committing to the whole series.")
         preview.clicked.connect(self.try_line)
@@ -273,6 +329,7 @@ class FitPanel(QMainWindow):
         self.band_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeToContents)
         self.band_table.setMaximumHeight(170)
+        self.band_table.setMinimumHeight(90)
         self.band_table.itemSelectionChanged.connect(self._queue_line)
         layout.addWidget(self.band_table, 1)
 
@@ -383,6 +440,7 @@ class FitPanel(QMainWindow):
         column = QVBoxLayout(buttons)
         column.setContentsMargins(0, 0, 0, 0)
         run = QPushButton("Fit the series")
+        self.run_button = run
         run.clicked.connect(self.run_fit)
         column.addWidget(run)
         self.dispersion_button = QPushButton("Dispersion...")
@@ -607,6 +665,7 @@ class FitPanel(QMainWindow):
             f"{band.name}: seed at {self._short(0)} = {point.x():.5g}, "
             f"width {width:.4g}. {len(band.seeds)} seed(s) on this band.")
         self.refresh_line()
+        self.seedPlaced.emit()
 
     # -- the current line --------------------------------------------------
     def current_line(self):
@@ -764,6 +823,7 @@ class FitPanel(QMainWindow):
             f"χ² = {np.nanmedian(series.chi2):.3g}. The fitted positions are "
             f"on the picture, sized by amplitude. “Dispersion...” for v_F "
             f"and m*.")
+        self.seriesFitted.emit()
         return series
 
     def _draw_fitted_positions(self):
@@ -841,9 +901,436 @@ class FitPanel(QMainWindow):
         self.note.setText(f"Saved {len(rows)} rows to {path}")
         return path
 
+    # -- the guided fit ----------------------------------------------------
+    def start_guide(self):
+        """Open the step-by-step guide at its first step."""
+        self.guide.start()
+        return self.guide
+
+    def lines_axis(self):
+        """The axis the lines are spaced along (energy for MDCs)."""
+        return self.axes[1] if self.direction.currentIndex() == 0 else self.axes[0]
+
+    def move_line_to(self, position: float):
+        """Put the fitted line (the cursor) at ``position`` and redraw."""
+        axis = self.lines_axis()
+        position = float(np.clip(position, np.nanmin(axis), np.nanmax(axis)))
+        self.cursor.blockSignals(True)
+        self.cursor.setPos(position)
+        self.cursor.blockSignals(False)
+        self.refresh_line()
+
+    def fit_range(self):
+        """``(low, high)`` the series will cover: the Over boxes, or the
+        whole axis where they are empty."""
+        axis = self.lines_axis()
+        low, high = self._number(self.from_edit), self._number(self.to_edit)
+        low = float(np.nanmin(axis)) if low is None else low
+        high = float(np.nanmax(axis)) if high is None else high
+        return (min(low, high), max(low, high))
+
     def closeEvent(self, event):
         self.closed.emit(self)
         super().closeEvent(event)
+
+
+# ==========================================================================
+# The guided fit
+# ==========================================================================
+class FitGuide(QGroupBox):
+    """The fit, one step at a time, inside the fit panel.
+
+    Each step says in two or three sentences what it is for, lights up the
+    part of the panel it uses, and offers the buttons that do it; *Next*
+    waits until the step has what the fit needs (two seeds on a band, a
+    fitted series). Nothing here fits anything by itself: every button
+    calls the panel's own, so a user who has been through the guide once
+    knows the panel.
+    """
+
+    #: how many lines the seeding step visits, spread over the fit range
+    SEED_LINES = 5
+    HIGHLIGHT = "2px solid #f5a623"
+
+    def __init__(self, panel: "FitPanel"):
+        super().__init__("Guided fit")
+        self.panel = panel
+        self.setMinimumWidth(380)
+        self.step = 0
+        self._lit = []
+        self._seed_index = 0
+        self.setStyleSheet("QGroupBox { font-weight: bold; }")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 6)
+        self.title = QLabel("")
+        self.title.setStyleSheet("font-size: 11pt; color: #1f6f8b;")
+        layout.addWidget(self.title)
+        self.text = QLabel("")
+        self.text.setWordWrap(True)
+        self.text.setTextFormat(Qt.RichText)
+        self.text.setStyleSheet("font-weight: normal;")
+        layout.addWidget(self.text)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.status.setTextFormat(Qt.RichText)
+        self.status.setStyleSheet("font-weight: normal; color: #2f6b2f;")
+        layout.addWidget(self.status)
+
+        self.actions = QHBoxLayout()
+        self.actions.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(self.actions)
+
+        nav = QHBoxLayout()
+        nav.setContentsMargins(0, 0, 0, 0)
+        self.progress = QLabel("")
+        self.progress.setStyleSheet("font-weight: normal; color: #666;")
+        nav.addWidget(self.progress)
+        nav.addStretch(1)
+        self.back_button = QPushButton("\u2190 Back")
+        self.back_button.clicked.connect(lambda: self.go(self.step - 1))
+        nav.addWidget(self.back_button)
+        self.next_button = QPushButton("Next \u2192")
+        self.next_button.setDefault(True)
+        self.next_button.clicked.connect(lambda: self.go(self.step + 1))
+        nav.addWidget(self.next_button)
+        close = QPushButton("Close guide")
+        close.clicked.connect(self.stop)
+        nav.addWidget(close)
+        layout.addLayout(nav)
+
+        panel.seedPlaced.connect(self._seed_placed)
+        panel.seriesFitted.connect(self._update)
+        self.steps = self._steps()
+
+    # -- the steps ---------------------------------------------------------
+    def _steps(self):
+        """``(title, text, enter, ready)`` per step: ``enter`` builds the
+        step's buttons and lights its widgets, ``ready`` says whether Next
+        may be pressed."""
+        p = self.panel
+        mdc = p.mode == "mdc"
+        curve, across = ("MDC", "energy") if mdc else ("EDC", "momentum")
+        along = p._short(0) if mdc else p._short(1)
+        return [
+            ("What the fit does",
+             f"An <b>{curve}</b> is the intensity along <b>{along}</b> at one "
+             f"{across} -- one horizontal line of the cut"
+             + ("" if mdc else " turned on its side") +
+             f". Where a band crosses that line the curve has a peak. "
+             f"Fitting a peak to every line, one after the other, follows the "
+             f"band down the cut. You tell the fit roughly where the band is "
+             f"(the <b>seeds</b>); it does the rest.",
+             self._enter_intro, lambda: True),
+            ("Line shape and background",
+             "Choose what one peak looks like. <b>Lorentzian</b> is the "
+             "natural shape of a band in an MDC; <b>Voigt</b> adds the "
+             "instrument's Gaussian resolution, so the width that comes out "
+             "is the intrinsic one. The <b>background</b> is the slowly "
+             "varying intensity under the peaks -- linear is a safe start. "
+             "The defaults are fine for a first try.",
+             self._enter_settings, lambda: True),
+            ("Where to fit",
+             f"The blue line on the cut is the {curve} being looked at; drag "
+             f"it with the mouse. Put it where the band <b>starts</b> and "
+             f"press <i>Start here</i>, then where it <b>ends</b> and press "
+             f"<i>End here</i>. Outside that range nothing is fitted -- leave "
+             f"out the region where the band is too weak or crosses another.",
+             self._enter_range, lambda: True),
+            ("The bands",
+             "Each <b>band</b> is one peak followed from line to line. "
+             "<b>Band 1</b> is already there. If two bands cross the range "
+             "(two peaks in one curve), add a second band now: they are "
+             "fitted together, so each keeps to its own peak.",
+             self._enter_bands, lambda: bool(p.bands)),
+            ("Seeds: show the fit where the band is",
+             "The guide moves the line through the range. At each stop, "
+             "<b>click the top of the band's peak on the curve at the "
+             "right</b> -- that click is a seed: the position is yours, the "
+             "height and width are read off the data. Between seeds the "
+             "band is interpolated, so 4-5 seeds spread along it are enough.",
+             self._enter_seeds,
+             lambda: any(len(b.seeds) >= 2 for b in p.bands)),
+            ("Check one line",
+             "Before fitting everything, try the line under the cursor. The "
+             "dashed curves are the starting guess built from the seeds; "
+             "<i>Try this line</i> fits it and draws the result with its "
+             "residual below. A residual without structure and peaks on the "
+             "data mean the settings are good; if not, go back and move a "
+             "seed or change the line shape.",
+             self._enter_try, lambda: True),
+            ("Fit the series",
+             f"Now every {curve} in the range is fitted, each starting from "
+             f"the seeds' interpolation (and, on the second pass, from the "
+             f"fitted neighbours). It takes a few seconds.",
+             self._enter_fit, lambda: p.series is not None),
+            ("The result",
+             "The fitted peak positions are drawn on the cut, <b>sized by "
+             "amplitude</b>: where the markers shrink, the band fades and "
+             "the fit is held up by few counts. "
+             + ("<i>Dispersion...</i> turns the band into v_F and m*; "
+                if p.momentum else
+                "v_F and m* need a cut in momentum, which this is not; ")
+             + "<i>Save table...</i> writes every fitted parameter to a CSV "
+             "file. Seeds and settings stay as they are: change one and fit "
+             "again at any time.",
+             self._enter_result, lambda: True),
+        ]
+
+    # -- navigation --------------------------------------------------------
+    def start(self):
+        self.show()
+        self.panel.guide_button.setEnabled(False)
+        self.go(0)
+
+    def stop(self):
+        self._unlight()
+        self._clear_actions()
+        self.panel.seed_button.setChecked(False)
+        self.hide()
+        self.panel.guide_button.setEnabled(True)
+
+    def go(self, index: int):
+        if index >= len(self.steps):
+            self.stop()
+            return
+        self.step = max(0, index)
+        self._unlight()
+        self._clear_actions()
+        self.status.setText("")
+        title, text, enter, _ready = self.steps[self.step]
+        self.title.setText(f"Step {self.step + 1} of {len(self.steps)}: {title}")
+        self.text.setText(text)
+        enter()
+        self._update()
+
+    def _update(self, *_):
+        ready = self.steps[self.step][3]()
+        last = self.step == len(self.steps) - 1
+        self.next_button.setText("Finish" if last else "Next \u2192")
+        self.next_button.setEnabled(bool(ready))
+        self.back_button.setEnabled(self.step > 0)
+        self.progress.setText("\u25cf " * (self.step + 1)
+                              + "\u25cb " * (len(self.steps) - self.step - 1))
+        if self.step == 6 and self.panel.series is not None:
+            self.status.setText("Fitted -- press Next to read the result.")
+
+    def _button(self, text, slot, tip=""):
+        button = QPushButton(text)
+        button.setStyleSheet("font-weight: normal;")
+        if tip:
+            button.setToolTip(tip)
+        button.clicked.connect(slot)
+        self.actions.addWidget(button)
+        return button
+
+    def _clear_actions(self):
+        while self.actions.count():
+            item = self.actions.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def _light(self, *widgets):
+        """Outline the widgets a step uses, in the guide's colour."""
+        for widget in widgets:
+            if widget is None:
+                continue
+            name = widget.objectName() or f"guide_{id(widget)}"
+            widget.setObjectName(name)
+            self._lit.append((widget, widget.styleSheet()))
+            kind = type(widget).__name__
+            extra = ""
+            if isinstance(widget, QGroupBox):
+                # A group box's border carries its title: keep room for it.
+                kind = "QGroupBox"
+                extra = (f" margin-top: 1.1em; }} QGroupBox#{name}::title {{ "
+                         f"subcontrol-origin: margin; left: 6px; "
+                         f"color: #b86e00;")
+            elif isinstance(widget, (QTabWidget, QTableWidget)):
+                kind = "QWidget"
+            widget.setStyleSheet(widget.styleSheet()
+                                 + f" {kind}#{name} {{ border: {self.HIGHLIGHT}; "
+                                   f"border-radius: 3px;{extra} }}")
+
+    def _unlight(self):
+        for widget, sheet in self._lit:
+            try:
+                widget.setStyleSheet(sheet)
+            except RuntimeError:          # deleted with its window
+                pass
+        self._lit = []
+
+    # -- what each step does when it opens ----------------------------------
+    def _enter_intro(self):
+        self._light(self.panel.cut_box, self.panel.line_box)
+
+    def _enter_settings(self):
+        p = self.panel
+        p.tabs.setCurrentIndex(1)
+        self._light(p.shape, p.background, p.resolution)
+        if p.mode == "edc":
+            self.text.setText(self.text.text() + (
+                " For an EDC near E<sub>F</sub>, tick <b>Fermi cut-off</b> so "
+                "the peak is fitted under the occupation."))
+            self._light(p.fermi_group)
+
+    def _enter_range(self):
+        p = self.panel
+        p.tabs.setCurrentIndex(1)
+        self._light(p.cut_box, p.from_edit, p.to_edit)
+
+        def take(edit, which):
+            edit.setText(f"{p.current_position():.6g}")
+            low, high = p.fit_range()
+            self.status.setText(f"{which} set. The fit covers "
+                                f"{low:.5g} .. {high:.5g}.")
+            self._seed_index = 0
+
+        def whole():
+            p.from_edit.clear()
+            p.to_edit.clear()
+            low, high = p.fit_range()
+            self.status.setText(f"The whole cut: {low:.5g} .. {high:.5g}.")
+            self._seed_index = 0
+
+        self._button("Start here", lambda: take(p.from_edit, "Start"),
+                     "The line's position becomes the first line fitted.")
+        self._button("End here", lambda: take(p.to_edit, "End"),
+                     "The line's position becomes the last line fitted.")
+        self._button("Whole cut", whole, "Fit every line of the cut.")
+        self.actions.addStretch(1)
+        low, high = p.fit_range()
+        self.status.setText(f"Now: {low:.5g} .. {high:.5g}.")
+
+    def _enter_bands(self):
+        p = self.panel
+        p.tabs.setCurrentIndex(0)
+        self._light(p.band_table)
+
+        def another():
+            band = p.add_band()
+            self.status.setText(f"Added {band.name}. {len(p.bands)} band(s).")
+            self._update()
+
+        self._button("Add another band", another,
+                     "Only when a second peak runs through the range.")
+        self.actions.addStretch(1)
+        self.status.setText(f"{len(p.bands)} band(s): "
+                            + ", ".join(b.name for b in p.bands))
+
+    def seed_positions(self):
+        """The lines the seeding step visits, spread over the fit range and
+        kept a little inside its ends, where a band is usually weakest."""
+        low, high = self.panel.fit_range()
+        n = self.SEED_LINES
+        margin = 0.06 * (high - low)
+        return list(np.linspace(low + margin, high - margin, n))
+
+    def _enter_seeds(self):
+        p = self.panel
+        p.tabs.setCurrentIndex(0)
+        self._light(p.line_box, p.band_table)
+        if p.selected_band() is None and p.bands:
+            p.band_table.selectRow(0)
+        self._button("\u2190 Previous line", lambda: self._visit(self._seed_index - 1))
+        self._button("Skip this line \u2192", lambda: self._visit(self._seed_index + 1),
+                     "The band is not visible here: go to the next line.")
+        self._button("Undo last seed", self._undo)
+        self.band_choice = QComboBox()
+        self.band_choice.setStyleSheet("font-weight: normal;")
+        for band in p.bands:
+            self.band_choice.addItem(band.name)
+        index = p.selected_band_index()
+        self.band_choice.setCurrentIndex(0 if index is None else index)
+        self.band_choice.currentIndexChanged.connect(self._band_chosen)
+        if len(p.bands) > 1:
+            self.actions.addWidget(QLabel("Seeding"))
+            self.actions.addWidget(self.band_choice)
+        else:
+            self.band_choice.hide()
+            self.actions.addWidget(self.band_choice)
+        self.actions.addStretch(1)
+        self._visit(0)
+
+    def _band_chosen(self, index):
+        if 0 <= index < len(self.panel.bands):
+            self.panel.band_table.selectRow(index)
+            self._visit(0)
+
+    def _visit(self, index: int):
+        p = self.panel
+        positions = self.seed_positions()
+        band = p.selected_band()
+        if index >= len(positions):
+            # Round done for this band: the next band, if one has fewer seeds.
+            others = [i for i, b in enumerate(p.bands)
+                      if len(b.seeds) < 2 and b is not band]
+            if others:
+                self.band_choice.setCurrentIndex(others[0])
+                return
+            p.seed_button.setChecked(False)
+            self.status.setText(
+                f"Every line visited: "
+                + ", ".join(f"{b.name} {len(b.seeds)} seed(s)" for b in p.bands)
+                + ". Press Next -- or Previous line to change one.")
+            self._seed_index = len(positions)
+            self._update()
+            return
+        self._seed_index = max(0, index)
+        p.move_line_to(positions[self._seed_index])
+        p.seed_button.setChecked(True)
+        name = band.name if band is not None else "the band"
+        self.status.setText(
+            f"Line {self._seed_index + 1} of {len(positions)} "
+            f"({p.position_label.text()} = {positions[self._seed_index]:.5g}): "
+            f"click the peak of <b>{name}</b> on the curve at the right. "
+            f"{name}: {len(band.seeds) if band else 0} seed(s).")
+        self._update()
+
+    def _seed_placed(self):
+        if not self.isVisible() or self.step != 4:
+            return
+        self._visit(self._seed_index + 1)
+
+    def _undo(self):
+        self.panel.undo_seed()
+        self._visit(max(0, self._seed_index - 1))
+
+    def _enter_try(self):
+        p = self.panel
+        p.seed_button.setChecked(False)
+        self._light(p.line_box, p.try_button)
+        positions = self.seed_positions()
+        p.move_line_to(positions[len(positions) // 2])
+
+        def attempt():
+            fit = p.try_line()
+            if fit is not None:
+                self.status.setText(f"Fitted this line: χ² = {fit.chi2:.3g}, "
+                                    f"R² = {fit.r_squared:.4f}.")
+
+        self._button("Try this line", attempt)
+        self.actions.addStretch(1)
+        self.status.setText("Drag the blue line anywhere in the range to try "
+                            "another one.")
+
+    def _enter_fit(self):
+        p = self.panel
+        p.tabs.setCurrentIndex(1)
+        self._light(p.run_button)
+        self._button("Fit the series now", p.run_fit)
+        self.actions.addStretch(1)
+
+    def _enter_result(self):
+        p = self.panel
+        p.tabs.setCurrentIndex(1)
+        self._light(p.cut_box, p.dispersion_button, p.table_button)
+        if p.momentum:
+            self._button("Dispersion...", p.open_dispersion)
+        self._button("Save table...", p.save_table)
+        self.actions.addStretch(1)
 
 
 # ==========================================================================
