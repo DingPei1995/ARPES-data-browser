@@ -2531,6 +2531,10 @@ def DumpUIWidgets(values):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # The same widget style on every system (Fusion on macOS, whose native
+    # buttons do not fit the tool panel) -- see ui/common/platform_style.py.
+    from ui.common import platform_style
+    platform_style.apply_style(app)
     # Cyclic garbage collection from the event loop only, never inside a Qt
     # call -- see ui/common/gcguard.py for the crash this prevents.
     from ui.common import gcguard

@@ -16,6 +16,21 @@ A large rework of where things are: every tool is a button in sight, one
 window per tool. (The version number stays 1.1.0; later changes are added
 here.)
 
+- **macOS: the tool panel no longer overlaps.** macOS's native widget style
+  draws a push button as a fixed-height Aqua bezel with wide outer margins
+  and ignores the style sheet's padding, so in the tool panel (buttons two
+  pixels apart) the buttons overlapped each other and the headings, and
+  the Memory box's buttons covered its labels; its progress bars drew no
+  text either. On macOS the program now uses Qt's Fusion style, which lays
+  buttons out from the style sheet as Windows does
+  (`ui/common/platform_style.py`). Other macOS/Windows differences evened
+  out at the same time: the interface font is the first installed of
+  Lucida Sans Unicode (Windows), Lucida Grande (macOS), Segoe UI, ... rather
+  than a Windows-only font Qt had to search aliases for at start-up; the
+  tool panel widens to fit its longest button when the system font is
+  wider, instead of cutting labels short; hints that say "Ctrl" say "⌘" on
+  macOS, where Qt reads Command as Control; and pixmaps are drawn sharp on
+  Retina screens.
 - **The figure composer is a manuscript page.** With nothing selected it
   opens a blank page of four empty panels (a)–(d); each panel is a frame on
   the page (`Panel.frame`, mm) that is dragged and resized with the mouse,
