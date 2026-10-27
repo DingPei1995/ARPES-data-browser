@@ -99,12 +99,12 @@ def test_cut_viewer_keeps_no_tool_buttons(app):
     window = W.CutWindow(_cut(), "c", "gray", False)
     assert _toolbar_buttons(window) == ["Plot tools"]
     texts = _visible_texts(window)
-    for expected in ("Fermi edge fit...", "Straighten bands (FS correction)...",
+    for expected in ("Straighten bands (FS correction)...",
                      "Convert to momentum (k)..."):
         assert expected in texts
     # Tools of the launcher's tool panel are not repeated in a viewer.
-    for gone in ("MDC fit (k-cut only)...", "EDC fit...", "Cut arithmetic...",
-                 "Remove detector grid..."):
+    for gone in ("Fermi edge fit...", "MDC fit (k-cut only)...", "EDC fit...",
+                 "Cut arithmetic...", "Remove detector grid..."):
         assert gone not in texts
     window.close()
 
@@ -114,7 +114,8 @@ def test_menu_sections_and_hidden_entries(app):
     window._rebuild_functions_menu()
     shown = [a.text() for a in window.functions_menu.actions()]
     assert shown[0] == "Transform"
-    assert "Align Fermi levels (kz map)..." in shown and "Convert to momentum (kz, k\u2225)..." in shown
+    assert "Convert to momentum (kz, k\u2225)..." in shown
+    assert "Align Fermi levels (kz map)..." not in shown     # the tool panel's
     assert "Convert to momentum (k)..." not in shown
     assert shown.index("Slice") > shown.index("Visualization")
     k_map = W.ContourWindow(_map("k_map"), "k", "gray", False)

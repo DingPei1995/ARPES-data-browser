@@ -440,6 +440,25 @@ def fit_channels(angles, energy, frame, *, half_width: int = 0, step: int = 1,
 # --------------------------------------------------------------------------
 # Dividing the Fermi cut-off out
 # --------------------------------------------------------------------------
+def levels_along(axis, positions, levels):
+    """The Fermi level at every point of ``axis``, from edges fitted at
+    ``positions``: linear between neighbouring fits, and held at the
+    nearest fit beyond the first and the last -- a straight line carried
+    past the data would invent a trend nobody measured.
+
+    How a map whose E_F drifts with the deflector (or photon energy) gets
+    one level per slice from fits on a few of them.
+    """
+    axis = np.asarray(axis, dtype=float)
+    positions = np.asarray(positions, dtype=float)
+    levels = np.asarray(levels, dtype=float)
+    keep = np.isfinite(positions) & np.isfinite(levels)
+    if not keep.any():
+        raise ValueError("no fitted Fermi level to interpolate from")
+    order = np.argsort(positions[keep])
+    return np.interp(axis, positions[keep][order], levels[keep][order])
+
+
 def divide_fermi(energy, values, ef: float, temperature: float,
                  resolution: float, *, energy_dim: int = -1,
                  cutoff_kt: float = 4.0, background=None):

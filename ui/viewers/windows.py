@@ -44,7 +44,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                               QProgressDialog)
 
 from tools.processing.analysis import arbitrary_cut, fit_feature, fs_correction
-from tools.spectra.fermi import (PARAMETERS, PARAMETER_LABELS, K_B,
+from tools.spectra.fermi import (PARAMETERS, PARAMETER_LABELS, K_B, levels_along,
                                  initial_guess, fermi_edge_model,
                                  fit_fermi_edge, fit_channels, divide_fermi)
 from tools.processing.dataops import (truncate, self_normalize, compress,
@@ -407,14 +407,18 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
         return ""
 
     # -- Fermi-edge fitting ------------------------------------------------
-    def open_fermi_fit(self):
+    def open_fermi_fit(self, bound: bool = False):
         """Fit the Fermi edge of what this window shows. Modeless, because
-        the region it fits is the selection box on the image behind it."""
+        the region it fits is the selection box on the image behind it.
+
+        ``bound`` ties the two together, as the launcher's tool panel opens
+        them: closing either closes the other. The window was opened for
+        the fit, and has nothing left to do without it."""
         existing = getattr(self, "_fermi_dialog", None)
         if existing is not None and existing.isVisible():
             existing.raise_()
             existing.activateWindow()
-            return None
+            return existing
         try:
             dialog = FermiFitDialog(self)
         except ValueError as exc:
@@ -422,9 +426,19 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
             return None
         self._fermi_dialog = dialog
         dialog.finished.connect(lambda *_: setattr(self, "_fermi_dialog", None))
+        if bound:
+            dialog.finished.connect(lambda *_: self.close())
+            self.closed.connect(lambda *_: dialog.close())
         dialog.show()
         dialog.raise_()
         return dialog
+
+    def fermi_frame(self):
+        """``(angles, energy, frame, angle label, energy label)``: the
+        angle-vs-energy picture the Fermi fit works on. A cut is that
+        already; a map's slit-cut window overrides this with the cut it
+        shows."""
+        return reference_frame(self.data)
 
     def offset_energy_axis(self, ef: float, info: dict = None):
         """List a copy of this dataset with the energy axis shifted so the
@@ -468,6 +482,56 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
         self.datasetCreated.emit(result)
         self.statusBar().showMessage(
             f"Energy axis shifted by {ef:.6g} eV -- added to the file list")
+        return result
+
+    def offset_energy_per_slice(self, levels, info: dict = None):
+        """List a copy of this map with each slice along its first axis
+        shifted by its own Fermi level ``levels`` (one per slice), so every
+        one has E_F at zero.
+
+        Shifted by different amounts, the slices no longer share a range,
+        so the result keeps the energies all of them still reach
+        (:func:`tools.momentum.kzmap.align`, the kz map's own alignment).
+        """
+        from tools.momentum.kzmap import align
+
+        data = self.data
+        if data.kind not in CUBE_KINDS:
+            raise ValueError(f"{data.kind} has no slices to shift one by one")
+        scan = data.scan
+        values = scan.value
+        if hasattr(values, "materialise"):
+            values = values.materialise()
+        cube, energy, trimmed = align(np.asarray(values, dtype=float),
+                                      np.asarray(scan.z, dtype=float), levels)
+        labels = dict(scan.labels)
+        unit = _unit_of(labels.get("z", "")) or "eV"
+        labels["z"] = f"E - E_F ({unit})"
+        name = f"{self.filename} [E-Ef]"
+        naming = getattr(self, "existing_names", None)
+        taken = set(naming()) if callable(naming) else set()
+        if name in taken:
+            n = 2
+            while f"{name} {n}" in taken:
+                n += 1
+            name = f"{name} {n}"
+        parameters = dict(info or {})
+        levels = np.asarray(levels, dtype=float)
+        parameters.update({"ef_min": float(levels.min()),
+                           "ef_max": float(levels.max()),
+                           "trimmed_eV": float(trimmed)})
+        result = MemoryData(data.kind, (np.asarray(scan.x, dtype=float),
+                                        np.asarray(scan.k, dtype=float), energy),
+                            cube, labels, source_label=name,
+                            parameters=parameters, prefix="fitEF",
+                            source_path=getattr(data, "path", ""),
+                            source_info=dict(scan.info),
+                            source_motors=dict(scan.fourd_info))
+        self.datasetCreated.emit(result)
+        self.statusBar().showMessage(
+            f"Each slice shifted by its own E_F ({levels.min():.5g} to "
+            f"{levels.max():.5g} eV); {trimmed * 1000:.3g} meV trimmed so they "
+            f"share one range -- added to the file list")
         return result
 
     def divide_fermi_cutoff(self, fit, cutoff_kt: float, info: dict = None):
@@ -516,7 +580,7 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
         """Fit the edge channel by channel on this window's own data and draw
         the result over the image."""
         try:
-            angles, energy, frame, _, _ = reference_frame(self.data)
+            angles, energy, frame, _, _ = self.fermi_frame()
         except ValueError as exc:
             QMessageBox.warning(self, "Fermi level fitting", str(exc))
             return None
@@ -1081,14 +1145,9 @@ class CutWindow(ViewerWindow):
             "Right-click the image for the readout cursor: it reports the "
             "coordinates and value under it and draws the EDC and MDC through "
             "that point.")
-        self.fermi_action = self.add_function(
-            "Fermi edge fit...", self.open_fermi_fit,
-            "Fit the Fermi edge of this cut: E_F, the resolution, and -- in its "
-            "Advanced corner -- dividing the cut-off out and fitting E_F channel "
-            "by channel.", section="Analysis")
-        # The MDC and EDC fits, cut arithmetic and de-gridding are buttons
-        # of the launcher's tool panel, so they are not repeated here: one
-        # way in for each, always in sight.
+        # The Fermi edge fit, the MDC and EDC fits, cut arithmetic and
+        # de-gridding are buttons of the launcher's tool panel, so they are
+        # not repeated here: one way in for each, always in sight.
         self.fs_action = self.add_function(
             "Straighten bands (FS correction)...", self.open_fs_correction,
             "Straighten a curved feature: click along it, fit a polynomial, and "
@@ -3408,18 +3467,7 @@ class ContourWindow(ViewerWindow):
             "Convert this map from angle space to momentum space (A^-1). "
             "Pick the point on the contour that should become k = (0, 0).",
             visible=data.kind not in MOMENTUM_KINDS and data.kind != "kz_map")
-        # Only a photon-energy scan needs this: it is the one kind whose
-        # members were each measured against a different reference. Once
-        # converted it is a kz_map_k and both are done with.
-        self.kz_action = self.add_function(
-            "Align Fermi levels (kz map)...", self.open_kz_processing,
-            "Fit the Fermi edge of every spectrum in this photon-energy "
-            "scan, shift each one to put its own edge at zero, and crop to "
-            "the energy range they all still cover.\n\n"
-            "The scan arrives stacked as measured, because nothing in the "
-            "files says where each spectrum's Fermi level is. This measures "
-            "it from the spectra themselves.",
-            visible=data.kind == "kz_map")
+        # Aligning a kz map's Fermi levels is the launcher tool panel's.
         self.kzconv_action = self.add_function(
             "Convert to momentum (kz, k\u2225)...", self.open_kz_conversion,
             "Convert this photon-energy scan to (k_z, k_par) in A^-1, "
@@ -4079,6 +4127,25 @@ class MapCutWindow(ViewerWindow):
     def slice_label(self) -> str:
         idx = self.control.index
         return f"{self.sum_axis[idx]:.4g} (ind {idx + 1})"
+
+    # -- Fermi-edge fitting ----------------------------------------------------
+    def fermi_frame(self):
+        """The cut on screen, at the slider's position and width."""
+        frame = self.view.last_frame
+        if frame is None:
+            self.refresh_cut()
+            frame = self.view.last_frame
+        return (np.asarray(self.x_axis, dtype=float),
+                np.asarray(self.contour.E, dtype=float),
+                np.asarray(frame, dtype=float), self.x_label,
+                self.contour.energy_label)
+
+    def cut_position(self):
+        """``(position, indices)``: where along the map's first axis the cut
+        on screen is, and the slices it sums."""
+        idx = self.control.index
+        idxs = ContourWindow.index_window(self.sum_axis, idx, self.control.half_width)
+        return float(self.sum_axis[idx]), idxs
 
     # -- Fermi-surface correction -----------------------------------------
     def fs_angle_axis(self):
@@ -5108,14 +5175,32 @@ class FermiFitDialog(_PickerDialog):
         super().__init__(window, window.view, "Fermi level fitting")
         self.window_ = window
         self.fit_result = None
-        self._angle_axis, self._energy_axis, self._frame, \
-            self._angle_label, self._energy_label = reference_frame(window.data)
+        #: On a map's slit-cut window the fit is of the cut on screen, which
+        #: the window's slider moves along the map's first axis; the energy
+        #: axis can then be offset by one E_F or by one fitted per cut.
+        self.slices = (getattr(window, "which", None) == "slit"
+                       and hasattr(window, "cut_position"))
+        self.per_cut = False
+        self.cut_fits = []          # [{"position", "indices", "ef", "error"}]
+        self._load_frame()
 
-        layout = QVBoxLayout(self)
-        intro = QLabel(
-            "The EDC is this cut summed over an angle range; the fit runs over "
-            "an energy range. Drag the selection box on the image or type the "
-            "numbers here -- they follow each other.")
+        outer = QHBoxLayout(self)
+        left = QWidget()
+        layout = QVBoxLayout(left)
+        layout.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(left, stretch=1)
+        if self.slices:
+            intro = QLabel(
+                "The EDC is the slit cut on screen summed over an angle range; "
+                "the fit runs over an energy range. Drag the selection box on "
+                "the image or type the numbers here -- they follow each other. "
+                f"Move the cut with its slider ({window.contour.defl_label}) "
+                f"to fit another one.")
+        else:
+            intro = QLabel(
+                "The EDC is this cut summed over an angle range; the fit runs over "
+                "an energy range. Drag the selection box on the image or type the "
+                "numbers here -- they follow each other.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -5188,7 +5273,9 @@ class FermiFitDialog(_PickerDialog):
         self.offset_button.setToolTip(
             "List a copy of this dataset with the energy axis shifted so the "
             "fitted E_F sits at zero.")
-        self.offset_button.clicked.connect(self.offset_energy_axis)
+        # Through a lambda: clicked() would pass its `checked` flag as
+        # whole_map.
+        self.offset_button.clicked.connect(lambda: self.offset_energy_axis())
         self.offset_button.setEnabled(False)
         row.addWidget(self.estimate_button)
         row.addWidget(self.fit_button)
@@ -5266,11 +5353,163 @@ class FermiFitDialog(_PickerDialog):
         layout.addWidget(advanced)
         layout.addLayout(actions)
 
+        self.cuts_panel = self._cuts_panel()
+        self.cuts_panel.setVisible(False)
+        outer.addWidget(self.cuts_panel)
+
         for box in (self.angle_from, self.angle_to, self.energy_from, self.energy_to):
             box.valueChanged.connect(self._on_range_typed)
         window.view.selectionChanged.connect(self._on_box_moved)
+        if self.slices:
+            window.control.changed.connect(self._cut_moved)
         self.value_boxes["temperature"].setValue(metadata_temperature(window.data))
         self.estimate()
+
+    def _load_frame(self):
+        self._angle_axis, self._energy_axis, self._frame, \
+            self._angle_label, self._energy_label = self.window_.fermi_frame()
+
+    # -- a map: one cut after another ----------------------------------------
+    def _cuts_panel(self):
+        """The fitted cuts, beside the fit once the user has chosen to fit
+        the map cut by cut: where each was, its E_F (editable), and the line
+        the slices in between will be shifted by."""
+        panel = QGroupBox("Fitted cuts")
+        panel.setMinimumWidth(330)
+        box = QVBoxLayout(panel)
+        self.cuts_note = QLabel(
+            "Move the cut with the slit cut's slider and press Fit: each fit is "
+            "added here (a second fit at the same place replaces the first). "
+            "E_F can be edited. Slices between fitted cuts are shifted by a "
+            "straight line between their neighbours; beyond the first and "
+            "the last, by the nearest fit.")
+        self.cuts_note.setWordWrap(True)
+        box.addWidget(self.cuts_note)
+        self.cuts_table = QTableWidget(0, 3)
+        self.cuts_table.setHorizontalHeaderLabels(
+            [self.window_.contour.defl_label.split(" (")[0] if self.slices
+             else "position", "E_F (eV)", "±"])
+        self.cuts_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.cuts_table.verticalHeader().setVisible(False)
+        self.cuts_table.itemChanged.connect(self._cut_fit_edited)
+        box.addWidget(self.cuts_table, stretch=1)
+        self.cuts_plot = pg.PlotWidget()
+        self.cuts_plot.setMinimumHeight(170)
+        self.cuts_plot.setLabel("left", "E_F (eV)")
+        if self.slices:
+            self.cuts_plot.setLabel("bottom", self.window_.contour.defl_label)
+        strip_stock_menu(self.cuts_plot.getPlotItem())
+        self.cuts_line = self.cuts_plot.plot(pen=pg.mkPen("#0d7377", width=2))
+        self.cuts_points = self.cuts_plot.plot(
+            pen=None, symbol="o", symbolSize=7, symbolBrush="#bd4921",
+            symbolPen=None)
+        box.addWidget(self.cuts_plot)
+        row = QHBoxLayout()
+        remove = QPushButton("Remove selected")
+        remove.clicked.connect(self._remove_cut_fits)
+        self.apply_cuts_button = QPushButton("Offset energy axis by these fits")
+        self.apply_cuts_button.setToolTip(
+            "List a copy of the map with every slice shifted by its own E_F, "
+            "from these fits, so all of them have E_F at zero.")
+        self.apply_cuts_button.clicked.connect(lambda: self.apply_cut_fits())
+        row.addWidget(remove)
+        row.addStretch(1)
+        row.addWidget(self.apply_cuts_button)
+        box.addLayout(row)
+        return panel
+
+    def _cut_moved(self):
+        """The slit cut's slider moved: a different cut to fit."""
+        self._load_frame()
+        self.fit_result = None
+        self.offset_button.setEnabled(False)
+        self.ef_line.setVisible(False)
+        self.refresh_edc()
+        position, _ = self.window_.cut_position()
+        self.summary.setText(f"The cut is now at {position:.5g}. Press Fit.")
+
+    def start_per_cut(self):
+        """Fit the map cut by cut from here on, starting with this fit."""
+        self.per_cut = True
+        self.offset_button.setVisible(False)
+        self.cuts_panel.setVisible(True)
+        self.resize(max(self.width(), 900), self.height())
+        if self.fit_result is not None:
+            self._record_fit()
+        self.summary.setText(
+            "Fitting cut by cut. Move the slit cut's slider, press Fit, and "
+            "repeat; then “Offset energy axis by these fits”.")
+
+    def _record_fit(self):
+        position, indices = self.window_.cut_position()
+        result = self.fit_result
+        entry = {"position": position, "indices": np.asarray(indices),
+                 "ef": float(result.values["ef"]),
+                 "error": float(result.errors.get("ef", float("nan")))}
+        self.cut_fits = [e for e in self.cut_fits
+                         if abs(e["position"] - position) > 1e-12]
+        self.cut_fits.append(entry)
+        self.cut_fits.sort(key=lambda e: e["position"])
+        self._show_cut_fits()
+
+    def _show_cut_fits(self):
+        table = self.cuts_table
+        table.blockSignals(True)
+        table.setRowCount(len(self.cut_fits))
+        for row, entry in enumerate(self.cut_fits):
+            cells = (f"{entry['position']:.5g}", f"{entry['ef']:.6g}",
+                     "" if not np.isfinite(entry["error"]) else f"{entry['error']:.2g}")
+            for column, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if column != 1:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                table.setItem(row, column, item)
+        table.blockSignals(False)
+        positions = [e["position"] for e in self.cut_fits]
+        levels = [e["ef"] for e in self.cut_fits]
+        self.cuts_points.setData(positions, levels)
+        if self.cut_fits and self.slices:
+            axis = np.asarray(self.window_.sum_axis, dtype=float)
+            self.cuts_line.setData(axis, levels_along(axis, positions, levels))
+        else:
+            self.cuts_line.setData([], [])
+        self.apply_cuts_button.setEnabled(bool(self.cut_fits))
+
+    def _cut_fit_edited(self, item):
+        if item.column() != 1 or not 0 <= item.row() < len(self.cut_fits):
+            return
+        try:
+            self.cut_fits[item.row()]["ef"] = float(item.text())
+            self.cut_fits[item.row()]["error"] = float("nan")   # typed, not fitted
+        except ValueError:
+            pass
+        self._show_cut_fits()
+
+    def _remove_cut_fits(self):
+        rows = sorted({index.row() for index in self.cuts_table.selectedIndexes()},
+                      reverse=True)
+        for row in rows:
+            if 0 <= row < len(self.cut_fits):
+                del self.cut_fits[row]
+        self._show_cut_fits()
+
+    def apply_cut_fits(self):
+        """Shift every slice of the map by its own E_F: the fitted cuts',
+        and between them a straight line."""
+        if not self.cut_fits:
+            return None
+        axis = np.asarray(self.window_.sum_axis, dtype=float)
+        positions = [e["position"] for e in self.cut_fits]
+        levels = levels_along(axis, positions, [e["ef"] for e in self.cut_fits])
+        info = {"cuts_fitted": len(self.cut_fits),
+                "fitted_at": ", ".join(f"{p:.6g}" for p in positions),
+                "fitted_ef": ", ".join(f"{e['ef']:.6g}" for e in self.cut_fits),
+                "between_fits": "linear interpolation; held beyond the ends"}
+        try:
+            return self.window_.offset_energy_per_slice(levels, info)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Offset energy axis", str(exc))
+            return None
 
     # -- small builders ---------------------------------------------------
     @staticmethod
@@ -5418,6 +5657,8 @@ class FermiFitDialog(_PickerDialog):
         self.ef_line.setVisible(True)
         self.summary.setText(result.summary())
         self.offset_button.setEnabled(True)
+        if self.per_cut:
+            self._record_fit()
         self.window_.statusBar().showMessage(
             f"E_F = {result.values['ef']:.5g} eV, resolution "
             f"{result.values['resolution'] * 1000:.3g} meV FWHM")
@@ -5443,11 +5684,31 @@ class FermiFitDialog(_PickerDialog):
         return info
 
     # -- what comes out of it ---------------------------------------------
-    def offset_energy_axis(self):
+    def offset_energy_axis(self, whole_map=None):
+        """Shift the energy axis by the fitted E_F.
+
+        For a map, first asked (``whole_map`` None): the same offset for the
+        whole map, or one per cut -- in which case this fit starts the list
+        of fitted cuts, and the offsetting waits until the list is done."""
         if self.fit_result is None:
             return None
-        return self.window_.offset_energy_axis(self.fit_result.values["ef"],
-                                               self.fit_info())
+        ef = float(self.fit_result.values["ef"])
+        if self.slices and whole_map is None:
+            answer = QMessageBox.question(
+                self, "Offset energy axis",
+                f"Shift the whole map by this cut's E_F ({ef:.5g} eV)?\n\n"
+                f"Yes: one offset for every slice.\n"
+                f"No: fit more cuts first -- the E_F of slices between fitted "
+                f"cuts is interpolated linearly.",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Yes)
+            if answer == QMessageBox.Cancel:
+                return None
+            whole_map = answer == QMessageBox.Yes
+        if self.slices and not whole_map:
+            self.start_per_cut()
+            return None
+        return self.window_.offset_energy_axis(ef, self.fit_info())
 
     def divide_out(self):
         if self.fit_result is None:

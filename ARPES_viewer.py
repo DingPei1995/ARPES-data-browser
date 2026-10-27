@@ -596,6 +596,8 @@ def run_list_action(name):
         "symmetry": lambda: open_processing("symmetry"),
         "background": lambda: open_processing("background"),
         "degrid": open_degrid,
+        "fermi": open_fermi_fit,
+        "kzalign": open_kz_alignment,
         "save": save_selected,
         "log": show_operations_log,
         "remove": remove_selected,
@@ -1110,28 +1112,9 @@ def open_map_cuts(which: str):
         return []
     opened = []
     for key in keys:
-        contour = next((w for w in viewer_windows
-                        if getattr(w, "_list_key", None) == key
-                        and isinstance(w, viewer_windows_module.ContourWindow)),
-                       None)
+        contour = map_contour(key)
         if contour is None:
-            try:
-                data = load_dataset(key)
-            except Exception as exc:                        # noqa: BLE001
-                QMessageBox.warning(win, "Open a map's cut",
-                                    f"{label_for(key)} could not be read: {exc}")
-                continue
-            contour = viewer_windows_module.open_viewer(
-                data, label_for(key), default_colormap, default_flip)
-            if not isinstance(contour, viewer_windows_module.ContourWindow):
-                if contour is not None:
-                    contour.close()
-                else:
-                    data.close()
-                continue
-            _adopt_viewer(contour, key)
-            contour.closed.connect(_forget_viewer)
-            viewer_windows.append(contour)
+            continue
         cut = contour.open_cut(which)
         if cut is not None:
             cut.raise_()
@@ -1141,6 +1124,79 @@ def open_map_cuts(which: str):
             f"Opened {len(opened)} {'slit' if which == 'slit' else 'scan-axis'} "
             f"cut(s)")
     return opened
+
+
+def map_contour(key):
+    """The contour window of a listed map: the one already open, or a new
+    one kept off screen -- a map's cut windows and its tools hang off it.
+    None (after saying why) if the map cannot be read."""
+    contour = next((w for w in viewer_windows
+                    if getattr(w, "_list_key", None) == key
+                    and isinstance(w, viewer_windows_module.ContourWindow)),
+                   None)
+    if contour is not None:
+        return contour
+    try:
+        data = load_dataset(key)
+    except Exception as exc:                                # noqa: BLE001
+        QMessageBox.warning(win, "Open a map",
+                            f"{label_for(key)} could not be read: {exc}")
+        return None
+    contour = viewer_windows_module.open_viewer(
+        data, label_for(key), default_colormap, default_flip)
+    if not isinstance(contour, viewer_windows_module.ContourWindow):
+        if contour is not None:
+            contour.close()
+        else:
+            data.close()
+        return None
+    _adopt_viewer(contour, key)
+    contour.closed.connect(_forget_viewer)
+    viewer_windows.append(contour)
+    return contour
+
+
+def open_fermi_fit():
+    """The Fermi edge fit of the selected cut or map, with the picture it
+    fits beside it: the cut in its viewer, or a map's slit cut, whose slider
+    picks which cut is fitted. The fit and that window are tied together --
+    closing either closes the other."""
+    key = selected_key()
+    if key is None:
+        return None
+    kind = str(loaded_items.get(key, {}).get("kind", "")).lower()
+    if kind == "cut":
+        window = open_selected()
+    else:
+        cuts = open_map_cuts("slit")
+        window = cuts[0] if cuts else None
+    if window is None or not hasattr(window, "open_fermi_fit"):
+        return None
+    return window.open_fermi_fit(bound=True)
+
+
+def open_kz_alignment():
+    """Align the Fermi levels of the selected photon-energy scan (see
+    ui.panels.kzmap): the panel and the slit cut it picks its box on, tied
+    together like the Fermi edge fit."""
+    key = selected_key()
+    if key is None:
+        return None
+    contour = map_contour(key)
+    if contour is None:
+        return None
+    if contour.data.kind != "kz_map":
+        QMessageBox.information(
+            win, "Align Fermi levels",
+            "Only a photon-energy scan (kz map) is aligned this way, and only "
+            "before its conversion to momentum.")
+        return None
+    dialog = contour.open_kz_processing()
+    cut = getattr(dialog, "cut_window", None)
+    if cut is not None:
+        dialog.finished.connect(lambda *_: cut.close())
+        cut.closed.connect(lambda *_: dialog.close())
+    return dialog
 
 
 def _adopt_viewer(window, key=None):

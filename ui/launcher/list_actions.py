@@ -63,6 +63,9 @@ RULES = {
     "background": ("any", frozenset({"cut"}), "cuts"),
     # Only on the detector's own pixels: a map in momentum has been
     # resampled, and the grid is no longer anywhere fixed to find.
+    "fermi": ("one", PLANES, "a cut or a map"),
+    "kzalign": ("one", frozenset({"kz_map"}),
+                "a photon-energy scan (kz map) before its k conversion"),
     "degrid": ("one", frozenset({"cut", "map", "kz_map"}),
                "a cut, or a map or kz map before its k conversion"),
     "save": ("any", None, "datasets"),

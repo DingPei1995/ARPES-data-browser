@@ -16,6 +16,30 @@ A large rework of where things are: every tool is a button in sight, one
 window per tool. (The version number stays 1.1.0; later changes are added
 here.)
 
+- **Fermi edge fit is a tool-panel button** (*2D & 3D*), for a cut or a
+  map, in angle or in momentum, instead of an entry of the cut viewer's
+  Functions menu. The fit and the window it works on open together and are
+  tied: closing either closes the other.
+  - A **cut** opens in its viewer, with the fit beside it, as before.
+  - A **map** opens on its slit cut (the contour stays off screen), and the
+    fit is of the cut on screen: moving the cut's slider along the map's
+    first axis (deflector, kx, or photon energy) gives another cut to fit,
+    and the EDC follows.
+  - **Offset energy axis** on a map asks first: the same offset for the whole
+    map, or one per cut. *Yes* shifts the whole map by this E_F. *No* opens
+    **Fitted cuts** beside the fit: every fit from then on is added there
+    (a second fit at the same place replaces the first), E_F can be edited
+    or rows removed, and a plot shows the fitted levels and the line between
+    them. **Offset energy axis by these fits** shifts every slice by its own
+    E_F -- the fitted cuts' own, a straight line between neighbouring fits
+    (`fermi.levels_along`), and the nearest fit held beyond the first and
+    the last -- and keeps the energy range all slices still reach, the kz
+    map's own alignment (`kzmap.align`). The result is listed as
+    `[E-Ef]` with the fits on record.
+- **Align Fermi levels (kz map) is a tool-panel button** (*3D only*,
+  "Align Fermi levels (kz)..."), for a photon-energy scan before its k
+  conversion, instead of an entry of the map's Functions menu. It opens with
+  the slit cut it picks its box on, the two tied like the Fermi edge fit.
 - **Remove detector grid is a tool-panel button** (*2D & 3D*), for the
   selected cut, map or kz map -- no longer in the viewers' Functions menus.
   A cut still takes its grid from a `[grid]` pattern in the list when one
@@ -25,7 +49,7 @@ here.)
   from the cut viewer: MDC fit, EDC fit, Cut arithmetic, Remove detector
   grid; from a map's contour and slit-cut windows: Remove detector grid;
   from the curve viewer: Figure composer. What stays is what only the
-  viewer can do -- the Fermi edge fit, k conversions, the FS correction,
+  viewer can do -- k conversions, the FS correction,
   arbitrary cuts, the Brillouin zone, the multi-slice figure, saving or
   freezing the slice on screen, and the curve viewer's own operations
   (the tool panel's crop / bin / normalise do not take curves).

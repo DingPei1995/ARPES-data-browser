@@ -29,7 +29,7 @@ import version
 class Ui_MainWindow:
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(800, 900)
+        MainWindow.resize(800, 940)
         MainWindow.setWindowTitle(version.title())
         # The panel's colours. The disabled rules are not optional: a colour
         # set for every widget is also the colour of a *disabled* widget and
@@ -208,7 +208,7 @@ class Ui_MainWindow:
         panel.setFixedWidth(228)
         layout = QtWidgets.QVBoxLayout(panel)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
         title = QtWidgets.QLabel("Tools")
         title.setObjectName("ToolPanelTitle")
@@ -301,6 +301,11 @@ TOOL_GROUPS = (
          "One panel per selected dataset, in the figure composer."),
     )),
     ("2D && 3D \u2014 cuts, maps", (
+        ("fermi", "Fermi edge fit...",
+         "Fit the Fermi edge: E_F and the resolution, then offset the energy "
+         "axis to E - E_F. A cut opens with its viewer; a map with its slit "
+         "cut, whose slider picks the cut to fit -- one E_F for the whole "
+         "map, or one per cut, interpolated between them."),
         ("smooth", "Smooth...",
          "Gaussian, Savitzky-Golay or moving-average smoothing, with spike "
          "removal. A map is smoothed plane by plane, on the plane you pick."),
@@ -346,6 +351,10 @@ TOOL_GROUPS = (
          "selected is A; the window can swap them."),
     )),
     ("3D only \u2014 maps", (
+        ("kzalign", "Align Fermi levels (kz)...",
+         "Fit the Fermi edge of every spectrum of a photon-energy scan, shift "
+         "each one to put its own edge at zero, and crop to the energy range "
+         "they all still cover. Before the kz conversion."),
         ("slices3d", "3D slices...",
          "The three orthogonal planes through the cube, each placed where "
          "you choose, each with its own colours."),

@@ -6,6 +6,7 @@ import pytest
 from PyQt5.QtCore import QPoint, QTimer
 from PyQt5.QtWidgets import QApplication, QDialogButtonBox, QLabel, QPushButton
 
+from ui.viewers import windows as W
 from ui.viewers.widgets import MemoryData
 
 SLIT = np.linspace(-10, 10, 21)
@@ -225,3 +226,40 @@ def test_degrid_says_why_not_for_a_map_in_momentum(app, monkeypatch):
                       source_label="k")
     assert open_degrid(None, kmap, "k") is None
     assert said and "momentum" in said[0]
+
+
+def test_fermi_fit_and_kz_alignment_are_tools(launcher):
+    lv = launcher
+    _select(lv, "c")
+    assert lv.ui.ToolButtons["fermi"].isEnabled()
+    assert not lv.ui.ToolButtons["kzalign"].isEnabled()
+    lv.ui.ToolButtons["fermi"].click()
+    viewer = lv.viewer_windows[-1]
+    dialog = viewer._fermi_dialog
+    assert isinstance(viewer, W.CutWindow) and not dialog.slices
+    dialog.close()
+    QApplication.processEvents()
+    assert not viewer.isVisible()                      # tied together
+
+    _select(lv, "m")
+    lv.ui.ToolButtons["fermi"].click()
+    cut = next(w for w in QApplication.topLevelWidgets()
+               if isinstance(w, W.MapCutWindow) and w.isVisible())
+    assert cut._fermi_dialog.slices and not cut.contour.isVisible()
+    cut.close()
+    QApplication.processEvents()
+
+    hv = np.linspace(30, 60, 7)
+    rng = np.random.default_rng(2)
+    kz = MemoryData("kz_map", (hv, SLIT, EKIN),
+                    rng.random((hv.size, SLIT.size, EKIN.size)) + 1,
+                    {"x": "Photon energy (eV)", "k": "Angle, slit (deg)",
+                     "z": "Kinetic energy (eV)"}, source_label="kz")
+    lv.add_memory_dataset(kz, "kz")
+    _select(lv, "kz")
+    assert lv.ui.ToolButtons["kzalign"].isEnabled()
+    dialog = lv.open_kz_alignment()
+    assert dialog is not None and dialog.cut_window.isVisible()
+    dialog.close()
+    QApplication.processEvents()
+    assert not dialog.cut_window.isVisible()
