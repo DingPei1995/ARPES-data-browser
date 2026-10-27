@@ -469,6 +469,20 @@ class PreviewPair(QWidget):
 # ==========================================================================
 # The 2-D processing panel
 # ==========================================================================
+def smooth_first_hint(what: str, presmooth: bool = True) -> QLabel:
+    """The note at the top of the second-derivative and curvature panels:
+    both multiply the noise, so they read best on smoothed data."""
+    label = QLabel(
+        f"<b>Tip:</b> {what} amplifies noise, so it usually works better on "
+        f"data that has been smoothed first: run <b>Smooth...</b> from the "
+        f"tool panel, select its result in the list, and open this on that"
+        + (" -- or raise the pre-smooth widths here." if presmooth else "."))
+    label.setWordWrap(True)
+    label.setStyleSheet("background-color: #fff6d6; border: 1px solid #e8d48a;"
+                        " border-radius: 4px; padding: 4px; color: #5a4a10;")
+    return label
+
+
 class ProcessDialog(QDialog):
     """Smooth, differentiate, symmetrise, subtract, normalise, repair and
     fit a 2-D dataset.
@@ -489,6 +503,11 @@ class ProcessDialog(QDialog):
 
     #: the tabs, by the name the launcher's tool buttons open them with
     TABS = ("smooth", "derivative", "curvature", "background", "symmetry")
+    #: each operation's window title, when it is opened alone
+    TITLES = {"smooth": "Smooth", "derivative": "Second derivative",
+              "curvature": "Curvature",
+              "background": "Background subtraction",
+              "symmetry": "Symmetrise"}
 
     def __init__(self, datasets, parent=None, colormap="gray", flip=False,
                  start=None):
@@ -521,15 +540,24 @@ class ProcessDialog(QDialog):
         layout.addWidget(self.preview, 1)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._smooth_tab(), "Smooth")
-        self.tabs.addTab(self._derivative_tab(), "Derivative")
-        self.tabs.addTab(self._curvature_tab(), "Curvature")
-        self.tabs.addTab(self._background_tab(), "Background")
-        self.tabs.addTab(self._symmetry_tab(), "Symmetrise")
-        # Opened on the operation whose button was pressed. The other tabs
-        # stay, so a chain (smooth, then curvature) is still one window.
+        # Kept: a page left out of the tabs belongs to nothing else.
+        self._pages = pages = (
+            (self._smooth_tab(), "Smooth"),
+            (self._derivative_tab(), "Derivative"),
+            (self._curvature_tab(), "Curvature"),
+            (self._background_tab(), "Background subtraction"),
+            (self._symmetry_tab(), "Symmetrise"))
+        # Each operation has its own button in the launcher's tool panel,
+        # so the window it opens is that operation alone. A chain (smooth,
+        # then curvature) is two windows: the first one's result goes to the
+        # list, and the second works on it -- every step a dataset of its own.
         if start in self.TABS:
-            self.tabs.setCurrentIndex(self.TABS.index(start))
+            self.tabs.addTab(*pages[self.TABS.index(start)])
+            self.tabs.tabBar().hide()
+            self.setWindowTitle(f"{self.TITLES[start]} (2D)")
+        else:
+            for page, text in pages:
+                self.tabs.addTab(page, text)
         self.tabs.currentChanged.connect(self.refresh)
         self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self.tabs, 0)
@@ -626,6 +654,7 @@ class ProcessDialog(QDialog):
     def _derivative_tab(self):
         page = QWidget()
         form = QFormLayout(page)
+        form.addRow(smooth_first_hint("A second derivative"))
         self.deriv_kind = QComboBox()
         self.deriv_kind.addItems([
             f"-d²/d{self._short(1)}²  (sharpens EDC peaks)",
@@ -653,6 +682,7 @@ class ProcessDialog(QDialog):
     def _curvature_tab(self):
         page = QWidget()
         form = QFormLayout(page)
+        form.addRow(smooth_first_hint("The curvature"))
         self.curv_mode = QComboBox()
         self.curv_mode.addItems(["2D (isotropic)",
                                  f"1D along {self._short(1)}",
@@ -703,6 +733,13 @@ class ProcessDialog(QDialog):
     def _background_tab(self):
         page = QWidget()
         form = QFormLayout(page)
+        what = QLabel(
+            "Removes the intensity that is not the bands: the inelastic "
+            "background under the peaks (Shirley, Tougaard), a floor common "
+            "to every angle, a smooth 2-D polynomial -- or divides the Fermi "
+            "cut-off out of the spectra.")
+        what.setWordWrap(True)
+        form.addRow(what)
         self.bkg_kind = QComboBox()
         self.bkg_kind.addItems(["Shirley (per line)", "Tougaard (per line)",
                                 "Angle-independent (percentile)",
@@ -836,7 +873,7 @@ class ProcessDialog(QDialog):
             "Smooth": self._smooth_operation,
             "Derivative": self._derivative_operation,
             "Curvature": self._curvature_operation,
-            "Background": self._background_operation,
+            "Background subtraction": self._background_operation,
             "Symmetrise": self._symmetry_operation,
         }
         name = self.tabs.tabText(self.tabs.currentIndex())

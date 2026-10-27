@@ -4,7 +4,7 @@ they can take."""
 import numpy as np
 import pytest
 from PyQt5.QtCore import QPoint, QTimer
-from PyQt5.QtWidgets import QApplication, QDialogButtonBox, QPushButton
+from PyQt5.QtWidgets import QApplication, QDialogButtonBox, QLabel, QPushButton
 
 from ui.viewers.widgets import MemoryData
 
@@ -59,7 +59,9 @@ def test_tool_buttons_follow_the_selection(launcher):
     assert "Select a dataset" in lv.ui.ToolButtons["smooth"].toolTip()
     _select(lv, "c")
     tools = lv.ui.ToolButtons
-    assert tools["fit"].isEnabled() and tools["background"].isEnabled()
+    assert tools["edcfit"].isEnabled() and tools["background"].isEnabled()
+    assert not tools["mdcfit"].isEnabled()            # an angle cut
+    assert "momentum" in tools["mdcfit"].toolTip()
     assert not tools["slices3d"].isEnabled()
     _select(lv, "m")
     assert tools["slices3d"].isEnabled() and tools["notch3d"].isEnabled()
@@ -137,3 +139,59 @@ def test_close_ends_every_button_row(app):
     row.rejected.connect(lambda: rejected.append(1))
     close.click()
     assert rejected == [1]
+
+
+def test_a_k_cut_lights_the_mdc_fit(launcher):
+    lv = launcher
+    k = np.linspace(-0.5, 0.5, 21)
+    kcut = MemoryData("cut", (k, EKIN), np.ones((k.size, EKIN.size)),
+                      {"x": "k (Å⁻¹)", "y": "Kinetic energy (eV)"},
+                      source_label="k")
+    lv.add_memory_dataset(kcut, "k")
+    _select(lv, "k")
+    assert lv.ui.ToolButtons["mdcfit"].isEnabled()
+    lv.ui.ToolButtons["mdcfit"].click()
+    window = lv.viewer_windows[-1]
+    assert window.windowTitle().startswith("MDC fit (k-cut only)")
+    assert window.direction.currentIndex() == 0 and window.fermi_group.isHidden()
+    window.close()
+    _select(lv, "c")
+    lv.ui.ToolButtons["edcfit"].click()
+    window = lv.viewer_windows[-1]
+    assert window.windowTitle().startswith("EDC fit")
+    assert window.direction.currentIndex() == 1
+    assert not window.dispersion_button.isEnabled()    # angle cut: no v_F
+    window.close()
+
+
+@pytest.mark.parametrize("operation, title", [
+    ("smooth", "Smooth"), ("derivative", "Second derivative"),
+    ("curvature", "Curvature"), ("background", "Background subtraction"),
+    ("symmetry", "Symmetrise")])
+def test_each_filter_opens_alone(launcher, operation, title):
+    lv = launcher
+    _select(lv, "c")
+    lv.ui.ToolButtons[operation].click()
+    dialog = lv.process_dialog
+    assert dialog.windowTitle() == f"{title} (2D)"
+    assert dialog.tabs.count() == 1 and dialog.tabs.tabBar().isHidden()
+    tip = "smoothed first" in " ".join(
+        label.text() for label in dialog.findChildren(QLabel))
+    assert tip == (operation in ("derivative", "curvature"))
+    dialog.close()
+    _select(lv, "m")
+    if operation == "background":
+        assert not lv.ui.ToolButtons[operation].isEnabled()
+        return
+    lv.ui.ToolButtons[operation].click()
+    dialog = lv.process_dialog
+    assert dialog.windowTitle() == f"{title} (3D)" and dialog.tabs.count() == 1
+    if operation != "symmetry":
+        texts = [dialog.plane_operation.itemText(i)
+                 for i in range(dialog.plane_operation.count())]
+        word = {"smooth": ("smooth", "spikes"), "derivative": ("derivative",),
+                "curvature": ("Curvature",)}[operation]
+        assert all(any(w in t for w in word) for t in texts)
+        dialog.refresh()
+        assert "<span style='color:#b00'>" not in dialog.note.text()
+    dialog.close()

@@ -1504,16 +1504,20 @@ class VolumeProcessDialog(QDialog):
     SUFFIXES = {"smooth": "_sm", "derivative": "_d2", "curvature": "_cur",
                 "normalise": "_nor", "symmetry": "_symm", "despike": "_fix"}
 
-    #: where each of the launcher's tool buttons opens this panel: the tab,
-    #: and on the plane-wise tab the operation (an index of PLANE_OPERATIONS)
-    STARTS = {"smooth": (0, 0), "derivative": (0, 3),
-              "curvature": (0, 5), "symmetry": (1, None)}
+    #: what each of the launcher's tool buttons opens this panel as: the
+    #: plane-wise operations it offers (indices of PLANE_OPERATIONS), or
+    #: the symmetrisation, and the window's title
+    STARTS = {"smooth": ((0, 1, 2), "Smooth"),
+              "derivative": ((3, 4), "Second derivative"),
+              "curvature": ((5, 6, 7), "Curvature"),
+              "symmetry": (None, "Symmetrise")}
 
     def __init__(self, datasets, parent=None, colormap="gray", flip=False,
                  start=None):
         super().__init__(parent)
         self.datasets = list(datasets)
         self.colormap, self.flip = colormap, flip
+        self.start = start if start in self.STARTS else None
         self.setWindowTitle("Smooth / derivative (3D)")
         self.setModal(False)
         self.resize(1000, 880)
@@ -1554,17 +1558,22 @@ class VolumeProcessDialog(QDialog):
         layout.addWidget(self.preview, 1)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._plane_tab(), "Plane-wise")
-        self.tabs.addTab(self._symmetry_tab(), "Symmetrise")
-        if start in self.STARTS:
-            tab, operation = self.STARTS[start]
-            self.tabs.setCurrentIndex(tab)
-            if operation is not None:
-                # Quietly: the preview timer is not made yet, and the
-                # first refresh below shows this operation anyway.
-                self.plane_operation.blockSignals(True)
-                self.plane_operation.setCurrentIndex(operation)
-                self.plane_operation.blockSignals(False)
+        self._plane_page = self._plane_tab()
+        self._symmetry_page = self._symmetry_tab()
+        # One operation per window when a tool button opened it, as in the
+        # 2-D panel: the plane-wise page then lists only that operation's
+        # variants, and only the settings they use.
+        if self.start is None:
+            self.tabs.addTab(self._plane_page, "Plane-wise")
+            self.tabs.addTab(self._symmetry_page, "Symmetrise")
+        else:
+            choices, title = self.STARTS[self.start]
+            if choices is None:
+                self.tabs.addTab(self._symmetry_page, "Symmetrise")
+            else:
+                self.tabs.addTab(self._plane_page, "Plane-wise")
+            self.tabs.tabBar().hide()
+            self.setWindowTitle(f"{title} (3D)")
         self.tabs.currentChanged.connect(self.refresh)
         self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self.tabs, 0)
@@ -1618,9 +1627,18 @@ class VolumeProcessDialog(QDialog):
         self.plane_operation = QComboBox()
         # Named after the plane's real axes (filled in by _plane_changed),
         # not "first axis"/"second axis", which left the user to work out
-        # which of the plane's two axes the program counts first.
-        self.plane_operation.addItems([""] * len(self.PLANE_OPERATIONS))
+        # which of the plane's two axes the program counts first. Each
+        # entry carries its index in PLANE_OPERATIONS.
+        choices = (self.STARTS[self.start][0] if self.start is not None
+                   else None) or range(len(self.PLANE_OPERATIONS))
+        for index in choices:
+            self.plane_operation.addItem("", index)
         form.addRow("Operation", self._watch(self.plane_operation))
+        if self.start in ("derivative", "curvature"):
+            from ui.panels.process import smooth_first_hint
+            form.insertRow(0, smooth_first_hint(
+                "A second derivative" if self.start == "derivative"
+                else "The curvature", presmooth=False))
 
         self.plane_width_u = spin(0.0, 0.0, 1e4, 0.001, 5)
         self.plane_width_v = spin(0.0, 0.0, 1e4, 0.001, 5)
@@ -1637,6 +1655,15 @@ class VolumeProcessDialog(QDialog):
         form.addRow("Normalise to", self._watch(self.plane_norm_mode))
         self.plane_normal.currentIndexChanged.connect(self._plane_changed)
         self._plane_changed()
+        # Only the settings this window's operations use.
+        used = {"smooth": (self.plane_width_u, self.plane_width_v),
+                "derivative": (), "curvature": (self.plane_a0,)}.get(self.start)
+        if used is not None:
+            for widget in (self.plane_width_u, self.plane_width_v,
+                           self.plane_a0, self.plane_norm_mode):
+                if widget not in used:
+                    widget.setVisible(False)
+                    form.labelForField(widget).setVisible(False)
         note = QLabel("<i>Applied plane by plane, so a curvature of "
                       "constant-energy maps and a curvature of dispersions "
                       "are separate choices rather than the same button.</i>")
@@ -1658,8 +1685,9 @@ class VolumeProcessDialog(QDialog):
         so that a smooth applied straight away does something."""
         dim = self.plane_normal.currentData()
         u, v = [self.labels[d].split(" (")[0] for d in range(3) if d != dim]
-        for index, text in enumerate(self.PLANE_OPERATIONS):
-            self.plane_operation.setItemText(index, text.format(u=u, v=v))
+        for row in range(self.plane_operation.count()):
+            text = self.PLANE_OPERATIONS[self.plane_operation.itemData(row)]
+            self.plane_operation.setItemText(row, text.format(u=u, v=v))
         for box, name, axis in ((self.plane_width_u, u, self._plane_axes(dim)[0]),
                                 (self.plane_width_v, v, self._plane_axes(dim)[1])):
             self._plane_form.labelForField(box).setText(f"Width along {name}")
@@ -1716,7 +1744,7 @@ class VolumeProcessDialog(QDialog):
     def plane_operation_function(self):
         dim = self.plane_normal.currentData()
         axes = self._plane_axes(dim)
-        choice = self.plane_operation.currentIndex()
+        choice = int(self.plane_operation.currentData())
         widths = (self.plane_width_u.value(), self.plane_width_v.value())
         a0 = self.plane_a0.value()
         mode = self.plane_norm_mode.currentText()
@@ -1763,7 +1791,7 @@ class VolumeProcessDialog(QDialog):
     # -- preview -----------------------------------------------------------
     def _current_plane(self):
         """The plane the preview shows, and the two axes it lives on."""
-        if self.tabs.currentIndex() == 0:
+        if self.tabs.currentWidget() is self._plane_page:
             dim = self.plane_normal.currentData()
         else:
             dim = 2
@@ -1792,7 +1820,7 @@ class VolumeProcessDialog(QDialog):
         small, small_axes = _decimate(plane, axes)
         self.preview.show_source(small, small_axes, self.colormap, self.flip)
         try:
-            if self.tabs.currentIndex() == 0:
+            if self.tabs.currentWidget() is self._plane_page:
                 key, params, _, run = self.plane_operation_function()
                 result = run(small)
             else:
@@ -1864,7 +1892,7 @@ class VolumeProcessDialog(QDialog):
         # worst kind of unsafe; and a value that changed halfway through a
         # run would silently process half the datasets differently.
         try:
-            plane_wise = self.tabs.currentIndex() == 0
+            plane_wise = self.tabs.currentWidget() is self._plane_page
             if plane_wise:
                 key, params, dim, run = self.plane_operation_function()
                 symmetry = None

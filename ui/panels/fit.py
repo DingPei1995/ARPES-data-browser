@@ -1,18 +1,26 @@
 """
 ui/panels/fit.py
 ================
-The MDC/EDC fitting panel and what comes out of it: the dispersion window
-(v_F, m*, the window-sensitivity scan) and the self-energy window.
+The MDC fit and EDC fit panels and what comes out of them: the dispersion
+window (v_F, m*, the window-sensitivity scan) and the self-energy window.
 
 The panel is built around **seeding**, the one idea worth keeping from
 ``fit_MDC_demo``: mark a band at four or five lines and the rest is
 interpolated. Automatic peak finding fails where it matters -- crossings,
 weak features, merging peaks -- and pointing at the band takes seconds.
 
-Momentum cuts only
-------------------
-This opens for a cut whose first axis is a momentum: one converted by "Cut
-k conversion", or a slice of a k-map. Not for an angle cut. A velocity is
+Two panels, one class
+---------------------
+:class:`FitPanel` is opened as an **MDC fit** (``mode="mdc"``) or an **EDC
+fit** (``mode="edc"``): the same seeding and fitting, along one direction
+each. An EDC fit takes any cut -- an EDC's peak energy means the same in
+degrees or in Å⁻¹ -- but its dispersion window, which turns the band into
+v_F and m*, opens only for a momentum cut, for the reason below.
+
+Momentum cuts only, for the MDC fit
+-----------------------------------
+The MDC fit opens for a cut whose first axis is a momentum: one converted by
+"Cut k conversion", or a slice of a k-map. Not for an angle cut. A velocity is
 eV*A, an effective mass is hbar^2/2m_e over eV*A^2, and a self-energy needs
 both -- feed degrees into any of them and the numbers come out wrong by a
 factor nobody can reconstruct afterwards, while looking perfectly
@@ -67,6 +75,19 @@ def momentum_cut_reason(data) -> str:
             f"slice from a converted k-map.")
 
 
+def edc_cut_reason(data) -> str:
+    """Empty if the EDC fit can work on this dataset, otherwise why not:
+    any cut will do."""
+    if getattr(data, "kind", "") != "cut":
+        return ("The EDC fit works on a 2-D cut. Take a slice of a map "
+                "first.")
+    return ""
+
+
+#: the panel's two modes, by the title each window carries
+FIT_MODES = {"mdc": "MDC fit (k-cut only)", "edc": "EDC fit"}
+
+
 def fermi_defaults(data):
     """``(ef, temperature, resolution)`` read off the dataset if it says.
 
@@ -110,9 +131,14 @@ class FitPanel(QMainWindow):
     closed = pyqtSignal(object)
 
     def __init__(self, data, label: str, parent=None, colormap="gray",
-                 flip=False):
+                 flip=False, mode: str = "mdc"):
         super().__init__(parent)
+        if mode not in FIT_MODES:
+            raise ValueError(f"unknown fit {mode!r}")
+        self.mode = mode
         self.data = data
+        #: whether the cut is in momentum, which v_F and m* need
+        self.momentum = momentum_cut_reason(data) == ""
         self.label = label
         scan = data.scan
         self.values = np.asarray(scan.value, dtype=float)
@@ -131,7 +157,7 @@ class FitPanel(QMainWindow):
         self._redraw.setInterval(90)
         self._redraw.timeout.connect(self.refresh_line)
 
-        self.setWindowTitle(f"MDC / EDC fit — {label}")
+        self.setWindowTitle(f"{FIT_MODES[mode]} — {label}")
         self.resize(1240, 860)
 
         central = QWidget()
@@ -275,8 +301,12 @@ class FitPanel(QMainWindow):
         self.direction.addItems([f"MDCs: lines along {self._short(0)}",
                                  f"EDCs: lines along {self._short(1)}"])
         self.direction.setMaximumWidth(230)
+        # Fixed by the mode: the MDC fit and the EDC fit are two panels.
+        self.direction.setCurrentIndex(0 if self.mode == "mdc" else 1)
         self.direction.currentIndexChanged.connect(self._direction_changed)
         form.addRow("Fit", self.direction)
+        self.direction.setVisible(False)
+        form.labelForField(self.direction).setVisible(False)
         self.shape = QComboBox()
         self.shape.addItems(PK.PEAK_SHAPES)
         self.shape.setMaximumWidth(140)
@@ -342,6 +372,8 @@ class FitPanel(QMainWindow):
         fermi.addRow("", note)
         if resolution > 0:
             self.resolution.setValue(resolution)
+        self.fermi_group.setTitle("Fermi cut-off")
+        self.fermi_group.setVisible(self.mode == "edc")
         outer.addWidget(self.fermi_group)
 
         buttons = QWidget()
@@ -352,6 +384,11 @@ class FitPanel(QMainWindow):
         column.addWidget(run)
         self.dispersion_button = QPushButton("Dispersion...")
         self.dispersion_button.setEnabled(False)
+        if not self.momentum:
+            self.dispersion_button.setToolTip(
+                "v_F and m* need a cut in momentum: this one's first axis is "
+                "an angle. Convert the cut to k first; the fitted peaks can "
+                "still be saved as a table here.")
         self.dispersion_button.clicked.connect(self.open_dispersion)
         column.addWidget(self.dispersion_button)
         self.table_button = QPushButton("Save table...")
@@ -715,7 +752,7 @@ class FitPanel(QMainWindow):
 
         series.x_label, series.y_label = self.labels
         self.series = series
-        self.dispersion_button.setEnabled(True)
+        self.dispersion_button.setEnabled(self.momentum)
         self.table_button.setEnabled(True)
         self._draw_fitted_positions()
         done = int(np.isfinite(series.centres).any(axis=1).sum())

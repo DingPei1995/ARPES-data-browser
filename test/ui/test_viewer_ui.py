@@ -95,12 +95,14 @@ def test_cut_viewer_keeps_no_tool_buttons(app):
     window = W.CutWindow(_cut(), "c", "gray", False)
     assert _toolbar_buttons(window) == ["Plot tools"]
     texts = _visible_texts(window)
-    for expected in ("Fermi edge fit...", "MDC / EDC fit...", "Straighten bands (FS correction)...",
+    for expected in ("Fermi edge fit...", "MDC fit (k-cut only)...", "EDC fit...",
+                     "Straighten bands (FS correction)...",
                      "Convert to momentum (k)...", "Cut arithmetic...", "Remove detector grid..."):
         assert expected in texts
     # an angle cut cannot be band-fitted: the entry says why instead of vanishing
     assert not window.fit_action.isEnabled()
     assert window.fit_action.toolTip().startswith("Not available here")
+    assert window.edc_fit_action.isEnabled()          # an EDC fit takes any cut
     window.close()
 
 

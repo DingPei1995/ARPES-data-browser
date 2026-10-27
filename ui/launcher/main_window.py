@@ -205,7 +205,7 @@ class Ui_MainWindow:
         """
         panel = QtWidgets.QFrame(parent)
         panel.setObjectName("ToolPanel")
-        panel.setFixedWidth(210)
+        panel.setFixedWidth(228)
         layout = QtWidgets.QVBoxLayout(panel)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
@@ -315,14 +315,20 @@ TOOL_GROUPS = (
          "constant-energy planes."),
     )),
     ("2D only \u2014 cuts", (
-        ("background", "Background...",
-         "Shirley, Tougaard, angle-independent or polynomial background, or "
-         "divide out the Fermi cut-off."),
+        ("background", "Background subtraction...",
+         "Remove the intensity that is not the bands: Shirley or Tougaard "
+         "inelastic background, a floor common to every angle, a smooth "
+         "polynomial -- or divide out the Fermi cut-off."),
         ("stack", "Stack plot (EDC / MDC)...",
          "A waterfall of EDCs or MDCs across the cut."),
-        ("fit", "MDC / EDC fit...",
-         "Fit peaks line by line, then read the band off the fitted centres: "
-         "Fermi velocity, effective mass, self-energy. Converted cuts only."),
+        ("mdcfit", "MDC fit (k-cut only)...",
+         "Fit the momentum distribution curves line by line, then read the "
+         "band off the fitted centres: Fermi velocity, effective mass, "
+         "self-energy. Only for a cut converted to momentum (k)."),
+        ("edcfit", "EDC fit...",
+         "Fit the energy distribution curves line by line, optionally with "
+         "the Fermi cut-off in the model. Any cut; v_F and m* from the "
+         "fitted band need a cut in momentum."),
         ("corelevel", "Core-level check...",
          "Which element and orbital each peak of the angle-integrated EDC is: "
          "the sample's elements against tabulated binding energies, after "

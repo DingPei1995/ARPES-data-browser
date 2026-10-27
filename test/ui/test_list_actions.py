@@ -66,3 +66,10 @@ def test_filters_take_cuts_or_maps_but_not_both_at_once():
         enabled, reason = availability(action, [CUT, MAP])
         assert not enabled and "different panels" in reason
     assert ok("background", CUT) and not ok("background", MAP)
+
+
+def test_the_mdc_fit_wants_a_cut_in_momentum():
+    assert ok("mdcfit", ("k", "Cut", True)) and ok("mdcfit", ("c", "Cut", None))
+    enabled, reason = availability("mdcfit", [("c", "Cut", False)])
+    assert not enabled and "EDC fit" in reason
+    assert ok("edcfit", ("c", "Cut", False)) and not ok("edcfit", MAP)

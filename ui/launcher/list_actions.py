@@ -44,7 +44,8 @@ RULES = {
     "deflector_cut": ("any", CUBES, "maps"),
     "figure": ("any", frozenset({"cut"}) | CURVES, "cuts or curves"),
     "stack": ("one", frozenset({"cut"}), "a cut"),
-    "fit": ("one", frozenset({"cut"}), "a cut"),
+    "mdcfit": ("one", frozenset({"cut"}), "a cut in momentum (k)"),
+    "edcfit": ("one", frozenset({"cut"}), "a cut"),
     "corelevel": ("one", frozenset({"cut"}), "a cut"),
     "slices3d": ("one", CUBES, "a map"),
     "notch3d": ("one", CUBES, "a map"),
@@ -76,7 +77,8 @@ def availability(action: str, rows):
     """``(enabled, reason)`` for one menu entry.
 
     ``rows`` is ``[(name, kind label), ...]`` for the selected rows, in list
-    order. ``reason`` is empty when the entry is enabled, and otherwise says
+    order; a row may carry a third item, whether it is a cut in momentum
+    (True / False / None for not known), which the MDC fit needs. ``reason`` is empty when the entry is enabled, and otherwise says
     what is wrong in terms of the selection -- it becomes the tooltip.
     """
     count, kinds, wanted = RULES[action]
@@ -94,17 +96,23 @@ def availability(action: str, rows):
     if kinds == "all":
         return True, ""
     allowed = KNOWN if kinds is None else kinds
-    for name, label in rows:
+    for name, label, *_ in rows:
         if kind_of(label) not in allowed:
             what = label or "not readable"
             return False, (f"Works on {wanted} only; “{name}” is "
                            f"{'a ' if kind_of(label) != 'unknown' else ''}"
                            f"{what}.")
-    if action == "combine" and len({kind_of(label) for _, label in rows}) > 1:
+    if action == "combine" and len({kind_of(row[1]) for row in rows}) > 1:
         return False, ("Combines datasets of one kind: cuts with cuts, maps "
                        "with maps, kz maps with kz maps.")
-    if action in PROCESSING and len({kind_of(label) == "cut"
-                                     for _, label in rows}) > 1:
+    if action in PROCESSING and len({kind_of(row[1]) == "cut"
+                                     for row in rows}) > 1:
         return False, ("Cuts and maps are processed in different panels: "
                        "select cuts only, or maps only.")
+    if action == "mdcfit" and any(len(row) > 2 and row[2] is False
+                                  for row in rows):
+        return False, ("The MDC fit works on a cut in momentum only; "
+                       f"“{rows[0][0]}” is still in angle. Convert it to k "
+                       "first (cut viewer: Convert to momentum), or use the "
+                       "EDC fit.")
     return True, ""

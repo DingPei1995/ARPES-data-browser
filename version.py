@@ -4,8 +4,8 @@ Shown in the launcher's title bar and footer, so that a user (and a bug
 report) can say which build is in use. Bump both with every change that
 reaches users, and give the CHANGELOG entry the same version.
 """
-VERSION = "1.0.8"
-UPDATED = "2026-10-26"
+VERSION = "1.0.9"
+UPDATED = "2026-10-27"
 REPOSITORY = "https://github.com/DingPei1995/ARPES-data-browser"
 
 

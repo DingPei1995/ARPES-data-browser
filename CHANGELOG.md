@@ -12,6 +12,36 @@ file is the record of how it got that way.
 
 ## Unreleased
 
+(nothing yet)
+
+## 1.0.9 — 2026-10-27
+
+- **MDC fit and EDC fit are two tools.** "MDC / EDC fit" was one window
+  with a direction switch, and open only for a cut in momentum, though an
+  EDC fit means the same in angle. Now:
+  - **MDC fit (k-cut only)...** -- MDCs only, and only for a cut converted
+    to momentum. Its tool-panel button is greyed out for a cut still in
+    angle, with the reason in the tooltip: whether a cut is in k is worked
+    out once per row from its axis labels (read from the file the first
+    time it is the one row selected, its values left on disk) and kept
+    with the row.
+  - **EDC fit...** -- EDCs only, for any cut, with the Fermi cut-off in the
+    model as before. Its *Dispersion...* (v_F, m*) is offered only for a
+    cut in momentum; for an angle cut the fitted peaks can still be saved
+    as a table.
+  - The cut viewer's Functions menu has the same two entries.
+- **Smooth, Second derivative, Curvature, Symmetrise and Background
+  subtraction each open a window of their own**, in 2D and 3D, instead of
+  tabs of one "Smooth / derivative" window. A 3-D window lists only its own
+  operation's variants (smooth: Gaussian, Savitzky-Golay, remove spikes;
+  second derivative along either axis; curvature 2D or 1D) and only the
+  settings they use. A chain of filters is now a chain of datasets: smooth,
+  select the result in the list, then open the next on it.
+  - The second-derivative and curvature windows say at the top that they
+    work better on smoothed data, and how to get there.
+  - **"Background" is now "Background subtraction"**, with a line saying
+    what it removes (Shirley / Tougaard inelastic background, a floor common
+    to every angle, a smooth polynomial, or dividing out the Fermi cut-off).
 - **Every tool is in sight: a tool panel beside the list, and one button
   per data operation under it.** Several tools were only reachable through
   the list's right-click menu or as a tab of a window opened by a button

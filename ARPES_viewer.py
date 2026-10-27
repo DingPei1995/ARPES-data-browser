@@ -516,6 +516,41 @@ def show_list_menu(position):
 last_list_menu = None
 
 
+def _momentum_cut(key):
+    """Whether the row is a cut in momentum, which the MDC fit needs; None
+    when that is not known. Worked out once per row and kept with it: for a
+    computed cut from the data in hand, for a cut in a file by reading its
+    labels -- only those, the values stay on disk -- the first time it is
+    the one row selected."""
+    from ui.panels.fit import momentum_cut_reason
+
+    record = loaded_items.get(key)
+    if record is None or str(record.get("kind", "")).lower() != "cut":
+        return None
+    if "momentum" not in record:
+        data = record.get("memory")
+        try:
+            if data is not None:
+                record["momentum"] = momentum_cut_reason(data) == ""
+            else:
+                read = NxsData.acquire(record["path"], record["entry"])
+                try:
+                    record["momentum"] = momentum_cut_reason(read) == ""
+                finally:
+                    read.close()
+        except Exception:                                  # noqa: BLE001
+            record["momentum"] = None
+    return record["momentum"]
+
+
+def _row_info(key, look_inside: bool = True):
+    """``(name, kind label[, momentum])`` for list_actions.availability."""
+    name, kind = label_for(key), loaded_items.get(key, {}).get("kind")
+    if not look_inside:
+        return (name, kind)
+    return (name, kind, _momentum_cut(key))
+
+
 def update_tool_buttons():
     """Light up the buttons under the list and in the tool panel that the
     selection can take, and grey out the rest -- with the reason in the
@@ -523,8 +558,8 @@ def update_tool_buttons():
     the right-click menu, so it costs nothing on every click."""
     from ui.launcher.list_actions import availability
 
-    rows = [(label_for(k), loaded_items.get(k, {}).get("kind"))
-            for k in selected_keys()]
+    keys = selected_keys()
+    rows = [_row_info(k, look_inside=len(keys) == 1) for k in keys]
     for name, button in {**ui.ListButtons, **ui.ToolButtons}.items():
         enabled, reason = availability(name, rows)
         button.setEnabled(enabled)
@@ -544,7 +579,8 @@ def run_list_action(name):
         "rename": rename_selected,
         "figure": plot_selected_as_figure,
         "stack": open_stack_plot,
-        "fit": open_curve_fit,
+        "mdcfit": lambda: open_curve_fit("mdc"),
+        "edcfit": lambda: open_curve_fit("edc"),
         "corelevel": open_core_level_check,
         "slices3d": lambda: open_volume_view("slices"),
         "notch3d": lambda: open_volume_view("notch"),
@@ -1435,33 +1471,37 @@ def open_stack_plot():
     return window
 
 
-def open_curve_fit():
-    """Fit the MDCs or EDCs of the selected cut and read the band off them.
+def open_curve_fit(mode: str = "mdc"):
+    """The MDC fit (``"mdc"``) or the EDC fit (``"edc"``) of the selected
+    cut, to read the band off the fitted peaks.
 
-    Only a cut whose in-plane axis is already in A^-1 gets in. Nothing in
-    the fit itself would object to degrees -- the peaks would come out
-    perfectly well -- but every quantity built on the fitted band would be
-    wrong: v_F would be in eV.degree, m* would be meaningless, and neither
-    number carries its units around to say so. Converting first is one
-    button, and it is the honest order of operations.
+    The MDC fit takes only a cut whose in-plane axis is already in A^-1.
+    Nothing in the fit itself would object to degrees -- the peaks would
+    come out perfectly well -- but every quantity built on the fitted band
+    would be wrong: v_F would be in eV.degree, m* would be meaningless, and
+    neither number carries its units around to say so. Converting first is
+    one button, and it is the honest order of operations. The EDC fit takes
+    any cut; its panel offers v_F and m* only for a momentum cut.
     """
-    from ui.panels.fit import FitPanel, momentum_cut_reason
+    from ui.panels.fit import FitPanel, momentum_cut_reason, edc_cut_reason, FIT_MODES
 
+    title = FIT_MODES[mode]
     key = selected_key()
     if key is None:
         return None
     try:
         data = load_dataset(key)
     except Exception as exc:
-        QMessageBox.warning(win, "MDC / EDC fit", str(exc))
+        QMessageBox.warning(win, title, str(exc))
         return None
-    reason = momentum_cut_reason(data)
+    reason = (momentum_cut_reason if mode == "mdc" else edc_cut_reason)(data)
     if reason:
         data.close()
-        QMessageBox.information(win, "MDC / EDC fit", reason + ".")
+        QMessageBox.information(win, title, reason + ".")
         return None
 
-    window = FitPanel(data, label_for(key), win, default_colormap, default_flip)
+    window = FitPanel(data, label_for(key), win, default_colormap, default_flip,
+                      mode=mode)
     window.datasetsCreated.connect(_list_computed)
     window.closed.connect(_forget_viewer)
     window.closed.connect(release_once(data))

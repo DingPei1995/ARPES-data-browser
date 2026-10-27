@@ -1108,13 +1108,20 @@ class CutWindow(ViewerWindow):
             "Advanced corner -- dividing the cut-off out and fitting E_F channel "
             "by channel.", section="Analysis")
         self.fit_action = self.add_function(
-            "MDC / EDC fit...", self.open_mdc_edc_fit,
-            "Fit peaks line by line and read the band off the fitted centres: "
-            "Fermi velocity, effective mass, self-energy.", section="Analysis")
-        # Deliberately only for converted cuts. A band fitted in degrees has
-        # a slope in eV/degree, and every quantity built on it -- v_F, m*,
-        # the self-energy -- would silently be in the wrong units. The entry
-        # says why rather than disappearing, so the route to it is obvious.
+            "MDC fit (k-cut only)...", lambda: self.open_mdc_edc_fit("mdc"),
+            "Fit the MDCs line by line and read the band off the fitted "
+            "centres: Fermi velocity, effective mass, self-energy.",
+            section="Analysis")
+        self.edc_fit_action = self.add_function(
+            "EDC fit...", lambda: self.open_mdc_edc_fit("edc"),
+            "Fit the EDCs line by line, optionally with the Fermi cut-off in "
+            "the model. Any cut; v_F and m* need a cut in momentum.",
+            section="Analysis")
+        # The MDC fit deliberately only for converted cuts. A band fitted in
+        # degrees has a slope in eV/degree, and every quantity built on it
+        # -- v_F, m*, the self-energy -- would silently be in the wrong
+        # units. The entry says why rather than disappearing, so the route
+        # to it is obvious.
         from ui.panels.fit import momentum_cut_reason
         reason = momentum_cut_reason(data)
         if reason:
@@ -1198,25 +1205,28 @@ class CutWindow(ViewerWindow):
         dialog.raise_()
         return dialog
 
-    def open_mdc_edc_fit(self):
-        """The MDC/EDC fit panel on this cut. Modeless and a window of its
-        own, because a fit is worked at over several minutes and the cut
-        behind it is what the seeds are read from."""
-        from ui.panels.fit import FitPanel, momentum_cut_reason
+    def open_mdc_edc_fit(self, mode: str = "mdc"):
+        """The MDC fit (``"mdc"``) or EDC fit (``"edc"``) panel on this cut.
+        Modeless and a window of its own, because a fit is worked at over
+        several minutes and the cut behind it is what the seeds are read
+        from. One of each can be open."""
+        from ui.panels.fit import (FitPanel, momentum_cut_reason,
+                                   edc_cut_reason, FIT_MODES)
 
-        reason = momentum_cut_reason(self.data)
+        reason = (momentum_cut_reason if mode == "mdc" else edc_cut_reason)(self.data)
         if reason:
-            QMessageBox.information(self, "MDC / EDC fit", reason + ".")
+            QMessageBox.information(self, FIT_MODES[mode], reason + ".")
             return None
-        existing = getattr(self, "_fit_panel", None)
+        attribute = f"_fit_panel_{mode}"
+        existing = getattr(self, attribute, None)
         if existing is not None and existing.isVisible():
             existing.raise_()
             existing.activateWindow()
             return existing
         panel = FitPanel(self.data, self.filename, self,
-                         self.colormap, self.flip)
-        self._fit_panel = panel
-        panel.closed.connect(lambda *_: setattr(self, "_fit_panel", None))
+                         self.colormap, self.flip, mode=mode)
+        setattr(self, attribute, panel)
+        panel.closed.connect(lambda *_: setattr(self, attribute, None))
         panel.datasetsCreated.connect(
             lambda made: [self.datasetCreated.emit(one) for one in made])
         panel.show()
