@@ -516,3 +516,17 @@ def test_the_slice_series_figure_is_a_tool(launcher, monkeypatch):
     assert not any(isinstance(w, W.ContourWindow) and w.isVisible()
                    for w in lv.viewer_windows)          # no contour left behind
     window.close()
+
+
+def test_the_tool_panel_uses_the_main_panels_font(launcher):
+    """No size of its own: the tool buttons and tabs read like the list's
+    buttons beside them."""
+    ui = launcher.ui
+    main = ui.ListButtons["truncate"]
+    main.ensurePolished()
+    for button in ui.ToolButtons.values():
+        button.ensurePolished()
+        assert button.font().pointSizeF() == main.font().pointSizeF()
+    bar = ui.ToolTabs.tabBar()
+    bar.ensurePolished()
+    assert bar.font().pointSizeF() == main.font().pointSizeF()

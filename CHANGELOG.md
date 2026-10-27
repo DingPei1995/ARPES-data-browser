@@ -23,8 +23,10 @@ here.)
   -- and keeps it apart from *3D slices*, whose tooltip now points to it.
   From the list it slices a hidden contour of the map, closed again once
   the figure is made.
-- **The tool panel's text is larger**: buttons at 10.5 pt, headings at
-  10 pt, the Basic / Advanced tabs at 10.5 pt.
+- **The tool panel's text is the main panel's**: its buttons, tabs and
+  title use the window's own font and size, like the list buttons beside
+  them (a larger size, tried first, looked out of place); only the group
+  headings stand apart, in grey italics. A test checks the sizes match.
 - **Tall windows fit the screen.** The Brillouin-zone dialog needed 958 px
   and could not be made shorter; other tool windows (k conversions, kz
   conversion, Fermi fit, de-grid, kz alignment, the filters, the loader,

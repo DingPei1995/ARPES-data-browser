@@ -54,15 +54,15 @@ class Ui_MainWindow:
             "\nQFrame#ToolPanel, QFrame#MainPanel { "
             "border: 1px solid rgb(200, 204, 222); border-radius: 6px; }"
             "\nQFrame#ToolPanel QGroupBox { font-weight: bold; }"
-            # The tool panel's text is larger than the rest of the window's:
-            # it is what is read most, at a glance, in a narrow column.
+            # The tool panel uses the main panel's font, size included; only
+            # its headings are set apart, in grey italics.
             "\nQLabel#ToolHeading { font-weight: normal; font-style: italic;"
-            " font-size: 10pt; color: rgb(120, 130, 160); padding-top: 4px; }"
+            " color: rgb(120, 130, 160); padding-top: 3px; }"
             "\nQFrame#ToolPanel QPushButton { text-align: left; "
-            "padding: 4px 8px; font-weight: normal; font-size: 10.5pt; }"
-            "\nQTabWidget#ToolTabs QTabBar::tab { font-size: 10.5pt;"
-            " padding: 4px 10px; min-width: 70px; }"
-            "\nQLabel#ToolPanelTitle { font-weight: bold; font-size: 11pt; }"
+            "padding: 3px 8px; font-weight: normal; }"
+            "\nQTabWidget#ToolTabs QTabBar::tab { padding: 3px 10px;"
+            " min-width: 60px; }"
+            "\nQLabel#ToolPanelTitle { font-weight: bold; }"
         )
 
         self.centralwidget = QtWidgets.QWidget(MainWindow)
