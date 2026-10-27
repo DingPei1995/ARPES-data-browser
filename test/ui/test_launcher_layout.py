@@ -533,3 +533,44 @@ def test_the_tool_panel_uses_the_main_panels_font(launcher):
     bar = ui.ToolTabs.tabBar()
     bar.ensurePolished()
     assert bar.font().pointSizeF() == main.font().pointSizeF()
+
+
+def test_tool_buttons_fit_and_do_not_overlap_in_fusion(app, monkeypatch):
+    """macOS runs the launcher in Fusion (its native buttons overlapped in
+    the tool panel); there every tool button keeps its full height, sits
+    clear of its neighbours, and the panel is wide enough for its label."""
+    from ui.common import platform_style
+    from ui.launcher import main_window as main_window_ui
+    from PyQt5.QtWidgets import QMainWindow
+    old_style = app.style().objectName()
+    monkeypatch.setattr(platform_style, "IS_MACOS", True)
+    platform_style.apply_style(app)
+    try:
+        win = QMainWindow()
+        ui = main_window_ui.Ui_MainWindow()
+        ui.setupUi(win)
+        win.show()
+        for index in range(ui.ToolTabs.count()):
+            ui.ToolTabs.setCurrentIndex(index)
+            app.processEvents()
+            page = ui.ToolTabs.widget(index).widget()
+            buttons = [b for b in page.findChildren(QPushButton)]
+            buttons.sort(key=lambda b: b.y())
+            for above, below in zip(buttons, buttons[1:]):
+                assert above.geometry().bottom() < below.geometry().top()
+            for button in buttons:
+                assert button.height() >= button.sizeHint().height()
+                assert button.width() >= button.sizeHint().width()
+        win.close()
+    finally:
+        app.setStyle(old_style)
+
+
+def test_modifier_key_is_named_for_the_platform(monkeypatch):
+    import importlib
+    import sys
+    from ui.common import platform_style
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert importlib.reload(platform_style).MOD_KEY == "⌘"
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert importlib.reload(platform_style).MOD_KEY == "Ctrl"

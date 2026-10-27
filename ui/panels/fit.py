@@ -42,6 +42,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QDialogButtonBox)
 
 from ui.common.screen import fits_screen, wheel_scrolls_window
+from ui.common.platform_style import MOD_KEY
 
 import tools.spectra.peaks as PK
 import tools.spectra.dispersion as DISP
@@ -185,7 +186,8 @@ class FitPanel(QMainWindow):
         self.guide_button.clicked.connect(self.start_guide)
         start_bar.addWidget(self.guide_button)
         hint = QLabel("<i>New to this panel? The guide takes you from the "
-                      "cut to the fitted band.  Ctrl + wheel zooms a plot.</i>")
+                      f"cut to the fitted band.  {MOD_KEY} + wheel zooms a "
+                      "plot.</i>")
         hint.setStyleSheet("color: #666;")
         start_bar.addWidget(hint, 1)
         root.addWidget(start_row)

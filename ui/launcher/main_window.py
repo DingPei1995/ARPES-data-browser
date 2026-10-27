@@ -24,6 +24,7 @@ original app used.
 from PyQt5 import QtCore, QtWidgets
 
 import version
+from ui.common.platform_style import MOD_KEY, ui_font_family
 
 
 class Ui_MainWindow:
@@ -37,7 +38,7 @@ class Ui_MainWindow:
         # list's right-click menu looked exactly like an enabled one.
         MainWindow.setStyleSheet(
             "* { background-color: rgb(245, 241, 249); "
-            "font: \"Lucida Sans Unicode\"; "
+            f"font-family: \"{ui_font_family()}\"; "
             "color: rgb(102, 126, 161); }"
             "\n*:disabled { color: rgb(190, 190, 200); }"
             "\nQMenu::item { padding: 3px 24px 3px 20px; }"
@@ -129,7 +130,7 @@ class Ui_MainWindow:
         self.FilePathListWidget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.FilePathListWidget.setToolTip(
             "Double-click to open. Right-click to rename, save or remove the "
-            "selected datasets; Ctrl/Shift-click selects several.")
+            f"selected datasets; {MOD_KEY}/Shift-click selects several.")
         menu_layout.addWidget(self.FilePathListWidget, stretch=1)
 
         # -- what can be done to the data itself: one button per operation,
@@ -213,7 +214,6 @@ class Ui_MainWindow:
         """
         panel = QtWidgets.QFrame(parent)
         panel.setObjectName("ToolPanel")
-        panel.setFixedWidth(262)
         layout = QtWidgets.QVBoxLayout(panel)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
@@ -259,6 +259,14 @@ class Ui_MainWindow:
             self.ToolSections[section] = page
         self.ToolTabs.setCurrentIndex(0)
         layout.addWidget(self.ToolTabs, stretch=1)
+        # 262 px fits the longest button in the Windows font; a wider font
+        # (macOS's) widens the panel rather than cutting the labels short.
+        # The extra is the scroll bar, the tab frame and the margins.
+        widest = max(page.sizeHint().width()
+                     for page in self.ToolSections.values())
+        scrollbar = panel.style().pixelMetric(
+            QtWidgets.QStyle.PM_ScrollBarExtent)
+        panel.setFixedWidth(max(262, widest + scrollbar + 24))
 
         # -- memory: how much this program is holding, and a way to give
         # some of it back. Several spatial scans open at once is where it
