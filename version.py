@@ -11,5 +11,5 @@ REPOSITORY = "https://github.com/DingPei1995/ARPES-data-browser"
 
 
 def title() -> str:
-    """``"ARPES viewer v1.0.0 (updated 2026-10-25)"``."""
+    """``"ARPES viewer v1.1.0 (updated 2026-10-27)"``."""
     return f"ARPES viewer v{VERSION} (updated {UPDATED})"

@@ -1,6 +1,6 @@
 # ARPES viewer
 
-**Version 1.0.8** (last modified 26 October 2026) — see
+**Version 1.1.0** (last modified 27 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
