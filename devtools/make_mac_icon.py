@@ -1,58 +1,47 @@
-"""Draw the icon of ``ARPES viewer.app`` (the macOS launcher).
+"""Make the icon of ``ARPES viewer.app`` (the macOS launcher).
 
-A cut through a hole band and an electron pocket, with the Fermi cut-off,
-in the "hot" colormap, on a rounded square as macOS icons are. Written
-as ``ARPES viewer.app/Contents/Resources/AppIcon.icns`` (every size macOS
-asks for, by Pillow). Nothing here is part of the program; run it by hand
-to change the icon.
+The picture is a line drawing of a hemispherical analyser by the author
+(``devtools/icon_drawing.png``: the electrons bent through the hemisphere and
+landing on the detector, spread in energy and angle), set on a white rounded
+square as macOS icons are. Written as
+``ARPES viewer.app/Contents/Resources/AppIcon.icns``, in every size macOS
+asks for (by Pillow). Nothing here is part of the program; run it by hand
+after changing the drawing.
 
 Usage:  python devtools/make_mac_icon.py
 """
 import os
-import sys
 
-import numpy as np
 from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if HERE not in sys.path:
-    sys.path.insert(0, HERE)
-
-from tools.output.colormaps import get_lut                 # noqa: E402
-
+DRAWING = os.path.join(HERE, "devtools", "icon_drawing.png")
 OUT = os.path.join(HERE, "ARPES viewer.app", "Contents", "Resources",
                    "AppIcon.icns")
 SIZE = 1024
-
-
-def spectrum(n: int = SIZE) -> np.ndarray:
-    """I(k, E) on an n x n grid, scaled 0..1: E from -1 (bottom) to 0.25."""
-    k = np.linspace(-1.0, 1.0, n)[None, :]
-    energy = np.linspace(0.25, -1.0, n)[:, None]
-    image = np.zeros((n, n))
-    for centre, width in ((0.05 - 1.1 * k ** 2, 0.035),        # hole band
-                          (-0.75 + 1.6 * k ** 2, 0.035)):      # electron pocket
-        lorentz = width / ((energy - centre) ** 2 + width ** 2)
-        image += lorentz * (1.0 + 2.0 * np.abs(energy))
-    image *= 1.0 / (1.0 + np.exp(energy / 0.03))               # Fermi cut-off
-    image = np.sqrt(image / image.max())
-    return image
+#: Apple's icon grid: an 824 px rounded square on a 1024 px canvas, with a
+#: corner radius of about 185 px.
+TILE, RADIUS = 824, 185
+#: the drawing's margin inside the tile
+MARGIN = 45
 
 
 def icon() -> Image.Image:
-    lut = np.asarray(get_lut("hot"))[:, :3]
-    values = spectrum()
-    rgb = lut[np.clip((values * (len(lut) - 1)).astype(int), 0, len(lut) - 1)]
-    picture = Image.fromarray(rgb.astype(np.uint8), "RGB").convert("RGBA")
-    # macOS icons: a rounded square, inset from the canvas edge.
-    inset, radius = SIZE // 10, SIZE // 5
-    mask = Image.new("L", (SIZE, SIZE), 0)
-    ImageDraw.Draw(mask).rounded_rectangle(
-        (inset, inset, SIZE - inset, SIZE - inset), radius, fill=255)
-    picture = picture.resize((SIZE, SIZE))
-    out = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    out.paste(picture, (0, 0), mask)
-    return out
+    canvas = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+    inset = (SIZE - TILE) // 2
+    box = (inset, inset, inset + TILE - 1, inset + TILE - 1)
+    draw = ImageDraw.Draw(canvas)
+    draw.rounded_rectangle(box, RADIUS, fill=(255, 255, 255, 255),
+                           outline=(200, 204, 214, 255), width=6)
+    drawing = Image.open(DRAWING).convert("RGB")
+    side = TILE - 2 * MARGIN
+    drawing.thumbnail((side, side), Image.LANCZOS)
+    # The drawing's white ground is the tile's own: paste only the lines.
+    lines = drawing.convert("L").point(lambda v: 255 - v)
+    lines = lines.point(lambda v: min(255, v * 3))
+    at = ((SIZE - drawing.width) // 2, (SIZE - drawing.height) // 2)
+    canvas.paste(drawing, at, lines)
+    return canvas
 
 
 def main():
