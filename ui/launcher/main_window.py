@@ -208,9 +208,10 @@ class Ui_MainWindow:
 
         One button per tool, so every one of them is in sight -- they used
         to be behind a right-click or on a tab of a window the user had to
-        know to open. On two tabs, Basic (shown first) and Advanced
+        know to open. On tabs, Basic (shown first), Advanced and Calculation
         (TOOL_SECTIONS), each grouped by the dimension of data a tool
-        takes, and each button
+        takes (a third, Calculation, for what is not a dataset), and each
+        button
         greyed out until the list's selection is something it can take; its
         tooltip then says why (ARPES_viewer.update_tool_buttons()).
         """
@@ -225,7 +226,7 @@ class Ui_MainWindow:
         title.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(title)
 
-        # Two tabs, Basic and Advanced, with Basic up front: the steps nearly
+        # Three tabs, Basic, Advanced and Calculation, with Basic up front: the steps nearly
         # every dataset goes through, without the analysis tools crowding
         # them. In each, a small heading per dimension of data and the
         # buttons under it, in a scroll area so a short screen scrolls the
@@ -312,24 +313,30 @@ class Ui_MainWindow:
         self.MemoryLabel.setWordWrap(True)
         self.MemoryLabel.setStyleSheet("font-weight: normal;")
         memory_layout.addWidget(self.MemoryLabel)
-        self.FreeMemoryButton = QtWidgets.QPushButton("Free memory")
+        # Three short buttons on one row: the box sits under the tools and
+        # every line it takes is a line of tools scrolled out of sight.
+        self.FreeMemoryButton = QtWidgets.QPushButton("Free RAM")
         self.FreeMemoryButton.setToolTip(
-            "Drop cached copies of computed datasets (they are re-read from "
-            "their auto-saved files when next opened) and give freed memory "
-            "back to the system. Open windows are not touched.")
-        self.CloseViewersButton = QtWidgets.QPushButton("Close all viewers")
+            "Free memory: drop cached copies of computed datasets (they are "
+            "re-read from their auto-saved files when next opened) and give "
+            "freed memory back to the system. Open windows are not touched.")
+        self.CloseViewersButton = QtWidgets.QPushButton("Close all")
         self.CloseViewersButton.setToolTip(
-            "Close every open viewer window, then free memory. The file list "
-            "is kept, so anything can be reopened.")
+            "Close all viewers: close every open viewer window, then free "
+            "memory. The file list is kept, so anything can be reopened.")
         # -- the auto-saved working copies, for clearing out by hand.
-        self.OpenAutosaveButton = QtWidgets.QPushButton("Open auto-save folder")
+        self.OpenAutosaveButton = QtWidgets.QPushButton("Autosaves")
         self.OpenAutosaveButton.setToolTip(
-            "Open the folder where computed datasets are auto-saved, in the "
-            "system's file browser, to delete old working copies by hand. "
-            "The folder of the session now running is in use; leave it.")
+            "Open the auto-save folder, where computed datasets are written, "
+            "in the system's file browser, to delete old working copies by "
+            "hand. The folder of the session now running is in use; leave it.")
+        memory_row = QtWidgets.QHBoxLayout()
+        memory_row.setSpacing(2)
         for button in (self.FreeMemoryButton, self.CloseViewersButton,
                        self.OpenAutosaveButton):
-            memory_layout.addWidget(button)
+            button.setStyleSheet("text-align: center; padding: 3px 4px;")
+            memory_row.addWidget(button, stretch=1)
+        memory_layout.addLayout(memory_row)
         layout.addWidget(self.MemoryBox)
         return panel
 
@@ -370,24 +377,32 @@ DATASET_ACTIONS = (
      "Add the selected datasets to the experiment log (.csv), one row each, "
      "in its format, after its last record. The first time, the format is "
      "asked for."),
-    ("rename", "Rename...",
-     "Change the name the dataset is listed (and saved) under. The file on "
-     "disk keeps its name."),
-    ("save", "Save datasets...",
-     "Write the selected datasets to a .nxs file of your own, which this "
-     "program opens again."),
-    ("remove", "Remove from list",
-     "Take the selected rows out of the list (after asking). Files on disk "
+    ("rename", "Rename",
+     "Rename: change the name the dataset is listed (and saved) under. The "
+     "file on disk keeps its name."),
+    ("save", "Save",
+     "Save the selected datasets: to a .nxs file of your own, which this "
+     "program opens again, or for Igor Pro (.itx text, or one .ibw binary "
+     "wave per dataset), axes, units and metadata included."),
+    ("remove", "Remove",
+     "Remove the selected rows from the list (after asking). Files on disk "
      "are not deleted."),
+    ("sumrepeat", "Sum repeated scans...",
+     "Add up a measurement taken in several batches -- the same fine cut or "
+     "fine map acquired again and again, so a slowly ageing sample can be "
+     "seen and its late scans left out. Checks the scans really are "
+     "repeats, shows how each one differs from the rest, and can line up a "
+     "drifting energy scale before summing."),
     ("log", "Session log...",
      "What has been auto-saved, saved and deleted this session, and where "
      "each of it is -- the file to look at after a crash."),
 )
 
 #: How the Datasets box lays them out: one row each, but the log's format
-#: and the log itself side by side.
-DATASET_ROWS = (("info",), ("explogformat", "explog"), ("rename",), ("save",),
-                ("remove",), ("log",))
+#: and the log itself side by side, and the three short row operations --
+#: Rename, Save, Remove -- on one line.
+DATASET_ROWS = (("info",), ("explogformat", "explog"),
+                ("rename", "save", "remove"), ("sumrepeat",), ("log",))
 
 #: Every tool of the tool panel: action -> (button text, tooltip). The
 #: action names are list_actions' and ARPES_viewer.run_list_action()'s.
@@ -456,6 +471,12 @@ TOOLS = {
     "notch3d": ("Notched cube...",
              "The cube with one corner cut away: a constant-energy map and "
              "two dispersions in one picture."),
+    "stack3d": ("Stacked slices...",
+             "Parallel slices of the cube stacked in 3-D -- constant-energy "
+             "maps one above another up the energy axis, or cuts one behind "
+             "another along k_z -- each layer's background transparent, "
+             "with a curve marked through the layers (a Dirac point "
+             "followed). For figures of how a band evolves."),
     "projection3d": ("Volume projection...",
              "The whole volume projected along the view: maximum intensity, "
              "sum, alpha composite, or a shaded isosurface."),
@@ -480,6 +501,38 @@ TOOLS = {
                  "cuts at a series of angles or momenta, with a shared colour "
                  "scale and labels on the outer edges only. Flat panels, not "
                  "a 3-D view (that is 3D slices)."),
+    "ridge": ("Ridge detection...",
+              "Trace the bands as ridges of the intensity: the Hessian of "
+              "the smoothed image, kept where it curves down across the band "
+              "and the slope across it changes sign. Sharper than a second "
+              "derivative, with no false double lines; the ridge points can "
+              "be listed or saved for a fit. A map is done plane by plane."),
+    "tbfit": ("Tight-binding fit...",
+              "Fit a tight-binding band E(k) = e0 + sum of hoppings x "
+              "cos(k.R) to band points -- picked on a k-map, traced by ridge "
+              "detection, or read from a file -- shell by shell of "
+              "neighbours of a 2-D or 3-D lattice. Step by step; the model's "
+              "contours go back onto the map and its band into the list."),
+    "detcorr": ("Detector corrections...",
+                "Before anything else, on the detector's own pixels: make a "
+                "trapezoidal (keystone) image rectangular again, and patch "
+                "dead or bad regions of the detector from their "
+                "neighbours. A cut, or every slice of a map at once."),
+    "lattice": ("Crystal structure...",
+                "The crystal in real space, in 3-D: typed in, taken from the "
+                "Brillouin-zone tool's last crystal, or read from a .cif "
+                "file. Draw a cleavage plane (hkl) and slide it through the "
+                "cell; atoms' colours, gloss, transparency and size are "
+                "yours to set. The picture goes to the figure composer."),
+    "bands": ("Calculated bands...",
+              "A band structure from the theory side -- a .bxsf band grid "
+              "(Wien2k, QE, VASP, Wannier90), a Wannier90 _hr.dat "
+              "Hamiltonian, or bands along a path (_band.dat, "
+              ".spaghetti_ene, VASP EIGENVAL) -- along a high-symmetry path "
+              "over the measurement assembled from the selected k-maps, and "
+              "over a cut or a map where it was really measured (its k_z). "
+              "Fits the renormalisation Z and the shift; panels go to the "
+              "figure composer. Select k-maps, kz maps in k and cuts in k."),
     "bz": ("Brillouin zone...",
            "Overlay a Brillouin zone (or a moire zone) on a map in momentum "
            "-- a k-map or a converted kz map. Once plotted, the zone stays "
@@ -487,24 +540,32 @@ TOOLS = {
            "tick box, and its exports can draw it."),
 }
 
-#: The tool panel's layout: two tabs -- Basic, the steps nearly every
+#: The tool panel's layout: three tabs -- Basic, the steps nearly every
 #: dataset goes through (E_F, the detector grid, the background, the k
-#: conversions, the core levels), and Advanced, the analysis that follows --
+#: conversions, the core levels), Advanced, the analysis that follows, and
+#: Calculation, what is worked out rather than measured (the crystal) --
 #: each grouped by the dimension of data a tool takes: 1D curves (EDC, MDC),
 #: 2D cuts, 3D maps (angle maps, kz maps, k-maps).
 TOOL_SECTIONS = (
     ("Basic", (
-        ("2D && 3D \u2014 cuts, maps", ("fermi", "degrid")),
+        ("2D && 3D \u2014 cuts, maps", ("fermi", "degrid", "detcorr")),
         ("2D only \u2014 cuts", ("background", "kcut", "corelevel")),
         ("3D only \u2014 maps", ("kmap", "kzalign", "kzconv", "bz")),
     )),
     ("Advanced", (
         ("1D && 2D \u2014 curves, cuts", ("figure",)),
         ("2D && 3D \u2014 cuts, maps", ("smooth", "derivative", "curvature",
-                                       "symmetry")),
+                                       "symmetry", "ridge")),
         ("2D only \u2014 cuts", ("stack", "mdcfit", "edcfit", "arithmetic")),
         ("3D only \u2014 maps", ("slicefig", "slices3d", "notch3d",
-                                  "projection3d")),
+                                  "projection3d", "stack3d")),
+    )),
+    # What is worked out rather than measured: the crystal itself, band
+    # models fitted to the data, and calculated band structures.
+    ("Calculation", (
+        ("Crystal \u2014 real space", ("lattice",)),
+        ("Band models \u2014 fitted to the data", ("tbfit",)),
+        ("Band structures \u2014 calculated", ("bands",)),
     )),
 )
 

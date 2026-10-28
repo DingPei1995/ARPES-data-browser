@@ -57,9 +57,11 @@ def _select(lv, *texts):
 def test_tool_buttons_follow_the_selection(launcher):
     lv = launcher
     _select(lv)
-    # all but the figure composer, which opens a blank page
+    # all but the figure composer, which opens a blank page, and the
+    # Calculation tab's crystal, tight-binding fit (points from a file)
+    # and calculated bands (a calculation alone)
     assert not any(b.isEnabled() for name, b in lv.ui.ToolButtons.items()
-                   if name != "figure")
+                   if name not in ("figure", "lattice", "tbfit", "bands"))
     assert lv.ui.ToolButtons["figure"].isEnabled()
     assert "Select a dataset" in lv.ui.ToolButtons["smooth"].toolTip()
     _select(lv, "c")
@@ -102,14 +104,18 @@ def test_the_rest_of_the_menu_is_the_datasets_box_above_memory(launcher):
     ui = launcher.ui
     panel = ui.ToolPanel
     assert [b.text() for b in ui.DatasetButtons.values()] == [
-        "Experiment info", "Log format...", "Auto Exp. log", "Rename...",
-        "Save datasets...", "Remove from list", "Session log..."]
+        "Experiment info", "Log format...", "Auto Exp. log", "Rename",
+        "Save", "Remove", "Sum repeated scans...", "Session log..."]
     # the log's format and the log itself, side by side
     fmt, log = ui.DatasetButtons["explogformat"], ui.DatasetButtons["explog"]
     rows = [ui.DatasetBox.layout().itemAt(i).layout()
             for i in range(ui.DatasetBox.layout().count())]
     pair = next(r for r in rows if r.indexOf(fmt) >= 0)
     assert pair.indexOf(fmt) == 0 and pair.indexOf(log) == 1
+    # Rename, Save and Remove on one line, in that order
+    trio = next(r for r in rows if r.indexOf(ui.DatasetButtons["rename"]) >= 0)
+    assert [trio.indexOf(ui.DatasetButtons[n]) for n in
+            ("rename", "save", "remove")] == [0, 1, 2]
     layout = panel.layout()
     order = [layout.indexOf(w) for w in (ui.ToolTabs, ui.DatasetBox,
                                          ui.MemoryBox)]
@@ -513,7 +519,8 @@ def test_kz_conversion_remembers(app, monkeypatch):
 
 def test_the_panel_opens_on_its_basic_tab(launcher):
     tabs = launcher.ui.ToolTabs
-    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Basic", "Advanced"]
+    assert [tabs.tabText(i) for i in range(tabs.count())] == [
+        "Basic", "Advanced", "Calculation"]
     assert tabs.currentIndex() == 0
     basic = launcher.ui.ToolSections["Basic"]
     assert tabs.currentWidget().isAncestorOf(basic) or tabs.currentWidget().widget() is basic

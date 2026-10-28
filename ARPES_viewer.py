@@ -170,6 +170,13 @@ def add_files(paths, options=None, background: bool = True):
     (loader.nxs_file.list_datasets), so adding a folder of multi-GB scans is
     instant.
     """
+    figures = [p for p in paths if str(p).lower().endswith(".afig")]
+    if figures:
+        for path in figures:
+            open_saved_figure(path)
+        paths = [p for p in paths if p not in figures]
+        if not paths:
+            return
     if background and len(paths) > 1 and not nxs_jobs.busy():
         def work(report):
             scanned = []
@@ -595,6 +602,7 @@ def run_list_action(name):
         "corelevel": open_core_level_check,
         "slices3d": lambda: open_volume_view("slices"),
         "notch3d": lambda: open_volume_view("notch"),
+        "stack3d": lambda: open_volume_view("stack"),
         "projection3d": lambda: open_volume_view("projection"),
         "arithmetic": open_cut_arithmetic,
         "combine": combine_selected,
@@ -615,6 +623,12 @@ def run_list_action(name):
         "slicefig": open_slice_series,
         "kzalign": open_kz_alignment,
         "save": save_selected,
+        "sumrepeat": open_sum_repeats,
+        "ridge": open_ridge_detection,
+        "tbfit": open_tight_binding,
+        "detcorr": open_detector_corrections,
+        "lattice": open_crystal_structure,
+        "bands": open_calculated_bands,
         "log": show_operations_log,
         "explogformat": open_exp_log_format,
         "explog": record_exp_log,
@@ -678,6 +692,22 @@ def plot_selected_as_figure():
 
 #: figure composers opened from the launcher, kept alive
 figure_windows = []
+
+
+def open_saved_figure(path):
+    """A figure saved by the composer (.afig), open again to edit."""
+    from ui.panels.figure import open_figure_file
+
+    try:
+        window = open_figure_file(path, dataset_source={
+            "entries": listed_datasets, "loader": load_dataset})
+    except Exception as exc:
+        QMessageBox.warning(win, "Open a figure", f"Could not open {path}:\n{exc}")
+        return None
+    window.closed.connect(lambda w: figure_windows.remove(w)
+                          if w in figure_windows else None)
+    figure_windows.append(window)
+    return window
 
 
 def figure_window(panels):
@@ -855,26 +885,43 @@ def _rebind_saved_rows(keys, path: str, entries):
                             f"entry: {entry}\n{record['kind']}")
 
 
-def save_selected():
-    """Write the selected datasets to one .nxs file this program can reopen.
+#: The Save dialog's file types: (filter, format, extension).
+SAVE_FORMATS = (
+    ("NeXus files, reopened by this program (*.nxs)", "nxs", ".nxs"),
+    ("Igor text, all datasets in one file (*.itx)", "itx", ".itx"),
+    ("Igor binary wave, one file per dataset (*.ibw)", "ibw", ".ibw"),
+)
+
+
+def save_selected(path=None, fmt=None):
+    """Write the selected datasets to one .nxs file this program can reopen
+    -- or for Igor Pro, as an .itx text file or .ibw binary waves.
 
     Several datasets go into one file as several entries, so saving a
     selection and opening the result gives the same rows back. Each keeps
-    the name it has in the list, which is what "Rename..." is for.
+    the name it has in the list, which is what "Rename..." is for. An Igor
+    export is a copy for another program: the rows keep pointing where they
+    did. ``path`` and ``fmt`` stand in for the file dialog (the tests).
     """
     keys = selected_keys()
     if not keys:
         return
-    folder = ui.FilePathLE.displayText() or os.path.expanduser("~")
-    default = loaded_items[keys[0]]["name"] if len(keys) == 1 else "datasets"
-    default = "".join(ch for ch in default if ch.isalnum() or ch in "._- ")
-    path, _ = QFileDialog.getSaveFileName(
-        win, "Save dataset(s)", os.path.join(folder, f"{default}.nxs"),
-        "NeXus files (*.nxs)")
-    if not path:
-        return
-    if not path.lower().endswith(".nxs"):
-        path += ".nxs"
+    if path is None:
+        folder = ui.FilePathLE.displayText() or os.path.expanduser("~")
+        default = loaded_items[keys[0]]["name"] if len(keys) == 1 else "datasets"
+        default = "".join(ch for ch in default if ch.isalnum() or ch in "._- ")
+        path, chosen = QFileDialog.getSaveFileName(
+            win, "Save dataset(s)", os.path.join(folder, f"{default}.nxs"),
+            ";;".join(f for f, _, _ in SAVE_FORMATS))
+        if not path:
+            return
+        fmt = next((code for f, code, _ in SAVE_FORMATS if f == chosen), None)
+    if fmt is None:
+        fmt = next((code for _, code, ext in SAVE_FORMATS
+                    if path.lower().endswith(ext)), "nxs")
+    extension = next(ext for _, code, ext in SAVE_FORMATS if code == fmt)
+    if not path.lower().endswith(extension):
+        path += extension
 
     QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
     try:
@@ -892,7 +939,11 @@ def save_selected():
             QMessageBox.warning(win, "Save",
                                 "Nothing could be saved:\n" + "\n".join(problems))
             return
-        entries = save_dataset(path, payload)
+        if fmt == "nxs":
+            entries = save_dataset(path, payload)
+        else:
+            from tools.output import igor
+            written = igor.write_datasets(path, payload, fmt)
     except Exception as exc:
         traceback.print_exc()
         QMessageBox.warning(win, "Save", f"Could not write the file:\n{exc}")
@@ -900,13 +951,18 @@ def save_selected():
     finally:
         QApplication.restoreOverrideCursor()
 
-    _rebind_saved_rows(saved_keys, path, entries)
-
-    message = f"Saved {len(payload)} dataset(s) to {os.path.basename(path)}"
+    if fmt == "nxs":
+        _rebind_saved_rows(saved_keys, path, entries)
+        message = f"Saved {len(payload)} dataset(s) to {os.path.basename(path)}"
+    else:
+        message = (f"Wrote {len(payload)} dataset(s) for Igor Pro: "
+                   + ", ".join(os.path.basename(p) for p in written[:4])
+                   + (" ..." if len(written) > 4 else ""))
     if problems:
         message += f" ({len(problems)} skipped)"
         QMessageBox.information(win, "Save", message + ":\n" + "\n".join(problems))
     ui.statusbar.showMessage(message)
+    return path
 
 
 # --------------------------------------------------------------------------
@@ -1724,10 +1780,12 @@ def open_stack_plot():
             "take a slice of it first, or convert it to a cut.")
         return None
     scan = data.scan
+    from ui.panels.figure import _dataset_sources
     try:
         window = StackWindow(scan.value, (scan.x, scan.y),
                              (scan.labels.get("x", "x"), scan.labels.get("y", "y")),
-                             label_for(key), win, default_colormap)
+                             label_for(key), win, default_colormap,
+                             sources=_dataset_sources(data))
     finally:
         data.close()                     # the window holds a copy
     window.datasetsCreated.connect(_list_computed)
@@ -1903,6 +1961,139 @@ def open_cut_arithmetic():
     global process_dialog
     process_dialog = dialog
     return dialog
+
+
+def _load_selection(title, kinds=None):
+    """``[(name, data), ...]`` for the selected rows, loaded; on a row that
+    cannot be read, or is not one of ``kinds``, says so, gives back what
+    was loaded and returns None."""
+    datasets = []
+    for key in selected_keys():
+        try:
+            data = load_dataset(key)
+        except Exception as exc:                            # noqa: BLE001
+            release_once(*[d for _, d in datasets])()
+            QMessageBox.warning(win, title, f"{label_for(key)}: {exc}")
+            return None
+        datasets.append((label_for(key), data))
+        if kinds is not None and data.kind not in kinds:
+            release_once(*[d for _, d in datasets])()
+            QMessageBox.information(win, title, f"{label_for(key)} is a "
+                                    f"{data.kind}, which this tool does not take.")
+            return None
+    return datasets
+
+
+def _show_tool(dialog, datasets=()):
+    """Show a tool window that lists what it computes, and give the
+    datasets it was handed back when it closes."""
+    release = release_once(*[data for _, data in datasets])
+    if hasattr(dialog, "datasetsCreated"):
+        dialog.datasetsCreated.connect(_list_computed)
+    dialog.finished.connect(release)
+    dialog.show()
+    dialog.raise_()
+    tool_windows.append(dialog)
+    dialog.finished.connect(lambda *_: tool_windows.remove(dialog)
+                            if dialog in tool_windows else None)
+    return dialog
+
+
+#: tool windows opened from the tool panel, kept alive while open
+tool_windows = []
+
+
+def open_sum_repeats():
+    """Sum repeats of one measurement (see ui.panels.repeats)."""
+    from ui.panels.repeats import RepeatsDialog
+
+    datasets = _load_selection("Sum repeated scans", ("cut",) + CUBE_KINDS)
+    if not datasets:
+        return None
+    try:
+        dialog = RepeatsDialog(datasets, win, existing_names=listed_names)
+    except ValueError as exc:
+        release_once(*[d for _, d in datasets])()
+        QMessageBox.information(win, "Sum repeated scans", str(exc))
+        return None
+    return _show_tool(dialog, datasets)
+
+
+def open_ridge_detection():
+    """Ridge detection on the selected cuts or maps (ui.panels.ridge)."""
+    from ui.panels.ridge import RidgeDialog
+
+    datasets = _load_selection("Ridge detection", ("cut",) + CUBE_KINDS)
+    if not datasets:
+        return None
+    return _show_tool(RidgeDialog(datasets, win, default_colormap,
+                                  existing_names=listed_names), datasets)
+
+
+def open_tight_binding():
+    """The tight-binding fit, on the selected k-map or on points from a
+    file (ui.panels.tightbinding)."""
+    from ui.panels.tightbinding import TightBindingDialog
+
+    datasets = _load_selection("Tight-binding fit", ("k_map", "kz_map_k")) \
+        if selected_keys() else []
+    if datasets is None:
+        return None
+    return _show_tool(TightBindingDialog(datasets[0] if datasets else None,
+                                         win, default_colormap,
+                                         existing_names=listed_names),
+                      datasets)
+
+
+def open_detector_corrections():
+    """Keystone and bad-region corrections (ui.panels.detector)."""
+    from ui.panels.detector import DetectorDialog
+
+    datasets = _load_selection("Detector corrections",
+                               ("cut", "map", "kz_map"))
+    if not datasets:
+        return None
+    try:
+        dialog = DetectorDialog(datasets[0], win, default_colormap,
+                                existing_names=listed_names)
+    except ValueError as exc:
+        release_once(*[d for _, d in datasets])()
+        QMessageBox.information(win, "Detector corrections", str(exc))
+        return None
+    return _show_tool(dialog, datasets)
+
+
+def open_calculated_bands():
+    """A calculated band structure against the selected maps and cuts in
+    momentum (ui.panels.bands)."""
+    from ui.panels.bands import BandsDialog
+
+    datasets = _load_selection("Calculated bands", ("k_map", "kz_map_k", "cut")) \
+        if selected_keys() else []
+    if datasets is None:
+        return None
+    return _show_tool(BandsDialog(datasets, win, existing_names=listed_names),
+                      datasets)
+
+
+def open_crystal_structure():
+    """The crystal in real space (ui.panels.crystal)."""
+    from ui.panels.crystal import CrystalDialog
+
+    # Selected k-maps can lie on the Brillouin zone's planes; anything else
+    # selected is simply not used (the crystal needs no dataset).
+    datasets = []
+    for key in selected_keys():
+        try:
+            data = load_dataset(key)
+        except Exception:                                    # noqa: BLE001
+            continue
+        if data.kind == "k_map":
+            datasets.append((label_for(key), data))
+        else:
+            data.close()
+    return _show_tool(CrystalDialog(win, datasets, default_colormap,
+                                    default_flip), datasets)
 
 
 def combine_selected(ask=None, dialog_hook=None):

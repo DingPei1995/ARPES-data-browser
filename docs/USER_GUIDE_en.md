@@ -2,16 +2,18 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-*Last updated: 28 October 2026 — for ARPES viewer v1.1.1*
+*Last updated: 28 October 2026 — for ARPES viewer v1.2.0*
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
 <https://github.com/DingPei1995/ARPES-data-browser> (please give the version
 number when reporting a bug).
 
-This guide walks through the program's main features with screenshots, in
-the order you would normally use them: loading data, looking at it,
-converting it to momentum, analysing it, and making figures. The technical
+This guide walks through the program's features with screenshots, in the
+order of the tool panel: getting started (installing, loading, the main
+window and the viewers), then the **Basic**, **Advanced** and
+**Calculation** tabs, then figures — ending with two figures built step
+by step in the figure composer. The technical
 background for each step (formulas, test results, design choices) is in the
 [README](../README.md) and [CHANGELOG](../CHANGELOG.md).
 
@@ -23,25 +25,54 @@ beamtime (see [Trying it with demo data](#2-trying-it-with-demo-data)).
 
 ## Contents
 
-1. [Installing and starting](#1-installing-and-starting)
-2. [Trying it with demo data](#2-trying-it-with-demo-data)
-3. [The main window](#3-the-main-window)
-4. [Loading data](#4-loading-data)
-5. [What the viewers have in common](#5-what-the-viewers-have-in-common)
-6. [Maps: the contour and its two cuts](#6-maps-the-contour-and-its-two-cuts)
-7. [Cuts: from raw spectrum to band parameters](#7-cuts-from-raw-spectrum-to-band-parameters)
-8. [From angles to momentum for a map, and the Brillouin zone](#8-from-angles-to-momentum-for-a-map-and-the-brillouin-zone)
-9. [Arbitrary cuts and Fermi-surface correction](#9-arbitrary-cuts-and-fermi-surface-correction)
-10. [Processing: smoothing, derivatives, curvature](#10-processing-smoothing-derivatives-curvature)
-11. [Stack plots and the 3-D views](#11-stack-plots-and-the-3-d-views)
-12. [Cut arithmetic: dichroism and reference division](#12-cut-arithmetic-dichroism-and-reference-division)
-13. [Photon-energy scans (kz)](#13-photon-energy-scans-kz)
-14. [Removing the detector grid](#14-removing-the-detector-grid)
-15. [Curves: EDCs, MDCs and spin-resolved data](#15-curves-edcs-mdcs-and-spin-resolved-data)
-16. [Spatially resolved scans (nano-ARPES)](#16-spatially-resolved-scans-nano-arpes)
-17. [Figures and export](#17-figures-and-export)
-18. [Autosave, memory and recovery](#18-autosave-memory-and-recovery)
-19. [Tips and troubleshooting](#19-tips-and-troubleshooting)
+**[Part I — Getting started](#part-i--getting-started)**
+
+1. [Installing and starting](#1-installing-and-starting)  
+2. [Trying it with demo data](#2-trying-it-with-demo-data)  
+3. [The main window](#3-the-main-window)  
+4. [Loading data](#4-loading-data)  
+5. [What the viewers have in common](#5-what-the-viewers-have-in-common)  
+6. [Maps: the contour and its two cuts](#6-maps-the-contour-and-its-two-cuts)  
+7. [Arbitrary cuts and Fermi-surface correction](#7-arbitrary-cuts-and-fermi-surface-correction)  
+**[Part II — The Basic tab](#part-ii--the-basic-tab)**
+
+8. [Fermi edge fit](#8-fermi-edge-fit)  
+9. [Removing the detector grid and detector corrections](#9-removing-the-detector-grid-and-detector-corrections)  
+10. [Background subtraction](#10-background-subtraction)  
+11. [Converting a cut to momentum](#11-converting-a-cut-to-momentum)  
+12. [Core-level check](#12-core-level-check)  
+13. [Converting a map to momentum](#13-converting-a-map-to-momentum)  
+14. [Photon-energy scans (kz)](#14-photon-energy-scans-kz)  
+15. [Brillouin zone](#15-brillouin-zone)  
+**[Part III — The Advanced tab](#part-iii--the-advanced-tab)**
+
+16. [Smoothing, derivatives, curvature and symmetrising](#16-smoothing-derivatives-curvature-and-symmetrising)  
+17. [Ridge detection](#17-ridge-detection)  
+18. [Stack plots](#18-stack-plots)  
+19. [MDC fit and EDC fit](#19-mdc-fit-and-edc-fit)  
+20. [Cut arithmetic: dichroism and reference division](#20-cut-arithmetic-dichroism-and-reference-division)  
+21. [Slice series figure](#21-slice-series-figure)  
+22. [The 3-D views](#22-the-3-d-views)  
+23. [Curves: EDCs, MDCs and spin-resolved data](#23-curves-edcs-mdcs-and-spin-resolved-data)  
+24. [Spatially resolved scans (nano-ARPES)](#24-spatially-resolved-scans-nano-arpes)  
+**[Part IV — The Calculation tab](#part-iv--the-calculation-tab)**
+
+25. [Crystal structure](#25-crystal-structure)  
+26. [Tight-binding fit](#26-tight-binding-fit)  
+27. [Calculated bands](#27-calculated-bands)  
+**[Part V — Figures and output](#part-v--figures-and-output)**
+
+28. [The figure composer](#28-the-figure-composer)  
+29. [Exporting a panel and saving data](#29-exporting-a-panel-and-saving-data)  
+30. [Worked example: two figures in the figure composer](#30-worked-example-two-figures-in-the-figure-composer)  
+**[Part VI — Housekeeping](#part-vi--housekeeping)**
+
+31. [Autosave, memory and recovery](#31-autosave-memory-and-recovery)  
+32. [Tips and troubleshooting](#32-tips-and-troubleshooting)  
+
+---
+
+# Part I — Getting started
 
 ---
 
@@ -88,15 +119,31 @@ The program reads:
 ## 2. Trying it with demo data
 
 ```bash
-python devtools/demo_data.py            # writes ./demo_data/*.nxs
+python devtools/demo_data.py            # writes ./demo_data/
 ```
 
-This writes six files of synthetic data: a Fermi-surface map, a pair of cuts
-taken with LH and LV polarisation, a photon-energy scan, a spin-resolved EDC,
-a small real-space scan and a map with a detector mesh printed on it. They
-come from a toy band structure (a hexagonal electron pocket and a hole band
-at Γ, hole pockets at K) with a Fermi cut-off, the analyser resolution and
-Poisson noise, and open exactly like measured data.
+This writes synthetic data that opens exactly like measured data:
+
+- the original set -- a Fermi-surface map, a pair of cuts in LH and LV
+  polarisation, a photon-energy scan, a spin-resolved EDC, a small
+  real-space scan and a map with a detector mesh printed on it -- from a toy
+  band structure (a hexagonal electron pocket and a hole band at Γ, hole
+  pockets at K);
+- **a layered crystal in three dimensions** (`demo_bulk_bands.nxs`): maps at
+  the photon energies of the Γ plane (59.3 eV) and of the zone top (77 eV),
+  cuts along Γ-M (LH and LV) and Γ-K, and a photon-energy scan along Γ-M
+  through a whole period of k_z. Two of its bands cross along a line through
+  the zone, whose energy changes with k_z;
+- **a calculation of that crystal**, as a theory group would send it: a
+  Wannier90 Hamiltonian (`demo_calc_hr.dat` with `demo_calc.win`) and the
+  same bands on a grid (`demo_calc.bxsf`). It is the crystal before
+  renormalisation -- its bands 1/0.8 times wider and 50 meV higher -- which is
+  what fitting it to the data recovers ([§27](#27-calculated-bands));
+- two crystal structures as CIF files (`demo_crystal.cif`, a 1T layered
+  hexagonal crystal; `demo_tetragonal_crystal.cif`, a ZrSiS-type one) and an
+  EDS spectrum (`demo_eds.nxs`).
+
+All come with a Fermi cut-off, the analyser resolution and Poisson noise.
 
 To re-take every screenshot in this guide after changing a window:
 
@@ -104,7 +151,12 @@ To re-take every screenshot in this guide after changing a window:
 python devtools/guide_screenshots.py    # writes docs/images/*.png
 ```
 
----
+The two example figures of [§30](#30-worked-example-two-figures-in-the-figure-composer)
+are rebuilt, from the demo data and with the program's own windows, by
+
+```bash
+python devtools/figure_tests.py docs/images [folder for the .afig files]
+```
 
 ## 3. The main window
 
@@ -118,13 +170,18 @@ kind is written after the name: `[Cut]`, `[Map]`, `[kz map]`, `[k-map]`,
 It has three parts:
 
 - **The tool panel** (left) — every analysis and processing tool, as a
-  button, in two tabs. **Basic** (shown at start) holds what nearly every
+  button, in three tabs. **Basic** (shown at start) holds what nearly every
   dataset goes through: Fermi edge fit, detector-grid removal, background
   subtraction, the three k conversions, the core-level check, aligning a kz
-  map's Fermi levels and the Brillouin zone. **Advanced** holds the rest:
+  map's Fermi levels, the Brillouin zone and the detector corrections.
+  **Advanced** holds the rest:
   figure composer, smoothing and the band-sharpening filters, symmetrising,
-  stack plots, MDC and EDC fits, cut arithmetic, the slice series figure and
-  the three 3-D views. Within a tab the tools are grouped by the data they
+  ridge detection, stack plots, MDC and EDC fits, cut arithmetic, the slice
+  series figure and the three 3-D views. **Calculation** holds what is
+  worked out rather than measured: the crystal structure, the
+  tight-binding fit and calculated band structures (see
+  [Part IV](#part-iv--the-calculation-tab)).
+  Within a tab the tools are grouped by the data they
   take (*2D & 3D — cuts, maps*, *2D only — cuts*, *3D only — maps* …).
 - **The list** (right), with its buttons.
 - **The Memory box** (bottom left) and the version line (bottom right).
@@ -157,10 +214,10 @@ not fit the selection is greyed, with the reason in its tooltip.
 **The Datasets box** (tool panel, between the tools and Memory) holds the
 rest of what is done to the rows: **Experiment info**, **Log format...** and
 **Auto Exp. log** side by side (see [the experiment log](#the-experiment-log)),
-**Rename...**, **Save datasets...**, **Remove from list** and **Session
-log...**. Its buttons grey out like the tools.
+**Rename**, **Save** and **Remove** on one row, **Sum repeated scans...**
+and **Session log...**. Its buttons grey out like the tools.
 
-### Where things are now (v1.1.1)
+### Where things are now (v1.2.0)
 
 If you used an earlier version: the tools moved out of the right-click menu
 and the viewers' *Functions* menus into the tool panel, so each has one way
@@ -182,9 +239,9 @@ in, always in sight.
 | Tool panel → Advanced → **3D slices**, **Notched cube**, **Volume projection** | right-click → 3D view (one window, three modes) |
 | Tool panel → Advanced → **Figure composer...** | right-click → Open in figure composer |
 | Right-click → **Open scan-axis cut**, viewer button **Scan-axis cut** | Open deflector cut, Deflector cut |
-| Memory box → **Free memory**, **Close all viewers**, **Open auto-save folder** | under the list |
+| Memory box → **Free RAM**, **Close all**, **Autosaves** (one row) | under the list; then Free memory, Close all viewers, Open auto-save folder |
 | Datasets box → **Experiment info** | right-click → Show information |
-| Datasets box → **Rename...**, **Save datasets...**, **Remove from list**, **Session log...** | right-click |
+| Datasets box → **Rename**, **Save**, **Remove** (one row), **Session log...** | right-click; then Rename..., Save datasets..., Remove from list |
 | **Combine...** under the list (only) | also right-click → Combine N datasets |
 
 **Experiment info** also opens the full metadata of the dataset in a window
@@ -287,7 +344,7 @@ there and click again.
 
 A photon-energy series of angle cuts becomes a `kz map`, so *Align Fermi
 levels (kz map)* and *Convert to momentum (kz, k∥)* take it (see
-[§13](#13-photon-energy-scans-kz)); any other axis gives a `map` whose first
+[§14](#14-photon-energy-scans-kz)); any other axis gives a `map` whose first
 axis is marked as not an angle, so no k conversion is offered for it.
 
 **Joining pieces of a measurement**
@@ -321,7 +378,33 @@ How the axes are handled:
   on the joined result rather than on the pieces (per-photon-energy fit
   results of the pieces are not carried over).
 
----
+### Summing repeated scans
+
+For a fine cut or map taken as many short scans so that an ageing sample can
+be caught. Select the scans (two or more of one kind) → **Sum repeated
+scans...**:
+
+1. **Are these repeats?** Each scan's grid and recorded conditions (photon
+   energy, polarisation, angles, position, temperature, pass energy, lens
+   mode); orange marks a value that differs from the first scan.
+2. **Has the sample changed?** Press **Compare the scans**. Each scan is
+   compared with the sum of the others: *χ² / point* is about the same for
+   scans that differ only by counting noise and grows when the spectrum
+   changed; scans well above the rest are marked **changed**. The energy
+   shift of each scan's EDC and its count rate are listed; click a row to
+   see its EDC against the rest.
+3. **Sum.** Tick the scans to keep (changed ones start unticked), choose
+   whether to undo the energy shifts, **Sum** or **Mean**, and **Sum to
+   list**.
+
+### Step-by-step windows
+
+The tools that take several decisions open as **numbered steps** (sum
+repeated scans, detector corrections, tight-binding fit, crystal structure,
+calculated bands): the title says *Step 2 of 4: …*, a blue box says what
+the step is for and what to do, **Next →** stays greyed (with the reason
+beside it) until the step is done, and **← Back** or the list of steps on
+the left goes back.
 
 ## 4. Loading data
 
@@ -371,8 +454,6 @@ still opens on its own as a cut.
 | `spem_4d`, `spem_1d` | x (× y) × angle × E | real-space scans |
 | `edc`, `mdc`, `spin_edc` | E (or k) × channels | curves, with optional σ channels |
 
----
-
 ## 5. What the viewers have in common
 
 Each dataset opens in its own window, so you can put a map, its cuts and
@@ -398,15 +479,15 @@ another file side by side.
   shown as a shaded band on the image. Type a position into the **Cursor**
   row and press Enter to put it exactly there.
 - **EDC → list** / **MDC → list** put the curve on screen in the main list as
-  a dataset of its own (see [§15](#15-curves-edcs-mdcs-and-spin-resolved-data)).
+  a dataset of its own (see [§23](#23-curves-edcs-mdcs-and-spin-resolved-data)).
 - **Right-click the image → Export** saves what the panel shows — data
-  (`.nxs`), an image, or vector axes (`.eps`); see [§17](#17-figures-and-export).
+  (`.nxs`), an image, or vector axes (`.eps`); see [§28](#28-the-figure-composer).
 - **Functions → Slice → Save slice to the main list / Freeze slice in a new
   window** keeps a copy of the slice on screen. The frozen window (and *Open
   this position in a new window* on a spatial map) opens with the panel's
   min/max and gamma, so the two can be compared directly. It has its own
   **Plot tools**, and a **Figure composer...** button to make a figure of it
-  ([§17](#17-figures-and-export)).
+  ([§28](#28-the-figure-composer)).
 
 The **Functions** menu now holds only what works on the window itself —
 the tools that take a dataset are in the launcher's tool panel
@@ -423,7 +504,7 @@ An entry that applies but cannot run yet is greyed, with the reason in its
 tooltip.
 
 **Brillouin zone tick box.** A k-map or converted kz map on which a zone has
-been plotted ([§8.2](#82-brillouin-zone)) keeps it: its viewer has a
+been plotted ([§15](#15-brillouin-zone)) keeps it: its viewer has a
 **Brillouin zone** tick box on the top row that shows or hides it.
 
 ### Plot tools: guide lines and labels on the plot
@@ -454,9 +535,7 @@ front of you**:
   **Export → Image** draws them too (*Include the Plot tools guides*).
 
 *Plot tools* are for looking at the data. To make a figure for a paper, use
-the **figure composer** and its **Figure tools** ([§17](#17-figures-and-export)).
-
----
+the **figure composer** and its **Figure tools** ([§28](#28-the-figure-composer)).
 
 ## 6. Maps: the contour and its two cuts
 
@@ -486,15 +565,50 @@ From the list you can also open a map's cut straight away (right-click →
 **Open slit cut** / **Open scan-axis cut**); the contour then stays hidden
 until you ask for it (*Functions → Show the map*).
 
+## 7. Arbitrary cuts and Fermi-surface correction
+
+### 7.1 Arbitrary cut
+
+*Functions → Arbitrary cut...* on any contour: click up to six points (or type
+them) and the cut runs through them in order — here Γ → M → K → Γ on the
+k-map. **One dataset per segment** lists each leg separately.
+
+| Path on the contour | Points |
+|---|---|
+| ![Arbitrary cut path](images/arbitrary_cut_path.png) | ![Arbitrary cut dialog](images/arbitrary_cut_dialog.png) |
+
+The result is a cut against the distance along the path; the corners of the
+path are marked with dashed green lines, so a kink there is not mistaken for
+physics.
+
+![The cut along Γ–M–K–Γ](images/arbitrary_cut_result.png)
+
+### 7.2 Fermi-surface (FS) correction
+
+*Functions → Straighten bands (FS correction)...* on a cut (or a map's slit cut) straightens a
+feature that should be flat — usually the Fermi edge, which curves across the
+analyser angle. Click along the feature; a polynomial (order 2 by default) is
+fitted and every angle column is shifted in energy. **From a reference
+(Au)...** takes the curve from a gold spectrum in the list instead. On a
+map's slit cut the same shift is applied to the whole cube.
+
+![FS correction](images/fs_correction_dialog.png)
+
+# Part II — The Basic tab
+
+The **Basic** tab holds what nearly every dataset goes through, grouped by
+the data each tool takes: *2D & 3D* — Fermi edge fit, detector-grid
+removal, detector corrections; *2D only* — background subtraction, the cut's
+k conversion, the core-level check; *3D only* — the map's k conversion,
+aligning and converting a photon-energy scan, the Brillouin zone.
+
 ---
 
-## 7. Cuts: from raw spectrum to band parameters
+## 8. Fermi edge fit
 
 The usual order for a single cut is: **Fermi edge fit → offset the energy axis →
 convert to momentum → MDC/EDC fit**. Each step is a button of the tool panel:
 select the cut in the list and press it.
-
-### 7.1 Fermi edge fit
 
 Tool panel → Basic → **Fermi edge fit...** fits a Fermi edge (Fermi–Dirac ×
 linear DOS, convolved with a Gaussian resolution) to the EDC summed over a
@@ -531,7 +645,55 @@ corrected map.
 
 ![Fermi fit on a map, one E_F per cut](images/fermi_map_cuts.png)
 
-### 7.2 Converting a cut to momentum
+## 9. Removing the detector grid and detector corrections
+
+### 9.1 Removing the detector grid
+
+MCP (hexagonal) and mesh (square) patterns print on every image. **Do it
+first**: only data still on the detector's pixels can be de-gridded, so the
+button refuses anything already converted, corrected or smoothed, and says
+why.
+
+Select a map (or kz map) or a cut and press tool panel → Basic → **Remove
+detector grid...**. For a map, no reference is needed — the grid stays on the same pixels in
+every slice while the photoemission moves. **Find and remove the grid**:
+
+![De-grid](images/degrid_dialog.png)
+
+- **Before / After** a chosen slice on one colour scale (tick **Show
+  −∂²I/∂E²** to make any grid obvious).
+- **The grid found**, its **k-space regions** (in red), and the **contrast
+  and shift** fitted for every slice.
+- The power left in the grid regions (1 = no grid left).
+- **Also list the grid pattern** keeps a `[grid]` dataset, which a cut taken
+  later with the same lens mode and pass energy will find and use.
+
+### 9.2 Detector corrections
+
+On a cut, map or kz map as measured:
+
+1. **Keystone** -- tick *Correct a trapezoidal image* and drag the four
+   yellow corners onto the lit area; the right picture shows it made
+   rectangular, each line's counts kept.
+2. **Bad regions** -- **Add a region** and drag it over a dead or hot spot,
+   or **Find bad pixels**; fill *smooth* (best for a spot) or *linear
+   along* an axis (for a stripe).
+3. **Apply** -- **Apply to list**. Do the grid removal, Fermi level and k
+   conversion on the result.
+
+## 10. Background subtraction
+
+Tool panel → Basic → **Background subtraction...** (cuts) removes the
+intensity that is not the bands: a **Shirley** or **Tougaard** inelastic
+background, a floor common to every angle (a percentile of each energy
+row), a smooth **polynomial** — or it divides out the **Fermi cut-off**
+(Fermi–Dirac at the temperature and resolution the file records, starting
+at the E_F it records or else at the steepest fall of the angle-integrated
+EDC). The window is the same as the Advanced tab's processing windows —
+source and result side by side, live preview, **Apply** lists the result —
+described in [§16](#16-smoothing-derivatives-curvature-and-symmetrising).
+
+## 11. Converting a cut to momentum
 
 Tool panel → Basic → **k conversion (cut)...** converts the angle axis to k∥
 (Å⁻¹). A **vertical line** is drawn on the cut: drag it to the slit angle of
@@ -554,52 +716,7 @@ the only choice when only this cut was measured.
 
 ![The cut in momentum](images/cut_in_k.png)
 
-### 7.3 MDC fit and EDC fit
-
-Two tools of the tool panel's Advanced tab fit peaks line by line:
-
-- **MDC fit (k-cut only)...** fits the momentum distribution curves and reads
-  the band off the fitted centres: Fermi velocity, effective mass,
-  self-energy. It only takes a cut whose axis is already in Å⁻¹ — a velocity
-  in eV·deg would be meaningless — and its button is greyed otherwise.
-- **EDC fit...** fits the energy distribution curves, on any cut, optionally
-  with the Fermi cut-off in the model. v_F and m\* from the fitted band need a
-  cut in momentum.
-
-![MDC fit panel](images/mdc_fit_panel.png)
-
-**Guided fit (step by step)**, at the top of the panel, walks through the
-whole fit beside the controls, one step at a time, saying what each step is
-for and outlining the part of the panel it uses: what an MDC (EDC) fit
-does, the line shape, the range (*Start here* / *End here* at the blue
-line), the bands, the seeds (the guide moves the line to five places in the
-range — click the band's peak on the curve at each), one test line, the
-series, and the result. *Next* waits until a step has what the fit needs.
-
-The pictures and the controls share the window with a handle between them,
-so the settings are always in sight; the mouse wheel over a picture scrolls
-the window when it is too short for everything (Ctrl + wheel zooms the
-picture).
-
-By hand:
-
-1. **Bands** tab: **Add band** for each branch; select a band, press **Place
-   a seed** and click the peak on the curve (right). Four or five seeds down a
-   band are enough; **Line at** moves the line being looked at.
-2. **Try this line** shows the fit of the current line (dashed: the guess).
-3. **Fit settings** tab: peak shape (Lorentzian, Gaussian, Voigt),
-   background, step, then **Fit the series**. Fitted positions are drawn on
-   the image, sized by amplitude.
-4. **Dispersion...** fits the band: **v_F** (straight line), **m\*** (parabola)
-   — and checks how far out the fit is stable. **Self-energy...** gives Re Σ
-   and Im Σ.
-
-![Dispersion window](images/dispersion_window.png)
-
-**Save table...** writes every fitted line; **Band to list** puts a band in
-the main list.
-
-### 7.4 Core-level check
+## 12. Core-level check
 
 A wide scan of the core levels is listed as a cut too. Select it and press
 tool panel → Basic → **Core-level check...** to find out what its peaks are.
@@ -652,11 +769,7 @@ the whole result as text. Measuring at a second photon energy settles what
 stays doubtful: core levels stay put in binding energy, Auger lines and
 higher-order light move.
 
----
-
-## 8. From angles to momentum for a map, and the Brillouin zone
-
-### 8.1 Converting a map to momentum
+## 13. Converting a map to momentum
 
 Select an angle map and press tool panel → Basic → **k conversion (map)...**.
 The map opens on a bare constant-energy contour — no cuts, no other
@@ -685,7 +798,58 @@ new `k-map` row in the list.
 
 ![The converted k-map](images/k_map_contour.png)
 
-### 8.2 Brillouin zone
+## 14. Photon-energy scans (kz)
+
+A photon-energy scan is listed as a `kz map`; its contour is photon energy
+against angle at one energy.
+
+![A kz map](images/kz_map_contour.png)
+
+### 14.1 Aligning the Fermi levels of a kz map
+
+Nothing in the files says where each spectrum's Fermi level really is.
+Tool panel → Basic → **Align Fermi levels (kz)...** measures it from the
+spectra themselves; the kz map's slit cut opens with it, and the two close
+together.
+
+1. The slit cut opens with a box on it. Drag the box over a Fermi edge — the
+   angle range sets the channels summed, the energy range the fit window.
+
+   ![The box on the slit cut](images/kz_processing_cut.png)
+
+2. **Fit and assemble**: the same box (by detector index) is used for every
+   spectrum; each is shifted to put its own edge at zero; the cube is cropped
+   to the range they all cover; and, by default, each spectrum is
+   **normalised by its total intensity**, which divides out the photon flux.
+
+![Align Fermi levels (kz map)](images/kz_processing_dialog.png)
+
+E_F against photon energy is plotted. A smooth curve means the fits are
+sound; points whose fit is not believed are marked and filled in from their
+neighbours.
+
+### 14.2 Converting a kz map to momentum
+
+Tool panel → Basic → **kz conversion...** converts the scan to (k_z, k∥). It
+starts from the last conversion of a scan of the same size.
+
+![Convert to momentum (kz, k∥)](images/kz_conversion_dialog.png)
+
+- **Inner potential V0** is the unknown: the preview reconverts one energy
+  slice as you change it, in milliseconds.
+- With the **lattice** (space group, a, b, c), the **surface normal** and the
+  in-plane direction, the zone boundaries are drawn over the preview.
+- **Scan V0** converts at a range of V0 values and reports where the k_z
+  period matches the lattice — and how well that pins V0.
+- **Measure a k_z period...**: click two points that are the same feature one
+  zone apart; the matching reciprocal-lattice planes are listed.
+- The yellow banner warns when the Fermi edge still bends across the analyser
+  angle — correct it first (Straighten bands (FS correction) on the slit cut).
+- **Convert the whole cube** lists a `kz map (k)`.
+
+![The converted kz map](images/kz_map_in_k.png)
+
+## 15. Brillouin zone
 
 Select a k-map (or a converted kz map) and press tool panel → Basic →
 **Brillouin zone...**. Like the map conversion, it opens a contour of its
@@ -724,40 +888,18 @@ Illustrator.
 
 ![Export with the zone](images/export_dialog_bz.png)
 
----
+# Part III — The Advanced tab
 
-## 9. Arbitrary cuts and Fermi-surface correction
-
-### 9.1 Arbitrary cut
-
-*Functions → Arbitrary cut...* on any contour: click up to six points (or type
-them) and the cut runs through them in order — here Γ → M → K → Γ on the
-k-map. **One dataset per segment** lists each leg separately.
-
-| Path on the contour | Points |
-|---|---|
-| ![Arbitrary cut path](images/arbitrary_cut_path.png) | ![Arbitrary cut dialog](images/arbitrary_cut_dialog.png) |
-
-The result is a cut against the distance along the path; the corners of the
-path are marked with dashed green lines, so a kink there is not mistaken for
-physics.
-
-![The cut along Γ–M–K–Γ](images/arbitrary_cut_result.png)
-
-### 9.2 Fermi-surface (FS) correction
-
-*Functions → Straighten bands (FS correction)...* on a cut (or a map's slit cut) straightens a
-feature that should be flat — usually the Fermi edge, which curves across the
-analyser angle. Click along the feature; a polynomial (order 2 by default) is
-fitted and every angle column is shifted in energy. **From a reference
-(Au)...** takes the curve from a gold spectrum in the list instead. On a
-map's slit cut the same shift is applied to the whole cube.
-
-![FS correction](images/fs_correction_dialog.png)
+The **Advanced** tab holds the analysis that follows: the figure composer
+(*1D & 2D*, see [§28](#28-the-figure-composer)); smoothing, the band-sharpening
+filters, symmetrising and ridge detection (*2D & 3D*); stack plots, MDC and
+EDC fits and cut arithmetic (*2D only*); the slice series figure and the
+four 3-D views (*3D only*). Curves and spatial scans are looked at in
+viewers of their own.
 
 ---
 
-## 10. Processing: smoothing, derivatives, curvature
+## 16. Smoothing, derivatives, curvature and symmetrising
 
 Each filter has a window of its own, opened from the tool panel with one or
 more cuts (or maps) selected:
@@ -827,9 +969,20 @@ they have the same kind and the same number of points on every axis:
 
 ![Self-normalise](images/data_operations.png)
 
----
+## 17. Ridge detection
 
-## 11. Stack plots and the 3-D views
+Tool panel → Advanced → **Ridge detection...** (cuts or maps) traces bands
+as ridges of the intensity, each point to a fraction of a pixel, which is
+sharper than a second derivative and draws no false double lines.
+
+- **Smoothing** along each axis, in its own unit — about the band's width.
+- **Threshold**: raise it until only the bands are left (yellow points on
+  the source).
+- **Result to list** — the ridge image (a map plane by plane, on the planes
+  chosen); **Save ridge points...** — a CSV that the tight-binding fit
+  ([§26](#26-tight-binding-fit)) reads.
+
+## 18. Stack plots
 
 **Stack plot (EDC / MDC)...** (tool panel → Advanced, with a cut selected): a
 waterfall of EDCs or MDCs, with the number of curves, binning,
@@ -838,7 +991,100 @@ composer** makes it a figure panel.
 
 ![Stack plot](images/stack_plot.png)
 
-Three tools of the Advanced tab show a map in 3-D, each in a window of its
+## 19. MDC fit and EDC fit
+
+Two tools of the tool panel's Advanced tab fit peaks line by line:
+
+- **MDC fit (k-cut only)...** fits the momentum distribution curves and reads
+  the band off the fitted centres: Fermi velocity, effective mass,
+  self-energy. It only takes a cut whose axis is already in Å⁻¹ — a velocity
+  in eV·deg would be meaningless — and its button is greyed otherwise.
+- **EDC fit...** fits the energy distribution curves, on any cut, optionally
+  with the Fermi cut-off in the model. v_F and m\* from the fitted band need a
+  cut in momentum.
+
+![MDC fit panel](images/mdc_fit_panel.png)
+
+**Guided fit (step by step)**, at the top of the panel, walks through the
+whole fit beside the controls, one step at a time, saying what each step is
+for and outlining the part of the panel it uses: what an MDC (EDC) fit
+does, the line shape, the range (*Start here* / *End here* at the blue
+line), the bands, the seeds (the guide moves the line to five places in the
+range — click the band's peak on the curve at each), one test line, the
+series, and the result. *Next* waits until a step has what the fit needs.
+
+The pictures and the controls share the window with a handle between them,
+so the settings are always in sight; the mouse wheel over a picture scrolls
+the window when it is too short for everything (Ctrl + wheel zooms the
+picture).
+
+By hand:
+
+1. **Bands** tab: **Add band** for each branch; select a band, press **Place
+   a seed** and click the peak on the curve (right). Four or five seeds down a
+   band are enough; **Line at** moves the line being looked at.
+2. **Try this line** shows the fit of the current line (dashed: the guess).
+3. **Fit settings** tab: peak shape (Lorentzian, Gaussian, Voigt),
+   background, step, then **Fit the series**. Fitted positions are drawn on
+   the image, sized by amplitude.
+4. **Dispersion...** fits the band: **v_F** (straight line), **m\*** (parabola)
+   — and checks how far out the fit is stable. **Self-energy...** gives Re Σ
+   and Im Σ.
+
+![Dispersion window](images/dispersion_window.png)
+
+**Save table...** writes every fitted line; **Band to list** puts a band in
+the main list.
+
+**Where two straight branches cross.** In the **Dispersion...** window, with
+*v_F* (a straight line) chosen, each other fitted band is fitted the same way
+and the point where the two lines meet is given with its uncertainty
+(propagated from both fits): the Dirac point of a cone fitted as its two
+sides, or any crossing of two bands. A single fitted line whose error
+collapsed (a peak fit that went to zero width) no longer takes the whole
+weight of the dispersion fit: no point counts for more than ten typical
+ones.
+
+## 20. Cut arithmetic: dichroism and reference division
+
+Two cuts combined into a third: linear dichroism (LH − LV), circular
+dichroism, dividing by a gold reference, or plain differences, ratios and
+sums. Select two cuts in the list and press tool panel → Advanced → **Cut
+arithmetic (two cuts)...** (the first selected is A; the window can swap
+them). The button is greyed until exactly two cuts are selected.
+
+![Cut arithmetic](images/cut_arithmetic.png)
+
+- **The table at the top** compares what the two measurements recorded
+  (polarisation, photon energy, angles, sample position, temperature, pass
+  energy, lens mode). Rows in orange differ beyond a tolerance — a dichroism
+  map between two spots on the sample is a map of *that* difference.
+- **Purpose** presets: *Linear dichroism* (A − B, B scaled to the same total
+  intensity), *Circular dichroism* ((A − B)/(A + B)), *Divide by a reference*,
+  *Custom*. Warnings appear if the polarisations look swapped (**Swap A ↔ B**).
+- **Scale B to A** by total intensity or by a region; **Hide where A+B below**
+  blanks the background.
+- A and B are drawn on one colour scale; the result on a red-white-blue scale
+  symmetric about zero. With raw counts on both, the Poisson uncertainty is
+  propagated and summarised under the plot.
+- **Result to list**, **Uncertainty to list**, **All three as a figure**.
+
+## 21. Slice series figure
+
+Select a map → tool panel → Advanced → **Slice series figure...** lays out a
+page of flat 2-D slices through the cube as one figure for a paper —
+constant-energy contours at a series of energies, or cuts at a series of
+angles or momenta — evenly spaced or at chosen values, with integration,
+one shared colour scale, and labels on the outer edges only. (Not to be
+confused with **3D slices**, which draws three planes in a 3-D view.)
+
+| Settings | Result |
+|---|---|
+| ![Slice series settings](images/slice_figure_dialog.png) | ![Slice series figure](images/slice_figure.png) |
+
+## 22. The 3-D views
+
+Four tools of the Advanced tab show a map in 3-D, each in a window of its
 own — drag the picture to turn it:
 
 - **3D slices...** — the three orthogonal planes through the cube, each
@@ -847,6 +1093,7 @@ own — drag the picture to turn it:
   map and two dispersions in one picture.
 - **Volume projection...** — the whole volume projected along the view:
   maximum intensity, sum, alpha composite, or a shaded isosurface.
+- **Stacked slices...** — parallel slices stacked in 3-D (below).
 
 | 3D slices | Notched cube |
 |---|---|
@@ -875,111 +1122,34 @@ own — drag the picture to turn it:
   any panel (PNG, TIFF, JPEG at a chosen size and dpi). **To figure
   composer...** adds the view as a panel of a figure.
 
----
+### Stacked slices
 
-## 12. Cut arithmetic: dichroism and reference division
+**Stacked slices...** (tool panel → Advanced → 3D only) draws parallel
+slices of the cube stacked in 3-D: constant-energy maps one above another
+up the energy axis, or cuts one behind another along k_z (or the photon
+energy) — the usual picture of how a band evolves.
 
-Two cuts combined into a third: linear dichroism (LH − LV), circular
-dichroism, dividing by a gold reference, or plain differences, ratios and
-sums. Select two cuts in the list and press tool panel → Advanced → **Cut
-arithmetic (two cuts)...** (the first selected is A; the window can swap
-them). The button is greyed until exactly two cuts are selected.
+![Stacked slices](images/stacked_slices.png)
 
-![Cut arithmetic](images/cut_arithmetic.png)
+- **Layers** — the axis they are stacked along; **How many** spreads them
+  evenly, or type the positions in **At** (comma-separated, in the axis's
+  units); **Integrate** averages each layer over that width.
+- **Frames** — an outline round every layer (grey, black or none).
+- **Spread** stretches the box along the stacking axis, so that layers seen
+  from an oblique view stand apart instead of covering one another: for a
+  few cuts stacked along k_z, *Spread* 3 with the azimuth at about 40° shows
+  each cut almost whole.
+- **Fade low values** (*Colour*) starts at 35 % here: each layer's background
+  is transparent, so the layers behind show through.
+- **Mark a curve through the layers** — points in the data's own units (one
+  per layer, say the crossing of two bands), joined by a red, black, blue…
+  curve drawn over the stack, with an optional label at the first point.
+- The axes of all 3-D views now fit the picture *and* its labels to the
+  window or figure panel (no fixed margin), thin their ticks to the room
+  each axis has, and write sub- and superscripts in the axis titles
+  (`E - E_F`, `k_x`).
 
-- **The table at the top** compares what the two measurements recorded
-  (polarisation, photon energy, angles, sample position, temperature, pass
-  energy, lens mode). Rows in orange differ beyond a tolerance — a dichroism
-  map between two spots on the sample is a map of *that* difference.
-- **Purpose** presets: *Linear dichroism* (A − B, B scaled to the same total
-  intensity), *Circular dichroism* ((A − B)/(A + B)), *Divide by a reference*,
-  *Custom*. Warnings appear if the polarisations look swapped (**Swap A ↔ B**).
-- **Scale B to A** by total intensity or by a region; **Hide where A+B below**
-  blanks the background.
-- A and B are drawn on one colour scale; the result on a red-white-blue scale
-  symmetric about zero. With raw counts on both, the Poisson uncertainty is
-  propagated and summarised under the plot.
-- **Result to list**, **Uncertainty to list**, **All three as a figure**.
-
----
-
-## 13. Photon-energy scans (kz)
-
-A photon-energy scan is listed as a `kz map`; its contour is photon energy
-against angle at one energy.
-
-![A kz map](images/kz_map_contour.png)
-
-### 13.1 Aligning the Fermi levels of a kz map
-
-Nothing in the files says where each spectrum's Fermi level really is.
-Tool panel → Basic → **Align Fermi levels (kz)...** measures it from the
-spectra themselves; the kz map's slit cut opens with it, and the two close
-together.
-
-1. The slit cut opens with a box on it. Drag the box over a Fermi edge — the
-   angle range sets the channels summed, the energy range the fit window.
-
-   ![The box on the slit cut](images/kz_processing_cut.png)
-
-2. **Fit and assemble**: the same box (by detector index) is used for every
-   spectrum; each is shifted to put its own edge at zero; the cube is cropped
-   to the range they all cover; and, by default, each spectrum is
-   **normalised by its total intensity**, which divides out the photon flux.
-
-![Align Fermi levels (kz map)](images/kz_processing_dialog.png)
-
-E_F against photon energy is plotted. A smooth curve means the fits are
-sound; points whose fit is not believed are marked and filled in from their
-neighbours.
-
-### 13.2 Converting a kz map to momentum
-
-Tool panel → Basic → **kz conversion...** converts the scan to (k_z, k∥). It
-starts from the last conversion of a scan of the same size.
-
-![Convert to momentum (kz, k∥)](images/kz_conversion_dialog.png)
-
-- **Inner potential V0** is the unknown: the preview reconverts one energy
-  slice as you change it, in milliseconds.
-- With the **lattice** (space group, a, b, c), the **surface normal** and the
-  in-plane direction, the zone boundaries are drawn over the preview.
-- **Scan V0** converts at a range of V0 values and reports where the k_z
-  period matches the lattice — and how well that pins V0.
-- **Measure a k_z period...**: click two points that are the same feature one
-  zone apart; the matching reciprocal-lattice planes are listed.
-- The yellow banner warns when the Fermi edge still bends across the analyser
-  angle — correct it first (Straighten bands (FS correction) on the slit cut).
-- **Convert the whole cube** lists a `kz map (k)`.
-
-![The converted kz map](images/kz_map_in_k.png)
-
----
-
-## 14. Removing the detector grid
-
-MCP (hexagonal) and mesh (square) patterns print on every image. **Do it
-first**: only data still on the detector's pixels can be de-gridded, so the
-button refuses anything already converted, corrected or smoothed, and says
-why.
-
-Select a map (or kz map) or a cut and press tool panel → Basic → **Remove
-detector grid...**. For a map, no reference is needed — the grid stays on the same pixels in
-every slice while the photoemission moves. **Find and remove the grid**:
-
-![De-grid](images/degrid_dialog.png)
-
-- **Before / After** a chosen slice on one colour scale (tick **Show
-  −∂²I/∂E²** to make any grid obvious).
-- **The grid found**, its **k-space regions** (in red), and the **contrast
-  and shift** fitted for every slice.
-- The power left in the grid regions (1 = no grid left).
-- **Also list the grid pattern** keeps a `[grid]` dataset, which a cut taken
-  later with the same lens mode and pass energy will find and use.
-
----
-
-## 15. Curves: EDCs, MDCs and spin-resolved data
+## 23. Curves: EDCs, MDCs and spin-resolved data
 
 **EDC → list** / **MDC → list** under any image, or a spin-resolved file,
 give a curve dataset, which opens in the **curve viewer**:
@@ -993,7 +1163,7 @@ the operations. *Functions → Transform* gives **Crop**, **Bin**,
 **Shift the axis** and **Add counting errors (√N)**; each makes a new dataset
 and propagates σ correctly.
 
-### 15.1 Curve fit
+### 23.1 Curve fit
 
 *Functions → Curve fit...*: **Peaks on a background** (Lorentzian, Gaussian
 or Voigt peaks placed by clicking or **Find peaks**; none / constant /
@@ -1008,7 +1178,7 @@ in units of σ.
 copies a tab-separated table. A Fermi-edge fit can **List a copy with
 E_F = 0**.
 
-### 15.2 Spin analysis
+### 23.2 Spin analysis
 
 A spin EDC opens with one curve per spin channel:
 
@@ -1029,9 +1199,7 @@ A spin EDC opens with one curve per spin channel:
 - Plots: raw channels, P with its error bars, and I↑ / I↓ with errors.
 - **P to list**, **I↑ / I↓ to list**, **As a figure** (opens the figure composer).
 
----
-
-## 16. Spatially resolved scans (nano-ARPES)
+## 24. Spatially resolved scans (nano-ARPES)
 
 A real-space scan opens the **spatial map** (left, the total intensity at
 each position) together with the **E vs k spectrum at the cursor** (right).
@@ -1046,11 +1214,155 @@ panel for the two integrations:
 
 ![Spatial scan](images/spatial_scan.png)
 
+# Part IV — The Calculation tab
+
+The **Calculation** tab holds what is worked out rather than measured: the
+crystal in real space and its Brillouin zone, band models fitted to the
+data, and band structures calculated by others. Its windows open as
+numbered steps.
+
+![The Calculation tab of the tool panel](images/main_window_calculation.png)
+
 ---
 
-## 17. Figures and export
+## 25. Crystal structure
 
-### 17.1 Figure composer
+Tool panel → Calculation → **Crystal structure...** (needs nothing
+selected; selected k-maps can be drawn on the Brillouin zone's planes).
+Five steps:
+
+![The crystal structure](images/crystal_structure.png)
+
+1. **The structure** — type it in (cell, space group for its centering,
+   atoms), take the Brillouin-zone tool's last crystal, or **Read a CIF
+   file** (its symmetry operations are applied, its space group read).
+2. **The look**
+   - cells along a, b, c, the atoms' overall size, cell edges and bonds
+     (in the atoms' colours, or *grey, thin*);
+   - per element its **colour**, **size**, **transparency** and **gloss**
+     (0 %: a matt ball, 100 %: a shiny one with a sharp highlight);
+   - **Polyhedra around** an element: its coordination polyhedra (its
+     bonded neighbours as corners) in a colour and transparency of their
+     own — the TiSe₆ octahedra, the CuS₄ tetrahedra;
+   - **Key of the elements** (a ball and its name for each), **Lattice
+     constants on the cell edges** (`a = 3.52 Å`, `c = 8 Å`).
+
+   Drag the picture to turn it, wheel to zoom; *View along* a, b, c or the
+   plane normal.
+3. **Cleavage plane** — tick *Draw a plane*, give (hkl), slide it, or
+   double-click an **atomic layer** in the list to put it there; *Hide the
+   atoms above* shows the termination; atoms in the plane are ringed red.
+4. **Brillouin zone** — the crystal's zone, its labelled high-symmetry
+   points and a **path** through them (drawn in red, e.g. `Γ-M-K-Γ-A-L-H-A`
+   or one segment, `K-H`), the k_x, k_y, k_z axes as arrows, and up to two
+   **planes** normal to (hkl) — through Γ and at the zone top by default,
+   each in a colour of its own.
+   - **map** on a plane: a selected k-map's constant-energy map at the
+     energy given (averaged over *integrate*), drawn on that plane and cut
+     to the zone — the measured Fermi surface in the zone where it was
+     measured. *azimuth* turns the maps against the zone's k_x.
+   - **Label on the left**: the points named here (`L, M`) are labelled at
+     their leftmost symmetry-equivalent point as the picture turns, clear of
+     the path and the axes.
+
+   ![The zone with measured maps on its planes](images/crystal_zone.png)
+5. **Export** — the crystal or the zone: **Save picture...** (PNG at any
+   size, drawn again at that size) or **To figure composer...**. A picture
+   from a CIF names the CIF as its source, so the figure's data folder keeps
+   it ([§28](#28-the-figure-composer)).
+
+## 26. Tight-binding fit
+
+With a k-map selected (or nothing, to use a file of points):
+
+1. **The lattice** -- a 2-D layer (a, b, γ) or a 3-D crystal, or **Take the
+   crystal from the Brillouin-zone tool**; the azimuth of a against kx; how
+   many shells of neighbours.
+2. **Band points** -- move to an energy and press **Trace this energy**
+   (ridge detection), or tick *Click* and click on the band, or **Read
+   points from a file**. Two or three energies are better than one: one
+   contour fixes the band's shape but not its energy scale.
+3. **Fit** -- the hoppings with their errors and the rms misfit; the model's
+   contour is drawn in red on the plane of step 2. With one energy, hold
+   t1; *Refine the azimuth* if the orientation is known only roughly. An
+   orange note means the points cannot tell the shells apart: use fewer.
+4. **Use the model** -- **Model to list** (its spectral function, as a map
+   beside the data), **Save parameters...**, **Copy results**.
+
+## 27. Calculated bands
+
+Tool panel → Calculation → **Calculated bands...** puts a band-structure
+calculation beside the measurement. Select what to compare it with — k-maps,
+kz maps in momentum and cuts in momentum — or nothing, to look at the
+calculation alone. Four steps.
+
+**1. The calculation.** **Open calculation...** reads, whichever program
+wrote it:
+
+| File | Written by | What it holds |
+|---|---|---|
+| `.bxsf` (XCrySDen band grid) | Wien2k, Quantum ESPRESSO, VASP, Wannier90 | the bands everywhere in the zone, interpolated |
+| `_hr.dat` (+ `.win` beside it) | Wannier90, any tight-binding model | a Hamiltonian, diagonalised exactly at each k; orbital weights |
+| `_band.dat` (+ `labelinfo`) | Wannier90 | bands along a path |
+| `.spaghetti_ene` (+ `.klist_band`) | Wien2k | bands along a path |
+| `EIGENVAL` (+ `POSCAR`, `PROCAR`) | VASP | bands along a path or on a grid; atomic and orbital weights |
+
+A calculation "everywhere" can be cut anywhere: along any measured cut, on
+the k_z a photon energy reaches, at any energy as contours. One "along a
+path" can be drawn along that path only. *Set E_F myself* overrides the
+file's Fermi level; *bxsf k units* is for a grid written without 2π. The
+**space group** names the zone's points; it is guessed from the cell's
+shape — set the crystal's own (or take it from the Brillouin-zone tool).
+
+**2. Along a path.** The calculation through the high-symmetry points
+(`Γ-M-K-Γ-A-L-H-A`; `G` for Γ, `|` for a jump), over the **measurement
+along the same path**, assembled from the selected maps: each in-plane
+segment from the map measured on its k_z plane (Γ-M-K-Γ from the Γ-plane
+map, A-L-H-A from the zone-top one), Γ-A from a kz map. Each map's k_z comes
+from its photon energy and the inner potential V0; correct it in the table
+if needed, untick a map to leave it out, and give the azimuth of the
+crystal's a axis on the map. Where a map does not reach a point, its
+symmetry-equivalent point is used. **Weight** draws fat bands: the thickness
+is the chosen orbital's weight.
+
+![Along the path](images/bands_path.png)
+
+**3. Compare.** One measurement at a time, with the calculation drawn where
+it was really taken: a **cut** gets the bands along its direction — on a
+fixed k_z plane, or on the curved surface its photon energy reaches (k_z
+changes along the cut and with the energy); a **map** gets the calculated
+contours at the energy chosen. **Fit to the cut's bands** traces the
+measured bands (ridge detection) and finds **Z** — the band-width
+renormalisation, measured E = Z × calculated E + shift — and the **shift**,
+each point matched to its nearest band, robustly. Z and the shift apply in
+every step and every output. On the demo cut it finds Z = 0.798 and a shift
+of −49.8 meV, the values the demo was made with (0.8 and −50 meV).
+
+![Compare with a cut](images/bands_compare.png)
+
+**4. Output.**
+
+- **To figure composer...** makes the panels ticked: the measurement along
+  the path with the calculation over it, the calculation alone (the points'
+  names on its axis), the compared cut or map with its calculation, and —
+  with **Constant-energy series at** — for a compared k-map, the measured
+  maps at each energy with the zones dashed (top row) and the calculated
+  contours alone (bottom row), coloured by the weight chosen in step 2 (the
+  parts where it exceeds one half in green).
+- **Calculation to list** makes the calculation a spectrum (Lorentzians of
+  the width set), along the compared cut or along the path, so it opens in
+  the viewers beside the data or is subtracted from it.
+
+![Output](images/bands_output.png)
+
+# Part V — Figures and output
+
+How a figure is put together, saved with its data and exported — and, at
+the end, two figures built step by step.
+
+---
+
+## 28. The figure composer
 
 Tool panel → Advanced → **Figure composer...** with **nothing selected**
 opens a blank page, like a figure of a manuscript: four empty panels (a),
@@ -1088,39 +1400,200 @@ button).
   written. The composer's **Figure tools** are not a viewer's **Plot
   tools**, which draw guides on the live plot.
 
-### 17.2 Slice series figure
+### Arranging panels
 
-Select a map → tool panel → Advanced → **Slice series figure...** lays out a
-page of flat 2-D slices through the cube as one figure for a paper —
-constant-energy contours at a series of energies, or cuts at a series of
-angles or momenta — evenly spaced or at chosen values, with integration,
-one shared colour scale, and labels on the outer edges only. (Not to be
-confused with **3D slices**, which draws three planes in a 3-D view.)
+Click a panel, then **Ctrl+click** (or Shift+click) the others to select
+several. The **Arrange** buttons on the left then:
 
-| Settings | Result |
+| Button | What it does |
 |---|---|
-| ![Slice series settings](images/slice_figure_dialog.png) | ![Slice series figure](images/slice_figure.png) |
+| ⇤ Left, Right ⇥, ⤒ Top, Bottom ⤓ | line up their left / right / top / bottom edges (at the outermost one) |
+| ↔ Centres, ↕ Centres | put their centres on one vertical / horizontal line (the first-selected panel's) |
+| Space ↔, Space ↕ | equal gaps between them, left to right / top to bottom (three or more) |
+| = Width, = Height | the first-selected panel's width / height for all |
 
-### 17.3 Exporting a panel
+![Several panels selected, and the Arrange buttons](images/composer_arrange.png)
 
-Right-click any image → **Export** → **Data (.nxs)...**, **Image...** or
+### Letters and colour bars
+
+- **Letters in line** (*Text* tab, on by default): the letters of panels
+  side by side sit at one height and those of panels one above another at
+  one left edge, whatever titles or axes each panel has. **Nudge (mm)**
+  moves one panel's letter (clear of a long axis title, say);
+  **Re-letter** names them (a), (b)… in reading order.
+- **Colour bar** (*Colour* tab): **Ends** writes the levels, the words
+  *High* / *Low*, or nothing; **Length (%)** of the panel's height or width;
+  **Position** *right* (upright beside the panel) or *below* (lying under
+  it, centred). A 3-D view's bar is sized to the cube as drawn, not to the
+  whole frame round it.
+
+![The colour bar settings](images/composer_colour_bar.png)
+
+### Curves: lines, symbols and error bars
+
+*Overlays* tab, **Curves drawn on the panel**: select curves in the list (or
+none, for all), then set their **colour**, **width**, **style** (solid,
+dashed, dotted…), **symbols** (circle, square, triangles, diamond, with a
+size) and whether they are **joined by a line**; **± σ as error bars**
+turns a curve's two dotted ±σ curves into error bars at its points. **Apply
+to the curves**. A curve with gaps (NaN) is drawn in pieces.
+
+### Saving a figure to edit later, with its data
+
+**Save** / **Save as...** write the figure in the program's own format,
+`fig1.afig`: the page, its drawings and every panel with its data and
+settings — open it again with **Open...** (or pick it in **Load data...**
+in the main window) and go on editing exactly where you stopped. A 3-D view
+is kept as the picture it shows.
+
+Beside it, **`data for fig1/`** gets one folder per panel (`a`, `b`, …):
+
+```
+data for fig1/
+  a/  processed/  what the panel shows: the image as a .nxs cut (opens in the
+                  viewer again), its lines (calculated bands, contours,
+                  curves) as lines.csv, a picture as .png
+      original/   what it was made from: the first measurement file (a
+                  k-converted, symmetrised, cut-out plane traces back to the
+                  file it was first read from), the calculation with the
+                  files it is read with (.win, POSCAR...), the picture file
+                  or the CIF
+      sources.txt which entry of the file, and the processing in between
+  b/  ...
+```
+
+The original file is copied even when the panel shows something computed
+from it many steps later: every dataset remembers the file it began as. A
+figure opened again whose original files have moved reuses the copies in
+its own earlier data folder.
+
+## 29. Exporting a panel and saving data
+
+Right-click any image → **Export** → **Data (.nxs, Igor)...**, **Image...** or
 **Axes only (.eps)...**. It always exports exactly what the panel shows
-(range and all): the data as a dataset this program reads back; an image
+(range and all): the data as a dataset this program reads back, or for
+Igor Pro (`.itx` text or `.ibw` binary wave, with the axes scaled, the units
+set and the metadata in the wave note); an image
 with the colormap applied (PNG, TIFF or JPEG, at a chosen size and dpi, with
 or without the axes, with the Plot tools guides if there are any, and with
 the Brillouin zone if the dataset has one); or the frame, ticks and labels as
 vector PostScript to place the image in, in Illustrator (optionally with the
-Brillouin zone drawn in the box — see [§8.2](#82-brillouin-zone)).
+Brillouin zone drawn in the box — see [§15](#15-brillouin-zone)).
 
 ![Export](images/export_dialog.png)
 
-**Save datasets...** (tool panel, Datasets box) writes the selected
-datasets to a `.nxs` file of your own; several selected rows go into one
-file.
+**Save** (tool panel, Datasets box) writes the selected datasets to a
+`.nxs` file of your own -- several selected rows go into one file -- or, by
+choosing the file type, for Igor Pro: one `.itx` holding them all, or one
+`.ibw` per dataset. An Igor file is a copy; the rows stay as they were.
+
+## 30. Worked example: two figures in the figure composer
+
+The two figures below were made from the demo data
+([§2](#2-trying-it-with-demo-data)) with the program's windows and put
+together in the figure composer. `devtools/figure_tests.py` runs exactly
+these steps, so it is also a script to read alongside this section.
+
+### Figure 1: constant-energy contours
+
+![Example figure 1](images/example_figure_1.png)
+
+**(a) The notched cube.** Convert the Γ-plane map to momentum
+([§13](#13-converting-a-map-to-momentum)); select the k-map → Advanced →
+**Notched cube...**. *Change sampling...* to k_x, k_y within ±1.25 Å⁻¹ and E
+up to E_F; put the notch at k_x = k_y = 0 down to the lowest energy, corner
+**+ − +**; colormap *blue*, reversed; azimuth −52°, elevation 24°. **To
+figure composer...**: a new figure. In the composer, *Colour* tab: **Colour
+bar** on, Ends *high-low*, Position *below*, Length 60 %.
+
+**(b) Measured and calculated contours.** Select the Γ-plane k-map →
+Calculation → **Calculated bands...**; open `demo_calc_hr.dat`; in step 2
+choose the **Weight** `Se-pxy`; in step 3 choose the k-map, *Integrate*
+0.050 eV, then a cut to **Fit to the cut's bands** (Z and the shift apply to
+the contours too); in step 4 tick **Constant-energy series at** `0, -0.3,
+-0.6, -0.9`, untick the others, **To figure composer...** → the figure of
+(a). Eight panels arrive: the measured maps with the zones dashed, and the
+calculated contours alone, red where the weight is below one half and green
+above. In each, set the colormap (*blue*, reversed), the ranges ±1.2 and
+drop the titles of the bottom row (*Text* tab); add the (i)…(viii) and Γ, M,
+K notes with the **Text** tool.
+
+**(c) Stacked contours.** Select the k-map → Advanced → **Stacked
+slices...**; *Layers* along E − E_F at `0, -0.15, -0.3, -0.45, -0.6, -0.75,
+-0.9`, *Integrate* 0.04, *Fade low values* 45 %, z aspect 2.2, azimuth −45°,
+elevation 14°. **To figure composer...** → the same figure.
+
+**Arranging.** Drag the panels roughly into place (the 2 × 4 contours in
+two rows, (a) left, (c) right), then select (a), the top row of (b) and (c)
+and press **⤒ Top**; select a row of contours and **Space ↔**, and **=
+Height** for each row. The letters line up by themselves; **Nudge** moved
+(b)'s 6 mm left, clear of its k_y title.
+
+![Selecting panels and lining them up with the Arrange buttons](images/composer_arrange.png)
+ Only (a), (b) and (c) carry a
+letter: clear the others' *Letter* box. **Save as...** `example_figure_1.afig`
+(its data folder is written beside it), and **PNG** / **PDF** for the paper.
+
+### Figure 2: a band crossing followed through k_z
+
+![Example figure 2](images/example_figure_2.png)
+
+**(a) The crystal structure.** Calculation → **Crystal structure...** →
+*Read a CIF file* `demo_tetragonal_crystal.cif`. Step 2: Hf teal, Si dark
+blue, S yellow, gloss 85 % each, atom size 0.52; *Grey, thin bonds*;
+*Lattice constants on the cell edges* (no key of the elements). Step 3:
+*Draw a plane* (001) at the middle of the cell, between the S layers, in
+grey. Turn it to azimuth −68°, elevation 14°. Step 5: **To figure
+composer...** → a new figure.
+
+**(b) The zone with the measured maps.** Select the Γ-plane and A-plane
+k-maps, then Calculation → **Crystal structure...** → *Read a CIF file*
+`demo_crystal.cif`. Step 4: *Path* `K-H` (the line where the two bands
+cross, in red); *Plane through Γ* → map *Γ-plane map* at −0.65 eV; *Plane
+at the zone top* → map *A-plane map* at −0.55 eV; *Label on the left* `L,
+M`. Step 5: *Picture of* **The Brillouin zone** → **To figure composer...**
+→ the figure of (a).
+
+**(c) The cuts stacked along k_z.** Convert the photon-energy scan to
+momentum ([§14](#14-photon-energy-scans-kz)), select it → Advanced →
+**Stacked slices...**: *Layers* along k_z at the four k_z of the cuts
+(8.0, 8.3, 8.6 and 9.0 π/c), *Fade* 30 %, **Spread** 3, azimuth 40°,
+elevation 12°. In **Mark a curve through the layers**, add the crossing on
+each cut (k_z, k_∥, E) — from (d) — in red. **To figure composer...**.
+
+**(d) The cuts, their MDCs and the crossing against k_z.**
+
+- (i)–(iv): in the k_z map's viewer, **Functions → Slice → Save slice to the
+  main list** at each k_z; open each cut in the figure composer (**Add
+  panel...**). The dashed guides along the two crossing bands are the
+  calculation (Calculated bands, step 3, on the plane k_z = …), shifted by
+  the fitted Z and shift: in step 4, **To figure composer...** with only
+  *The compared cut* ticked gives the cut with them; set their style to
+  *dashed* in the *Overlays* tab. Draw the dashed box with the **Box** tool.
+- (v): select the first cut → Advanced → **Stack plot (EDC / MDC)...** →
+  MDCs, 40 curves of 3 rows each, over the box's energies; **Send to figure
+  composer** → this figure. The guides through the MDCs are the same
+  calculated bands, at each MDC's energy.
+- (vi): the crossing energy at each k_z — from **MDC fit** on each cut and
+  **Dispersion...**, where *Crosses band … at k = …, E = … ± …* gives it
+  with its error — as points with error bars (*Overlays*: symbols *circle*,
+  not joined, **± σ as error bars**), and the calculated crossing through
+  k_z as the red line.
+
+**Arranging.** (a), (b), (c) in the first row: select the three, **⤒ Top**
+and **= Height**; the six panels of (d) in the second row, **⤒ Top** and
+**= Height**. Letters: (a), (b), (c), (d) only. **Save as...**
+`example_figure_2.afig`.
+
+Each panel of either figure can be changed afterwards — open the `.afig`,
+select the panel, and use the figure tools; the data folder keeps both the
+data as shown and the measurement it came from.
+
+# Part VI — Housekeeping
 
 ---
 
-## 18. Autosave, memory and recovery
+## 31. Autosave, memory and recovery
 
 - **Autosave.** Every computed dataset (a k-map, a processed cut, a fit
   result…) is written, uncompressed, to this session's folder in
@@ -1136,11 +1609,11 @@ file.
 - **Operations log.** `~/.arpes_viewer/sessions/operations.log`, one line per
   store / save / discard — how to find what was where.
 - **Memory box** (bottom of the tool panel). This program's memory, the system's, how many viewers and
-  HDF5 files are open, and how much computed data is held. **Free memory**
+  HDF5 files are open, and how much computed data is held. **Free RAM**
   drops cached copies of computed data (they are re-read from their autosaved
-  file when needed); **Close all viewers** closes every window and then frees
+  file when needed); **Close all** closes every window and then frees
   memory.
-- **Open auto-save folder** (in the Memory box) shows the session folders
+- **Autosaves** (in the Memory box) shows the session folders
   in the system's file browser, to delete old working copies by hand. The
   folder of the session now running (named in the status bar) is in use.
 - **Long operations** (reading a big map, converting, de-gridding, assembling
@@ -1149,13 +1622,13 @@ file.
   **Save to a file...**, **Close anyway** (the autosaved copies are deleted)
   or **Cancel** (nothing happens).
 
-## 19. Tips and troubleshooting
+## 32. Tips and troubleshooting
 
 - **A greyed tool button** — hover over it: the tooltip says why (e.g. the
   MDC fit needs a cut already in Å⁻¹, cut arithmetic two cuts). Select the
   right rows in the list and it lights up.
 - **A tool is not in a viewer's Functions menu** — it is in the tool panel
-  (see *Where things are now* in [§3](#3-the-main-window)); check both tabs.
+  (see *Where things are now* in [§3](#3-the-main-window)); check all three tabs.
 - **A window is taller than the screen** — it opens no taller than the
   screen, and its contents scroll; the Apply / Close buttons stay at the
   bottom. Every window can be resized.
@@ -1174,4 +1647,4 @@ file.
 - **Typing numbers** — every number box takes a decimal point (`0.05`),
   whatever the system language; a comma is not accepted.
 - **The machine is paging** — watch the Memory bar (amber past a third of the
-  RAM, red past a half); use **Free memory** or **Close all viewers**.
+  RAM, red past a half); use **Free RAM** or **Close all**.

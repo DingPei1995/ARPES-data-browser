@@ -10,6 +10,135 @@ file is the record of how it got that way.
 
 ---
 
+## 1.2.0 — 2026-10-28
+
+Tools ported from the lab's MATLAB programs (`DataAnalysisPrograms_PD`),
+each checked against the original and improved where it could be; a third
+tab, **Calculation**; Igor Pro export; and a tidier tool panel. The windows
+that take several decisions in a row lead through them as numbered steps
+(*Step 2 of 4: ...*, Back / Next, Next greyed with the reason until the step
+is done; `ui/common/stepper.py`).
+
+- **Sum repeated scans** (Datasets box; replaces `add_two_value_arrays.m`,
+  `tools/processing/repeats.py`, `ui/panels/repeats.py`). A fine cut or map
+  taken in batches, to see an ageing sample and leave its late scans out.
+  Step 1 compares the grids and the recorded conditions with the first scan
+  (a slightly different grid is interpolated onto the first). Step 2
+  compares each scan with the sum of the *others* using counting
+  statistics -- χ²/point ≈ 1 for noise alone, a scan flagged when it stands
+  well above the set's median -- with the count rate and the energy shift of
+  its EDC (derivative cross-correlation against the others aligned by
+  their own shifts, sub-step by a parabola, 0 when the EDCs share no
+  structure). Step 3 sums the ticked scans (the changed ones start
+  unticked), undoing the shifts if asked. On synthetic data a 12 meV shift
+  is measured to ±1.5 meV and a broadened scan is flagged; noise-only
+  repeats give χ² within 15 % of 1 and flag nothing. The MATLAB tool added
+  two arrays with no check at all.
+- **Ridge detection** (Advanced; from `ridge_detection.m`,
+  `tools/processing/ridge.py`). Hessian ridges of the smoothed image, every
+  point placed to a fraction of a pixel. Changed from the .m file: the
+  smoothing is set per axis in that axis' own unit (it used one radius in
+  pixels of mixed units); the derivatives are taken in units of the
+  smoothing width, so the answer does not depend on the axes' units (tested:
+  eV and meV give the same points); Gaussian-derivative filters instead of
+  differences of a smoothed image; a sign-change test instead of an
+  absolute slope tolerance that needed retuning per image; vectorised
+  instead of `arrayfun`. Median error 0.2 meV on a synthetic band.
+- **Detector corrections** (Basic, under Remove detector grid; from
+  `StretchDitherImage.m`, `InterpRegionAlongX/Y.m`, `inpaint_nans.m`;
+  `tools/processing/detector.py`, `ui/panels/detector.py`). A keystone
+  (trapezoidal lit area) stretched to a rectangle as an exact inverse map,
+  with each line's total counts kept -- the .m file triangulated every pixel
+  (`TriScatteredInterp`) and did not conserve counts. Bad regions patched
+  linearly along x or y (as the .m files did) or by a harmonic (Laplace)
+  fill, factorised once for a whole map; *Find bad pixels* uses the map's
+  mean detector image against its median filter and its pixel-to-pixel
+  scatter, so noise is not taken for a faulty pixel. Refused, with the
+  reason, on data already moved off the detector's pixels (de-gridded data
+  is allowed).
+- **Tight-binding fit** (Calculation; from `TB_zph_zmd`,
+  `tools/crystal/tightbinding.py`, `ui/panels/tightbinding.py`). One hopping
+  per shell of neighbours of any 2-D or 3-D lattice (typed, or the
+  Brillouin-zone tool's last crystal), fitted to band points traced by ridge
+  detection on constant-energy planes of a k-map, clicked, or read from a
+  CSV. The model is linear in its parameters, so the fit is one linear
+  solve with standard errors (the .m files ran a nonlinear fit from all-ones
+  start values with ±1000 bounds). Robust: Tukey reweighting gives points
+  traced on something else no weight. Points at one energy fix the shape
+  but not the energy scale, so t1 is then held (the .m fit was undetermined
+  there); a scaled condition number says when the points cannot separate
+  the shells (one contour fixes about two). The azimuth can be refined by a
+  scan. The model's contour is drawn over the data; its spectral function
+  goes to the list as a map; parameters to JSON.
+- **Crystal structure** (Calculation; from `Lattice_plot_zqs`,
+  `tools/crystal/structure.py`, `ui/panels/crystal.py`). Typed in (cell,
+  centering, basis), from the Brillouin-zone tool's last crystal
+  (`tools/crystal/last_crystal.py`), or from a **CIF** with its symmetry
+  operations applied. Per element colour, size, transparency and gloss;
+  cell edges, bonds; a cleavage plane (hkl) slid along its normal or put on
+  one of the listed atomic layers (each with the atoms it holds), the atoms
+  above faded or hidden to show the termination. Painted with QPainter (no
+  OpenGL), so it renders at any size; *To figure composer* adds it as a
+  picture panel.
+- **Crystal view, improved for papers.** Atoms shaded as glossy spheres
+  with real transparency; grey, thin bonds; lattice constants written on
+  the cell edges; the element key optional. The Brillouin zone and
+  polyhedra are drawn in the same view: k axes as arrows, high-symmetry
+  labels set off from their points and optionally placed at a left-hand
+  equivalent (*Label on the left*), a path drawn in colour, and a measured
+  k-map painted on the plane through Γ or the zone top, clipped to the
+  zone's outline.
+- **Calculated bands** (Calculation; `tools/crystal/bands.py`,
+  `ui/panels/bands.py`). Reads a Wannier90 `_hr.dat` (and the other
+  formats listed in the guide) with orbital weights; draws bands along a
+  path, constant-energy contours, and compares with a measured cut or map
+  -- a renormalisation Z and an energy shift fitted to the cut's bands
+  apply to the contours too. A band can be *followed* through crossings by
+  eigenvector overlap (diabatic), and a crossing line traced through k_z.
+  *To figure composer* sends the comparison, a constant-energy series or
+  the calculated guides as dashed overlays on a cut.
+- **Stacked slices** (Advanced; `ui/panels/volume.py`). Constant-energy (or
+  constant-k_z) slices of a volume as separated, faded layers in 3-D, with
+  spread, aspect and view angle, and curves marked through the layers --
+  the stacked contour plots of papers.
+- **Band crossings.** The MDC fit's *Dispersion...* window reports where two
+  fitted linear branches cross, with its error (`line_crossing` in
+  `tools/spectra/dispersion.py`); a collapsed error no longer makes the fit
+  singular (sigma floored at a tenth of the median).
+- **Figure composer: own file format, `.afig`** (`tools/output/figfile.py`).
+  A zip of the figure as JSON plus its arrays (no pickle); *Open figure...*
+  in the composer or the launcher reopens it for editing. Saving writes
+  beside it a folder *data for <name>* with one subfolder per panel letter
+  holding the data as shown (`.nxs`, line CSVs, a PNG) and the original
+  measurement it came from, traced back through conversions and cuts, plus
+  an imported picture's own file.
+- **Figure composer: arranging.** Select several panels (Ctrl-click) and
+  line them up: top, bottom, left, right, distribute, same width or
+  height. Panel letters line up row by row and run (a), (b), (c) in
+  reading order; a letter can be nudged. Colour bars can sit below a
+  panel, shorter, with high or low at either end. Curve overlays take
+  symbols and error bars and break at gaps.
+- **Demo data and example figures.** The demo set gains a tetragonal CIF, a
+  calculated band structure that matches the demo bands, and a photon-energy
+  scan with a band crossing; `devtools/figure_tests.py` builds the two
+  example figures of the guide's worked example from it.
+- **User guide (English) reorganised** by the tool panel's tabs: Getting
+  started, Basic, Advanced, Calculation, Figures and output, Housekeeping;
+  it ends with a worked example making two paper figures in the figure
+  composer. PDF regenerated.
+- **Igor Pro export** (`tools/output/igor.py`; replaces
+  `Export2ScientaData.m`). The viewers' Export → *Data (.nxs, Igor)* and the
+  Datasets box's **Save** write `.itx` (all datasets in one file) or `.ibw`
+  version 5 (one per dataset): scaling, units, dimension labels, metadata
+  in the wave note, an unevenly spaced axis as its own wave. The `.ibw`
+  round-trips through this program's own SES `.ibw` reader in the tests.
+- **The tool panel**: a third tab, **Calculation** (Crystal structure,
+  Tight-binding fit, Calculated bands). The Memory
+  box's three buttons share one row, renamed **Free RAM**, **Close all**,
+  **Autosaves** (the old names are in their tooltips). The Datasets box puts
+  **Rename**, **Save** and **Remove** on one row, and gains **Sum repeated
+  scans...**.
+
 ## 1.1.1 — 2026-10-28
 
 The experiment log, and a Datasets box for what is done to the rows. (A

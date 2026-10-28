@@ -2,7 +2,7 @@
 
 *[English version](USER_GUIDE_en.md) · [中文版](USER_GUIDE_zh.md)*
 
-*Dernière mise à jour : 28 octobre 2026 — pour ARPES viewer v1.1.1*
+*Dernière mise à jour : 28 octobre 2026 — pour ARPES viewer v1.2.0*
 
 La version et sa date figurent dans la barre de titre et en bas de la fenêtre
 principale. Signaler un bogue, poser une question, obtenir la dernière version :
@@ -47,6 +47,7 @@ le programme, c'est-à-dire en anglais.
 17. [Figures et exportation](#17-figures-et-exportation)
 18. [Sauvegarde automatique, mémoire et récupération](#18-sauvegarde-automatique-mémoire-et-récupération)
 19. [Conseils et dépannage](#19-conseils-et-dépannage)
+20. [Nouveau dans 1.2.0 : outils repris des programmes MATLAB](#20-nouveau-dans-120--outils-repris-des-programmes-matlab)
 
 ---
 
@@ -125,15 +126,18 @@ mesures, chacune sur sa propre ligne). Le type est indiqué après le nom :
 Elle a trois parties :
 
 - **Le panneau d'outils** (à gauche) — tous les outils d'analyse et de
-  traitement, sous forme de boutons, en deux onglets. **Basic** (affiché au
+  traitement, sous forme de boutons, en trois onglets. **Basic** (affiché au
   démarrage) contient ce par quoi passe presque chaque jeu de données :
   ajustement du front de Fermi, suppression de la grille du détecteur,
   soustraction du fond, les trois conversions en k, la vérification des
-  niveaux de cœur, l'alignement des niveaux de Fermi d'une carte kz et la zone
-  de Brillouin. **Advanced** contient le reste : composeur de figures,
-  lissage et filtres qui affinent les bandes, symétrisation, empilements de
-  courbes, ajustements MDC et EDC, arithmétique de coupes, figure en série de
-  tranches et les trois vues 3D. Dans chaque onglet, les outils sont groupés
+  niveaux de cœur, l'alignement des niveaux de Fermi d'une carte kz, la zone
+  de Brillouin et les corrections du détecteur. **Advanced** contient le
+  reste : composeur de figures, lissage et filtres qui affinent les bandes,
+  symétrisation, détection de crêtes, empilements de courbes, ajustements MDC
+  et EDC, arithmétique de coupes, figure en série de tranches et les trois
+  vues 3D. **Calculation** contient ce qui est calculé plutôt que mesuré : la
+  structure cristalline et l'ajustement de liaisons fortes (voir
+  [§20](#20-nouveau-dans-120--outils-repris-des-programmes-matlab)). Dans chaque onglet, les outils sont groupés
   selon les données qu'ils acceptent (*2D & 3D — cuts, maps*, *2D only —
   cuts*, *3D only — maps* …).
 - **La liste** (à droite), avec ses boutons.
@@ -170,10 +174,10 @@ donne la raison.
 **Le cadre Datasets** (panneau d'outils, entre les outils et Memory) contient
 le reste de ce qui se fait aux lignes : **Experiment info**, **Log format...**
 et **Auto Exp. log** côte à côte (voir [le journal d'expérience](#le-journal-dexpérience)),
-**Rename...**, **Save datasets...**, **Remove from list** et **Session
-log...**. Ses boutons se grisent comme les outils.
+**Rename**, **Save** et **Remove** sur une ligne, **Sum repeated scans...**
+et **Session log...**. Ses boutons se grisent comme les outils.
 
-### Où se trouvent les choses maintenant (v1.1.1)
+### Où se trouvent les choses maintenant (v1.2.0)
 
 Pour qui a utilisé une version antérieure : les outils ont quitté le menu
 contextuel et les menus *Functions* des fenêtres pour le panneau d'outils ;
@@ -195,9 +199,9 @@ chacun a ainsi une seule entrée, toujours visible.
 | Panneau → Advanced → **3D slices**, **Notched cube**, **Volume projection** | clic droit → 3D view (une fenêtre, trois modes) |
 | Panneau → Advanced → **Figure composer...** | clic droit → Open in figure composer |
 | Clic droit → **Open scan-axis cut**, bouton **Scan-axis cut** | Open deflector cut, Deflector cut |
-| Cadre Memory → **Free memory**, **Close all viewers**, **Open auto-save folder** | sous la liste |
+| Cadre Memory → **Free RAM**, **Close all**, **Autosaves** (une ligne) | sous la liste ; puis Free memory, Close all viewers, Open auto-save folder |
 | Cadre Datasets → **Experiment info** | clic droit → Show information |
-| Cadre Datasets → **Rename...**, **Save datasets...**, **Remove from list**, **Session log...** | clic droit |
+| Cadre Datasets → **Rename**, **Save**, **Remove** (une ligne), **Session log...** | clic droit ; puis Rename..., Save datasets..., Remove from list |
 | **Combine...** sous la liste (seulement) | aussi clic droit → Combine N datasets |
 
 **Experiment info** ouvre aussi toutes les métadonnées du jeu de données
@@ -1152,10 +1156,12 @@ choisies, avec intégration, une échelle de couleurs commune et des
 
 ### 17.3 Exporter un panneau
 
-Clic droit sur n'importe quelle image → **Export** → **Data (.nxs)...**,
+Clic droit sur n'importe quelle image → **Export** → **Data (.nxs, Igor)...**,
 **Image...** ou **Axes only (.eps)...**. L'exportation reprend toujours
 exactement ce que montre le panneau (étendue comprise) : les données, comme
-un jeu de données que ce programme sait relire ; une image avec la palette
+un jeu de données que ce programme sait relire, ou pour Igor Pro (`.itx`
+texte ou onde binaire `.ibw`, axes étalonnés, unités et métadonnées dans la
+note de l'onde) ; une image avec la palette
 appliquée (PNG, TIFF ou JPEG, à la taille et à la résolution choisies, avec
 ou sans les axes, avec les guides des Plot tools s'il y en a, et avec la zone
 de Brillouin si le jeu de données en a une) ; ou le cadre, les graduations et
@@ -1165,9 +1171,11 @@ Illustrator (avec, au choix, la zone de Brillouin tracée dans le cadre — voir
 
 ![Exportation](images/export_dialog.png)
 
-**Save datasets...** (panneau d'outils, cadre Datasets) écrit les jeux de
-données sélectionnés dans un fichier `.nxs` de votre choix ; plusieurs
-lignes sélectionnées vont dans un même fichier.
+**Save** (panneau d'outils, cadre Datasets) écrit les jeux de données
+sélectionnés dans un fichier `.nxs` de votre choix -- plusieurs lignes
+sélectionnées vont dans un même fichier -- ou, selon le type de fichier
+choisi, pour Igor Pro : un `.itx` qui les contient tous, ou un `.ibw` par jeu
+de données. Un fichier Igor est une copie ; les lignes restent inchangées.
 
 ---
 
@@ -1192,10 +1200,10 @@ lignes sélectionnées vont dans un même fichier.
   était où.
 - **Cadre Memory** (en bas du panneau d'outils). La mémoire du programme et celle du système, le nombre de
   fenêtres et de fichiers HDF5 ouverts, et la quantité de données calculées
-  conservées. **Free memory** abandonne les copies en cache des données
+  conservées. **Free RAM** abandonne les copies en cache des données
   calculées (elles sont relues depuis leur fichier de sauvegarde au besoin) ;
-  **Close all viewers** ferme toutes les fenêtres puis libère la mémoire.
-- **Open auto-save folder** (dans le cadre Memory) ouvre le dossier des
+  **Close all** ferme toutes les fenêtres puis libère la mémoire.
+- **Autosaves** (dans le cadre Memory) ouvre le dossier des
   sessions dans l'explorateur de fichiers, pour supprimer à la main les
   anciennes copies de travail. Le dossier de la session en cours (nommé dans
   la barre d'état) est utilisé : n'y touchez pas.
@@ -1214,7 +1222,7 @@ lignes sélectionnées vont dans un même fichier.
   deux coupes). Sélectionnez les bonnes lignes dans la liste et il s'allume.
 - **Un outil manque au menu Functions d'une fenêtre** — il est dans le
   panneau d'outils (voir *Où se trouvent les choses maintenant* au
-  [§3](#3-la-fenêtre-principale)) ; regardez les deux onglets.
+  [§3](#3-la-fenêtre-principale)) ; regardez les trois onglets.
 - **Une fenêtre est plus haute que l'écran** — elle s'ouvre au plus à la
   hauteur de l'écran et son contenu défile ; les boutons Apply / Close
   restent en bas. Toutes les fenêtres se redimensionnent.
@@ -1237,4 +1245,94 @@ lignes sélectionnées vont dans un même fichier.
   pas acceptée.
 - **La machine utilise la mémoire d'échange** — surveillez la barre Memory
   (ambre au-delà d'un tiers de la RAM, rouge au-delà de la moitié) ; utilisez
-  **Free memory** ou **Close all viewers**.
+  **Free RAM** ou **Close all**.
+
+---
+
+## 20. Nouveau dans 1.2.0 : outils repris des programmes MATLAB
+
+Cinq outils repris des programmes MATLAB du laboratoire, améliorés là où
+l'original pouvait l'être. Ceux qui demandent plusieurs décisions s'ouvrent
+en **étapes numérotées** : le titre indique *Step 2 of 4 : …*, un cadre bleu
+dit à quoi sert l'étape et quoi faire, **Next →** reste grisé (la raison est
+écrite à côté) tant que l'étape n'est pas faite, et **← Back** ou la liste
+des étapes à gauche permet de revenir.
+
+### 20.1 Additionner des mesures répétées (cadre Datasets)
+
+Pour une coupe ou une carte fine prise en plusieurs balayages courts, afin de
+repérer un échantillon qui vieillit. Sélectionnez les balayages (au moins
+deux, d'un même type) → **Sum repeated scans...** :
+
+1. **Est-ce bien la même mesure ?** La grille et les conditions enregistrées
+   de chaque balayage (énergie de photon, polarisation, angles, position,
+   température, énergie de passage, mode de lentille) ; en orange ce qui
+   diffère du premier.
+2. **L'échantillon a-t-il changé ?** Cliquez sur **Compare the scans**.
+   Chaque balayage est comparé à la somme des autres : le *χ² / point* est à
+   peu près le même pour des balayages qui ne diffèrent que par le bruit de
+   comptage et augmente quand le spectre change ; ceux qui ressortent sont
+   marqués **changed**. Le décalage en énergie de l'EDC de chacun et son taux
+   de comptage sont donnés ; cliquez une ligne pour voir son EDC face aux
+   autres.
+3. **Additionner.** Cochez les balayages à garder (les *changed* sont
+   décochés au départ), choisissez de corriger ou non les décalages, **Sum**
+   ou **Mean**, puis **Sum to list**.
+
+### 20.2 Détection de crêtes (Advanced)
+
+Suit les bandes comme des crêtes de l'intensité, chaque point au sous-pixel
+près. Réglez le **lissage** selon chaque axe (dans son unité, environ la
+largeur de la bande), montez le **seuil** jusqu'à ne garder que les bandes
+(points jaunes sur la source), puis **Result to list** (l'image des crêtes ;
+une carte plan par plan) ou **Save ridge points...** (un CSV que
+l'ajustement de liaisons fortes lit tel quel).
+
+### 20.3 Corrections du détecteur (Basic, sous Remove detector grid)
+
+Sur une coupe, une carte ou une carte kz telle que mesurée :
+
+1. **Trapèze** -- cochez *Correct a trapezoidal image* et placez les quatre
+   coins jaunes sur ceux de la zone éclairée ; l'image de droite la montre
+   rendue rectangulaire, le nombre de coups de chaque ligne conservé.
+2. **Zones défectueuses** -- **Add a region** et déplacez-la sur un point
+   mort ou chaud, ou **Find bad pixels** ; remplissage *smooth* (pour un
+   point) ou *linear along* un axe (pour une bande).
+3. **Appliquer** -- **Apply to list**. Faites ensuite la suppression de la
+   grille, le niveau de Fermi et la conversion en k sur le résultat.
+
+### 20.4 Ajustement de liaisons fortes (Calculation)
+
+Avec une k-map sélectionnée (ou rien, pour lire des points dans un fichier) :
+
+1. **Le réseau** -- une couche 2D (a, b, γ) ou un cristal 3D, ou **Take the
+   crystal from the Brillouin-zone tool** ; l'azimut de a par rapport à kx ;
+   le nombre de couches de voisins.
+2. **Points de bande** -- placez-vous à une énergie et cliquez sur **Trace
+   this energy** (détection de crêtes), ou cochez *Click* et cliquez sur la
+   bande, ou **Read points from a file**. Deux ou trois énergies valent mieux
+   qu'une : un seul contour fixe la forme de la bande, pas son échelle
+   d'énergie.
+3. **Ajuster** -- les intégrales de saut avec leurs erreurs et l'écart
+   quadratique moyen ; le contour du modèle est tracé en rouge sur le plan de
+   l'étape 2. Avec une seule énergie, fixez t1 ; *Refine the azimuth* si
+   l'orientation n'est connue qu'approximativement. Une note orange signifie
+   que les points ne distinguent pas les couches : prenez-en moins.
+4. **Utiliser le modèle** -- **Model to list** (sa fonction spectrale, comme
+   une carte à côté des données), **Save parameters...**, **Copy results**.
+
+### 20.5 Structure cristalline (Calculation)
+
+1. **La structure** -- saisie à la main (maille, groupe d'espace pour son
+   centrage, atomes), le dernier cristal de l'outil zone de Brillouin, ou
+   **Read a CIF file** (sa symétrie est appliquée).
+2. **L'apparence** -- nombre de mailles selon a, b, c, taille des atomes,
+   arêtes de la maille et liaisons, et pour chaque élément couleur, taille,
+   transparence et brillance. Faites glisser l'image pour la tourner, la
+   molette pour zoomer ; *View along* a, b, c ou la normale au plan.
+3. **Plan de clivage** -- cochez *Draw a plane*, donnez (hkl), faites-le
+   glisser, ou double-cliquez une **couche atomique** de la liste pour l'y
+   placer ; *Hide the atoms above* montre la terminaison ; les atomes du plan
+   sont cerclés de rouge.
+4. **Exporter** -- **Save picture...** (PNG à toute taille) ou **To figure
+   composer...**.

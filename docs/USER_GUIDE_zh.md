@@ -2,7 +2,7 @@
 
 *[English version / 英文版](USER_GUIDE_en.md) · [Version française / 法文版](USER_GUIDE_fr.md)*
 
-*最后更新：2026 年 10 月 28 日——对应 ARPES viewer v1.1.1*
+*最后更新：2026 年 10 月 28 日——对应 ARPES viewer v1.2.0*
 
 程序的版本号和更新日期显示在主窗口标题栏和主窗口最下方。报告 bug、提问或获取最新版本：
 <https://github.com/DingPei1995/ARPES-data-browser>（报告 bug 时请注明版本号）。
@@ -37,6 +37,7 @@
 17. [作图与导出](#17-作图与导出)
 18. [自动保存、内存与恢复](#18-自动保存内存与恢复)
 19. [技巧与常见问题](#19-技巧与常见问题)
+20. [1.2.0 新增：来自 MATLAB 程序的工具](#20-120-新增来自-matlab-程序的工具)
 
 ---
 
@@ -105,11 +106,13 @@ python devtools/guide_screenshots.py    # 写入 docs/images/*.png
 
 主窗口分为三部分：
 
-- **工具面板**（左侧）——所有分析与处理工具都以按钮形式放在这里，分两个标签页。
+- **工具面板**（左侧）——所有分析与处理工具都以按钮形式放在这里，分三个标签页。
   **Basic**（启动时显示）包含几乎每个数据集都要经过的步骤：费米边拟合、去除探测器
-  网格、扣背景、三种 k 转换、芯能级检查、对齐 kz map 的费米能级以及布里渊区。
-  **Advanced** 包含其余工具：作图器、平滑及突出能带的滤波、对称化、堆叠图、MDC 与
-  EDC 拟合、cut 运算、切片组图以及三种三维视图。每个标签页内按所接受的数据分组
+  网格、探测器校正、扣背景、三种 k 转换、芯能级检查、对齐 kz map 的费米能级以及布里渊区。
+  **Advanced** 包含其余工具：作图器、平滑及突出能带的滤波、对称化、脊线提取、堆叠图、
+  MDC 与 EDC 拟合、cut 运算、切片组图以及三种三维视图。**Calculation** 包含计算而非
+  测量得到的内容：晶体结构与紧束缚拟合（见[第 20 节](#20-120-新增来自-matlab-程序的工具)）。
+  每个标签页内按所接受的数据分组
   （*2D & 3D — cuts, maps*、*2D only — cuts*、*3D only — maps* 等）。
 - **列表**（右侧）及其下方的按钮。
 - **Memory 区**（左下）和版本信息（右下）。
@@ -138,10 +141,10 @@ k conversion (cut) 需要一张角度 cut，cut 运算需要恰好两张 cut，�
 
 **Datasets 区**（工具面板中，位于工具和 Memory 之间）包含其余对行本身的操作：
 **Experiment info**、并排的 **Log format...** 与 **Auto Exp. log**（见[实验记录](#实验记录)）、
-**Rename...**、**Save datasets...**、**Remove from list**、**Session log...**。
-这些按钮和工具按钮一样，会随选择变灰。
+同一行的 **Rename**、**Save**、**Remove**，以及 **Sum repeated scans...** 和
+**Session log...**。这些按钮和工具按钮一样，会随选择变灰。
 
-### 功能现在的位置（v1.1.1）
+### 功能现在的位置（v1.2.0）
 
 如果你用过早期版本：工具已从右键菜单和查看窗口的 *Functions* 菜单移到了工具面板，
 每个工具只有一个入口，且始终可见。
@@ -162,9 +165,9 @@ k conversion (cut) 需要一张角度 cut，cut 运算需要恰好两张 cut，�
 | 工具面板 → Advanced → **3D slices**、**Notched cube**、**Volume projection** | 右键 → 3D view（一个窗口三种模式） |
 | 工具面板 → Advanced → **Figure composer...** | 右键 → Open in figure composer |
 | 右键 → **Open scan-axis cut**，查看窗口按钮 **Scan-axis cut** | Open deflector cut、Deflector cut |
-| Memory 区 → **Free memory**、**Close all viewers**、**Open auto-save folder** | 列表下方 |
+| Memory 区 → **Free RAM**、**Close all**、**Autosaves**（同一行） | 列表下方；后为 Free memory、Close all viewers、Open auto-save folder |
 | Datasets 区 → **Experiment info** | 右键 → Show information |
-| Datasets 区 → **Rename...**、**Save datasets...**、**Remove from list**、**Session log...** | 右键 |
+| Datasets 区 → **Rename**、**Save**、**Remove**（同一行）、**Session log...** | 右键；后为 Rename...、Save datasets...、Remove from list |
 | 仅列表下方的 **Combine...** | 另有右键 → Combine N datasets |
 
 **Experiment info** 还会在独立窗口中显示该数据集的全部元数据，带过滤框，
@@ -930,17 +933,19 @@ E-k 谱**。拖动红色靶标即可查看另一点的谱。在面板上右键�
 
 ### 17.3 导出单个面板
 
-在任意图像上右键 → **Export** → **Data (.nxs)...**、**Image...** 或 **Axes only
+在任意图像上右键 → **Export** → **Data (.nxs, Igor)...**、**Image...** 或 **Axes only
 (.eps)...**。导出的总是该面板当前显示的内容（包括显示范围）：数据导出为本程序
-可重新读取的数据集；图片应用当前色表（PNG、TIFF 或 JPEG，可设定尺寸和 dpi，
+可重新读取的数据集，或导出给 Igor Pro（`.itx` 文本或 `.ibw` 二进制 wave，带坐标标度、
+单位，元数据写在 wave note 中）；图片应用当前色表（PNG、TIFF 或 JPEG，可设定尺寸和 dpi，
 可带或不带坐标轴，如有 Plot tools 辅助线或布里渊区也可一并画出）；或者把边框、刻度
 和标签导出为矢量 PostScript，便于在 Illustrator 中放入图片（可在框内画出布里渊区，
 见[第 8.2 节](#82-布里渊区)）。
 
 ![导出](images/export_dialog.png)
 
-**Save datasets...**（工具面板 Datasets 区）把选中的数据集写入你自己的 `.nxs`
-文件；选中多行时会写入同一个文件。
+**Save**（工具面板 Datasets 区）把选中的数据集写入你自己的 `.nxs` 文件（选中多行时
+写入同一个文件）；也可在文件类型中选择 Igor Pro 格式：一个包含全部数据的 `.itx`，或每个
+数据集一个 `.ibw`。Igor 文件只是副本，列表中的行保持不变。
 
 ---
 
@@ -957,9 +962,9 @@ E-k 谱**。拖动红色靶标即可查看另一点的谱。在面板上右键�
 - **操作日志**：`~/.arpes_viewer/sessions/operations.log`，每次存储 / 保存 /
   丢弃记录一行——用来查找数据的去向。
 - **Memory 区**（工具面板底部）：显示本程序与系统的内存占用、打开的窗口数与 HDF5 文件数，以及
-  内存中的计算数据量。**Free memory** 丢弃计算数据的缓存副本（需要时从自动保存的
-  文件重新读取）；**Close all viewers** 关闭所有窗口并释放内存。
-- **Open auto-save folder**（Memory 区内）在系统文件管理器中打开自动保存文件夹，
+  内存中的计算数据量。**Free RAM** 丢弃计算数据的缓存副本（需要时从自动保存的
+  文件重新读取）；**Close all** 关闭所有窗口并释放内存。
+- **Autosaves**（Memory 区内）在系统文件管理器中打开自动保存文件夹，
   可以手动删除旧的临时副本。当前会话的文件夹（状态栏中显示其名称）正在使用，请勿删除。
 - **耗时操作**（读取大 map、转换、去网格、拼接文件夹）在后台线程运行，带进度条，
   且可以真正取消。
@@ -972,7 +977,7 @@ E-k 谱**。拖动红色靶标即可查看另一点的谱。在面板上右键�
 - **工具按钮是灰色的**——把鼠标悬停在按钮上，提示会说明原因（例如 MDC 拟合要求 cut
   已经是 Å⁻¹ 单位，cut 运算需要两张 cut）。在列表中选中合适的行，按钮就会亮起。
 - **查看窗口的 Functions 菜单里找不到某个工具**——它在工具面板中（见[第 3 节](#3-主窗口)
-  的“功能现在的位置”），两个标签页都看一看。
+  的“功能现在的位置”），三个标签页都看一看。
 - **窗口比屏幕还高**——窗口打开时不会超过屏幕高度，内容可以滚动，Apply / Close 按钮
   始终在底部。所有窗口都可以调整大小。
 - **没有提供 k 转换**——该 map 的第一个轴不是角度（而是光子能量、温度等）。请在
@@ -985,4 +990,66 @@ E-k 谱**。拖动红色靶标即可查看另一点的谱。在面板上右键�
   因此其他窗口会等鼠标停下再更新；map 读入内存后即可实时跟随。
 - **输入数字**——无论系统语言如何，所有数字框都使用小数点（`0.05`），不接受逗号。
 - **系统开始使用交换内存**——留意 Memory 进度条（超过内存三分之一变为琥珀色，
-  超过一半变为红色），使用 **Free memory** 或 **Close all viewers**。
+  超过一半变为红色），使用 **Free RAM** 或 **Close all**。
+
+---
+
+## 20. 1.2.0 新增：来自 MATLAB 程序的工具
+
+五个来自实验室 MATLAB 程序的工具，在原算法可以改进的地方都做了改进。需要多次决定的工具
+以**编号步骤**打开：标题显示 *Step 2 of 4: …*，蓝色框说明该步的用途和操作；在该步完成之前
+**Next →** 保持灰色（旁边写明缺什么），**← Back** 或左侧的步骤列表可以返回。
+
+### 20.1 叠加重复测量（Datasets 区）
+
+用于分多次短扫描采集的精细 cut 或 map，以便发现样品老化。选中这些扫描（同一类型的两个或
+更多）→ **Sum repeated scans...**：
+
+1. **是否为重复测量？** 列出每个扫描的网格和记录条件（光子能量、偏振、角度、位置、温度、
+   通能、透镜模式）；与第一个扫描不同的值标为橙色。
+2. **样品是否发生变化？** 点击 **Compare the scans**。每个扫描与其余扫描之和比较：
+   *χ² / point* 对只差计数噪声的扫描基本相同，谱本身变化时会增大；明显高于其余的扫描标为
+   **changed**。同时列出每个扫描 EDC 的能量漂移和计数率；点击某行可查看其 EDC 与其余的对比。
+3. **叠加。** 勾选要保留的扫描（标为 changed 的默认不勾选），选择是否消除能量漂移、
+   **Sum** 或 **Mean**，然后 **Sum to list**。
+
+### 20.2 脊线提取（Advanced）
+
+把能带当作强度的脊线来追踪，每个点精确到亚像素。按各轴自己的单位设置**平滑宽度**（约为
+能带宽度），提高**阈值**直到只剩能带（源图上的黄点），然后 **Result to list**（脊线图像；
+map 按所选平面逐片处理）或 **Save ridge points...**（CSV，紧束缚拟合可直接读取）。
+
+### 20.3 探测器校正（Basic，位于 Remove detector grid 下方）
+
+作用于原始测量的 cut、map 或 kz map：
+
+1. **梯形畸变** —— 勾选 *Correct a trapezoidal image*，把四个黄色角点拖到受光区的四个角上；
+   右图显示校正为矩形后的结果，每行总计数保持不变。
+2. **坏区** —— **Add a region** 并拖到坏点或热点上，或点击 **Find bad pixels** 自动查找；
+   填补方式 *smooth*（适合点状坏区）或 *linear along* 某个轴（适合条状坏区）。
+3. **应用** —— **Apply to list**。之后再对结果做去网格、费米能级和 k 转换。
+
+### 20.4 紧束缚拟合（Calculation）
+
+选中一个 k-map（或不选，使用点文件）：
+
+1. **晶格** —— 二维层（a、b、γ）或三维晶体，或 **Take the crystal from the Brillouin-zone
+   tool**；a 轴相对 kx 的方位角；近邻壳层数。
+2. **能带点** —— 移到某个能量后点击 **Trace this energy**（脊线提取），或勾选 *Click* 在能带
+   上点击，或 **Read points from a file**。两三个能量比一个好：单一等能线只确定能带形状，不确定
+   能量尺度。
+3. **拟合** —— 得到各跃迁积分及其误差和均方根偏差；模型的等能线以红色画在第 2 步的平面上。
+   只有一个能量时固定 t1；方位角只大致已知时勾选 *Refine the azimuth*。出现橙色提示表示这些
+   点无法区分各壳层：请减少壳层数。
+4. **使用模型** —— **Model to list**（模型的谱函数，作为 map 与数据并排查看）、
+   **Save parameters...**、**Copy results**。
+
+### 20.5 晶体结构（Calculation）
+
+1. **结构** —— 手动输入（晶胞、决定心化方式的空间群、原子），使用布里渊区工具最近的晶体，
+   或 **Read a CIF file**（自动应用其对称操作）。
+2. **外观** —— 沿 a、b、c 重复的晶胞数、原子大小、晶胞边和化学键，以及每种元素的颜色、
+   大小、透明度和光泽。拖动图像旋转，滚轮缩放；*View along* a、b、c 或晶面法线。
+3. **解理面** —— 勾选 *Draw a plane*，输入 (hkl)，拖动滑块，或在列表中双击某个**原子层**把
+   晶面放到该层上；*Hide the atoms above* 显示解理后的表面终止层；位于晶面上的原子以红圈标出。
+4. **导出** —— **Save picture...**（任意尺寸的 PNG）或 **To figure composer...**。

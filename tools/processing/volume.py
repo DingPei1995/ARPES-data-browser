@@ -35,6 +35,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import warnings
+
 import numpy as np
 from scipy import ndimage
 
@@ -211,6 +213,50 @@ def _bounds(axes, limits=None):
             lo, hi = float(axis.min()), float(axis.max())
         out.append((lo, hi))
     return out
+
+
+# ==========================================================================
+# A stack of parallel slices
+# ==========================================================================
+def stack_faces(values, axes, axis: int, positions, *, width: float = 0.0,
+                density: int = 300, limits=None) -> list:
+    """Parallel planes through the cube, normal to ``axis``, at each of
+    ``positions`` -- constant-energy maps stacked up the energy axis, or
+    cuts stacked along k_z -- the picture of how a band evolves.
+
+    Each plane is the cube averaged over ``width`` (in the axis's units)
+    round its position, at least the one nearest sample, so a stack of
+    50 meV windows is what a constant-energy figure normally shows. The
+    planes are two-sided: a stack is looked at through its translucent
+    layers, from either side.
+    """
+    values = np.asarray(values, dtype=float)
+    axis = int(axis) % 3
+    bounds = _bounds(axes, limits)
+    others = [d for d in range(3) if d != axis]
+    u_range, v_range = bounds[others[0]], bounds[others[1]]
+    nu = _resolution(u_range, bounds[others[0]], density)
+    nv = _resolution(v_range, bounds[others[1]], density)
+    along = np.asarray(axes[axis], dtype=float)
+    step = abs(float(along[1] - along[0])) if along.size > 1 else 1.0
+    faces = []
+    for position in positions:
+        position = float(position)
+        if not (min(bounds[axis]) - 0.5 * step <= position <= max(bounds[axis]) + 0.5 * step):
+            continue
+        half = 0.5 * max(float(width), 0.0)
+        count = max(1, int(round(2 * half / step)) + 1) if half > 0 else 1
+        samples = (np.linspace(position - half, position + half, count)
+                   if count > 1 else [position])
+        stack = [sample_plane(values, axes, axis, p, u_range, v_range, nu, nv)
+                 for p in samples]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)    # outside the data
+            image = np.nanmean(np.array(stack), axis=0) if len(stack) > 1 else stack[0]
+        faces.append(Face(image, _face_corners(axis, position, u_range, v_range),
+                          name="xyz"[axis] + f" = {position:.4g}", axis=axis,
+                          position=position, outward=0))
+    return faces
 
 
 # ==========================================================================

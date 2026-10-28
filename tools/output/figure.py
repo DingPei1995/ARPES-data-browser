@@ -220,6 +220,15 @@ class Overlay:
     style: str = "solid"
     closed: bool = False
     name: str = ""
+    #: a symbol at every point -- "o", "s" (square), "^", "v", "d" -- for
+    #: measured points rather than a curve; "" draws none
+    marker: str = ""
+    marker_mm: float = 1.0
+    #: whether the points are joined (False: symbols only)
+    line: bool = True
+    #: error bars, one per point (empty: none), in data units
+    y_errors: list = field(default_factory=list)
+    x_errors: list = field(default_factory=list)
 
 
 @dataclass
@@ -278,6 +287,11 @@ class PanelData:
     #: ui.panels.volume (faces, camera, colours, axes). The panel's own x
     #: and y then run 0..1 across the picture, for placing notes on it.
     scene: object = None
+    #: what the panel was made from, traced back as far as it goes: the
+    #: original measurement file (and entry), a calculation file, a picture
+    #: file -- ``tools.output.figfile.source_record`` dicts. Saved with the
+    #: figure, and copied into its "data for ..." folder.
+    sources: list = field(default_factory=list)
 
     def is_plot(self) -> bool:
         """Whether this is data drawn on axes (not a slot or a picture)."""
@@ -320,8 +334,19 @@ class Panel:
     x_label: str = None            # None -> the data's own label
     y_label: str = None
     label: str = ""                # "(a)"
+    #: the letter nudged from where it would sit, ``(dx, dy)`` in mm
+    label_offset: tuple = (0.0, 0.0)
     colorbar: bool = False
     colorbar_label: str = ""
+    #: what the colour bar's ends say: "values" (the levels), "high-low"
+    #: (the words, as a figure of raw intensity usually has), or "none"
+    colorbar_ends: str = "values"
+    #: the colour bar's length, as a fraction of the panel's height (it
+    #: sits at the bottom of the panel's edge)
+    colorbar_length: float = 1.0
+    #: where the colour bar goes: "right" (upright, beside the panel) or
+    #: "below" (lying, under the panel)
+    colorbar_position: str = "right"
     lines: list = field(default_factory=list)
     texts: list = field(default_factory=list)
     arrows: list = field(default_factory=list)
@@ -344,6 +369,9 @@ class Panel:
     y_labels: bool = True
     #: this panel's font size; 0 = the figure's
     font_pt: float = 0.0
+    #: named ticks along x instead of numbers: ``[(value, text), ...]`` --
+    #: the high-symmetry points of a band-structure path (Γ, M, K, ...)
+    x_tick_labels: list = field(default_factory=list)
     uid: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
 
     # -- what the painter asks for ---------------------------------------
@@ -411,6 +439,9 @@ class FigureStyle:
     #: happens to look like in that corner
     panel_label_inside: bool = False
     panel_label_color: str = "#ffffff"
+    #: letters of panels side by side at one height, of panels one above
+    #: the other at one left edge (else each sits at its own panel)
+    panel_label_aligned: bool = True
     axis_width_pt: float = 0.6
     axis_color: str = "#000000"
     background: str = "#ffffff"
@@ -727,6 +758,90 @@ class Figure:
             return self.common_ranges()
         return panel.ranges()
 
+    # -- arranging panels by hand -------------------------------------------
+    def _frames_of(self, indices):
+        self.freeze()
+        return [(i, self.panels[i].frame) for i in indices
+                if 0 <= i < len(self.panels) and self.panels[i].frame is not None]
+
+    def align_panels(self, indices, how: str):
+        """Line up the panels ``indices`` by their data boxes: "left",
+        "right", "top", "bottom" edges, or "hcenter" / "vcenter" (their
+        centres on one vertical / horizontal line). The first panel given is
+        the reference for the centres; for the edges the outermost one is."""
+        frames = self._frames_of(indices)
+        if len(frames) < 2:
+            return
+        lefts = [f[0] for _i, f in frames]
+        tops = [f[1] for _i, f in frames]
+        rights = [f[0] + f[2] for _i, f in frames]
+        bottoms = [f[1] + f[3] for _i, f in frames]
+        ref = frames[0][1]
+        for i, (x, y, w, h) in frames:
+            if how == "left":
+                x = min(lefts)
+            elif how == "right":
+                x = max(rights) - w
+            elif how == "top":
+                y = min(tops)
+            elif how == "bottom":
+                y = max(bottoms) - h
+            elif how == "hcenter":
+                x = ref[0] + ref[2] / 2 - w / 2
+            elif how == "vcenter":
+                y = ref[1] + ref[3] / 2 - h / 2
+            else:
+                raise ValueError(f"unknown alignment {how!r}")
+            self.panels[i].frame = (x, y, w, h)
+
+    def distribute_panels(self, indices, axis: str = "x"):
+        """Equal gaps between the panels ``indices`` along ``axis`` ("x":
+        left to right, "y": top to bottom); the first and last stay."""
+        frames = sorted(self._frames_of(indices),
+                        key=lambda item: item[1][0 if axis == "x" else 1])
+        if len(frames) < 3:
+            return
+        d = 0 if axis == "x" else 1
+        start = frames[0][1][d]
+        end = frames[-1][1][d] + frames[-1][1][d + 2]
+        total = sum(f[d + 2] for _i, f in frames)
+        gap = (end - start - total) / (len(frames) - 1)
+        position = start
+        for i, frame in frames:
+            frame = list(frame)
+            frame[d] = position
+            position += frame[d + 2] + gap
+            self.panels[i].frame = tuple(frame)
+
+    def match_size(self, indices, which: str = "both"):
+        """Give the panels ``indices`` the first one's width, height or both."""
+        frames = self._frames_of(indices)
+        if len(frames) < 2:
+            return
+        _r, (_x, _y, rw, rh) = frames[0]
+        for i, (x, y, w, h) in frames[1:]:
+            self.panels[i].frame = (x, y, rw if which in ("width", "both") else w,
+                                    rh if which in ("height", "both") else h)
+
+    @staticmethod
+    def label_groups(boxes, tolerance: float = 3.0):
+        """Which panels' letters share a line: ``boxes`` is ``{key: (x, y,
+        w, h)}``; returns ``(rows, columns)``, lists of key lists -- the
+        panels whose tops (lefts) lie within ``tolerance`` mm of each
+        other."""
+        def groups(coordinate):
+            keys = sorted(boxes, key=lambda k: boxes[k][coordinate])
+            out, current = [], []
+            for key in keys:
+                if current and boxes[key][coordinate] - boxes[current[0]][coordinate] > tolerance:
+                    out.append(current)
+                    current = []
+                current.append(key)
+            if current:
+                out.append(current)
+            return out
+        return groups(1), groups(0)
+
     def letter_panels(self, template: str = "({letter})", start: int = 0):
         """(a), (b), (c)... in reading order; insets take no letter."""
         for panel in self.panels:
@@ -799,7 +914,13 @@ class Figure:
             top += 1.0 * pt_to_mm(tick_pt) + 1.35 * pt_to_mm(label_pt) + gap
         if any(panel.right_axis and panel.right_axis.enabled for panel in self.panels):
             right += 2.0 * pt_to_mm(tick_pt) + 1.9 * pt_to_mm(label_pt) + gap
-        if any(panel.colorbar for panel in self.panels):
+        if any(panel.colorbar and getattr(panel, "colorbar_position", "right") == "below"
+               for panel in self.panels):
+            bottom += (0.8 + style.colorbar_mm + 0.5 * pt_to_mm(tick_pt)
+                       + (1.6 * pt_to_mm(label_pt)
+                          if any(panel.colorbar_label for panel in self.panels) else 0.0))
+        if any(panel.colorbar and getattr(panel, "colorbar_position", "right") == "right"
+               for panel in self.panels):
             # A rotated label is drawn on its baseline, so it needs a line
             # box either side of it, not an em -- the descender of a "y"
             # falls off the edge of the figure otherwise.

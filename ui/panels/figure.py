@@ -47,10 +47,11 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QFileDialog, QMessageBox, QListWidget, QScrollArea,
                              QFrame, QApplication, QRadioButton, QInputDialog,
                              QSizePolicy, QColorDialog, QListWidgetItem,
-                             QMenu, QShortcut, QSplitter)
+                             QMenu, QShortcut, QSplitter, QGridLayout)
 
 from tools.output import colormaps
 from tools.output import export
+from tools.output import figfile
 import tools.output.figure as nf
 from tools.output.figure import (Figure, FigureStyle, Panel, PanelData, Line,
                                  TextNote, Arrow, ScaleBar, Inset, Overlay,
@@ -182,6 +183,7 @@ class FigurePainter:
         painter.fillRect(QRectF(0, 0, width * scale, height * scale),
                          QColor(style.background))
 
+        self._align_labels(rects, scale)
         for rect in rects:
             self._paint_panel(painter, figure.panels[rect["index"]], rect,
                               scale, rect["index"])
@@ -386,7 +388,7 @@ class FigurePainter:
         label_pt = style.label_pt or style.font_pt
         painter.save()
         painter.setClipRect(box)
-        paint_scene(panel.data.scene, painter, box,
+        drawn = paint_scene(panel.data.scene, painter, box,
                     font=self._font(tick_pt, scale),
                     title_font=self._font(label_pt, scale),
                     line_px=max(pt_to_mm(style.axis_width_pt) * scale, 0.5),
@@ -403,7 +405,17 @@ class FigurePainter:
                               box.top() - metrics.descent(), panel.title,
                               label_pt, scale, style.axis_color, anchor="center")
         if panel.colorbar:
-            self._draw_colorbar(painter, panel, None, box, scale, levels)
+            # against the cube as drawn, not the whole frame round it: as
+            # tall as the cube beside it, as wide as the cube under the frame
+            # (below the cube's own axis labels)
+            against = box
+            if drawn is not None:
+                drawn = drawn.intersected(box)
+                if getattr(panel, "colorbar_position", "right") == "below":
+                    against = QRectF(drawn.left(), box.top(), drawn.width(), box.height())
+                else:
+                    against = QRectF(box.left(), drawn.top(), box.width(), drawn.height())
+            self._draw_colorbar(painter, panel, None, against, scale, levels)
         self._draw_panel_label(painter, panel, box, scale)
 
     #: no raster wider or taller than this, whatever the dpi asks for
@@ -469,6 +481,12 @@ class FigurePainter:
 
         target_x, target_y = figure.tick_targets(rect["w"], rect["h"])
         x_ticks, x_step = self._ticks(x0, x1, style.x_tick_step, target_x)
+        named = [(float(v), str(t)) for v, t in (panel.x_tick_labels or ())]
+        if named:
+            # A band-structure path: one tick per labelled point, no
+            # numbers and no minor ticks between them.
+            x_ticks = np.array([v for v, _t in named])
+            x_step = 0.0
         y_ticks, y_step = self._ticks(y0, y1, style.y_tick_step, target_y)
         x_fmt, y_fmt = export.tick_format(x_step), export.tick_format(y_step)
 
@@ -502,7 +520,8 @@ class FigurePainter:
             sub_x = np.concatenate([x_ticks + x_step * (i + 1) / (minor + 1)
                                     for i in range(minor)]
                                    + [x_ticks - x_step * (i + 1) / (minor + 1)
-                                      for i in range(minor)]) if x_ticks.size else x_ticks
+                                      for i in range(minor)]) if (
+                x_ticks.size and not named) else np.zeros(0)
             sub_y = np.concatenate([y_ticks + y_step * (i + 1) / (minor + 1)
                                     for i in range(minor)]
                                    + [y_ticks - y_step * (i + 1) / (minor + 1)
@@ -514,8 +533,11 @@ class FigurePainter:
         outward = tick if style.tick_direction == "out" else 0.0
         if figure.shows_x_labels(index):
             baseline = box.bottom() + outward + gap + metrics.ascent()
+            names = dict(named)
             for value in x_ticks:
-                self._draw_markup(painter, px(value), baseline, x_fmt % value,
+                text = names.get(float(value), None) if named else None
+                self._draw_markup(painter, px(value), baseline,
+                                  x_fmt % value if text is None else text,
                                   tick_pt, scale, style.axis_color, anchor="center")
             label_width = self._markup_width(painter, panel.label_x(), label_pt, scale)
             self._draw_markup(painter,
@@ -642,20 +664,8 @@ class FigurePainter:
                                       point.y() - 0.5 * scale, line.label, size,
                                       scale, line.color)
         for overlay in panel.overlays:
-            if len(overlay.xs) < 2:
-                continue
-            painter.setPen(self._pen(overlay.color, overlay.width_pt, scale,
-                                     overlay.style))
-            path = QPainterPath()
-            first = self._map_point(box, panel, x_range, y_range,
-                                    overlay.xs[0], overlay.ys[0])
-            path.moveTo(first)
-            for x, y in zip(overlay.xs[1:], overlay.ys[1:]):
-                path.lineTo(self._map_point(box, panel, x_range, y_range, x, y))
-            if overlay.closed:
-                path.closeSubpath()
-            painter.setBrush(Qt.NoBrush)
-            painter.drawPath(path)
+            self._draw_overlay(painter, panel, box, x_range, y_range, overlay,
+                               scale)
         for arrow in panel.arrows:
             self._draw_arrow(painter, panel, box, x_range, y_range, arrow, scale)
         for note in panel.texts:
@@ -664,6 +674,85 @@ class FigurePainter:
             self._draw_markup(painter, point.x(), point.y(), note.text, size,
                               scale, note.color, anchor=note.anchor,
                               bold=note.bold)
+
+    def _draw_overlay(self, painter, panel, box, x_range, y_range, overlay,
+                      scale):
+        """One polyline: broken wherever a point is NaN, with its symbols
+        and error bars when it has them."""
+        xs = np.asarray(overlay.xs, dtype=float)
+        ys = np.asarray(overlay.ys, dtype=float)
+        if xs.size == 0 or xs.size != ys.size:
+            return
+        good = np.isfinite(xs) & np.isfinite(ys)
+        points = [self._map_point(box, panel, x_range, y_range, x, y) if ok else None
+                  for x, y, ok in zip(xs, ys, good)]
+        pen = self._pen(overlay.color, overlay.width_pt, scale, overlay.style)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        if getattr(overlay, "line", True) and xs.size >= 2:
+            path = QPainterPath()
+            drawing = False
+            for point in points:
+                if point is None:
+                    drawing = False
+                elif drawing:
+                    path.lineTo(point)
+                else:
+                    path.moveTo(point)
+                    drawing = True
+            if overlay.closed and all(p is not None for p in points):
+                path.closeSubpath()
+            painter.drawPath(path)
+        cap = 0.5 * max(getattr(overlay, "marker_mm", 1.0), 0.6) * scale
+        solid = self._pen(overlay.color, overlay.width_pt, scale, "solid")
+        for errors, vertical in ((getattr(overlay, "y_errors", None), True),
+                                 (getattr(overlay, "x_errors", None), False)):
+            if not errors or len(errors) != xs.size:
+                continue
+            painter.setPen(solid)
+            for x, y, e, ok in zip(xs, ys, errors, good):
+                if not ok or not np.isfinite(e) or e <= 0:
+                    continue
+                if vertical:
+                    a = self._map_point(box, panel, x_range, y_range, x, y - e)
+                    b = self._map_point(box, panel, x_range, y_range, x, y + e)
+                    ends = ((QPointF(a.x() - cap, a.y()), QPointF(a.x() + cap, a.y())),
+                            (QPointF(b.x() - cap, b.y()), QPointF(b.x() + cap, b.y())))
+                else:
+                    a = self._map_point(box, panel, x_range, y_range, x - e, y)
+                    b = self._map_point(box, panel, x_range, y_range, x + e, y)
+                    ends = ((QPointF(a.x(), a.y() - cap), QPointF(a.x(), a.y() + cap)),
+                            (QPointF(b.x(), b.y() - cap), QPointF(b.x(), b.y() + cap)))
+                painter.drawLine(a, b)
+                for p, q in ends:
+                    painter.drawLine(p, q)
+        marker = getattr(overlay, "marker", "")
+        if marker:
+            size = max(float(getattr(overlay, "marker_mm", 1.0)), 0.2) * scale
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(overlay.color)))
+            for point in points:
+                if point is None:
+                    continue
+                self._draw_marker(painter, point, marker, size)
+            painter.setBrush(Qt.NoBrush)
+
+    @staticmethod
+    def _draw_marker(painter, point, marker, size):
+        half = size / 2.0
+        x, y = point.x(), point.y()
+        if marker == "s":
+            painter.drawRect(QRectF(x - half, y - half, size, size))
+        elif marker in ("^", "v", "d"):
+            if marker == "^":
+                corners = [(x, y - half), (x + half, y + half), (x - half, y + half)]
+            elif marker == "v":
+                corners = [(x, y + half), (x + half, y - half), (x - half, y - half)]
+            else:
+                corners = [(x, y - half), (x + half, y), (x, y + half), (x - half, y)]
+            painter.drawPolygon(QPolygonF([QPointF(*c) for c in corners]))
+        else:
+            painter.drawEllipse(point, half, half)
 
     def _draw_arrow(self, painter, panel, box, x_range, y_range, arrow, scale):
         start = self._map_point(box, panel, x_range, y_range, arrow.x0, arrow.y0)
@@ -745,10 +834,14 @@ class FigurePainter:
 
     def _draw_colorbar(self, painter, panel, rect, box, scale, levels):
         style = self.figure.style
+        if getattr(panel, "colorbar_position", "right") == "below":
+            return self._draw_colorbar_below(painter, panel, box, scale, levels)
         tick_pt = style.tick_pt or style.font_pt
         left = box.right() + style.colorbar_gap_mm * scale
         width = style.colorbar_mm * scale
-        strip = QRectF(left, box.top(), width, box.height())
+        fraction = float(np.clip(getattr(panel, "colorbar_length", 1.0) or 1.0, 0.1, 1.0))
+        strip = QRectF(left, box.bottom() - fraction * box.height(), width,
+                       fraction * box.height())
         try:
             lut = np.asarray(colormaps.get_lut(panel.colormap, flip=panel.flip))
         except Exception:
@@ -773,8 +866,12 @@ class FigurePainter:
         metrics = QFontMetricsF(self._font(tick_pt, scale))
         gap = 0.3 * pt_to_mm(tick_pt) * scale
         widest = 0.0
+        ends = getattr(panel, "colorbar_ends", "values")
         for value, y in ((hi, strip.top()), (lo, strip.bottom())):
-            text = f"{value:.4g}"
+            if ends == "none":
+                continue
+            text = (("High" if value == hi else "Low") if ends == "high-low"
+                    else f"{value:.4g}")
             widest = max(widest, self._markup_width(painter, text, tick_pt, scale))
             baseline = (y + metrics.ascent() if value == hi and y == strip.top()
                         else y)
@@ -786,6 +883,59 @@ class FigurePainter:
                 strip.center().y(), panel.colorbar_label,
                 style.label_pt or style.font_pt, scale, style.axis_color,
                 anchor="center", rotate=-90.0)
+
+    def _colorbar_column(self, panel, length: int = 256) -> QImage:
+        """The colour map as an image ``length`` px long, low to high."""
+        try:
+            lut = np.asarray(colormaps.get_lut(panel.colormap, flip=panel.flip))
+        except Exception:
+            lut = np.asarray(colormaps.get_lut("gray"))
+        ramp = np.linspace(0.0, 1.0, length)
+        if panel.gamma and panel.gamma != 1.0:
+            ramp = ramp ** panel.gamma
+        index = np.rint(ramp * (lut.shape[0] - 1)).astype(np.intp)
+        row = np.empty((1, length, 4), dtype=np.uint8)
+        row[..., :3] = lut[index][None, :, :3]
+        row[..., 3] = 255
+        buffer = np.ascontiguousarray(row)
+        return QImage(buffer.data, length, 1, 4 * length,
+                      QImage.Format_RGBA8888).copy()
+
+    def _draw_colorbar_below(self, painter, panel, box, scale, levels):
+        """A lying colour bar under the panel -- under its tick labels and
+        axis title when it has them -- centred, ``colorbar_length`` of the
+        panel's width, its ends (or its levels) at either side."""
+        style = self.figure.style
+        tick_pt = style.tick_pt or style.font_pt
+        label_pt = style.label_pt or style.font_pt
+        below = 0.8 * scale
+        if panel.data.is_plot() and panel.x_labels:
+            below += (1.3 * pt_to_mm(tick_pt) + 1.6 * pt_to_mm(label_pt)) * scale
+        fraction = float(np.clip(getattr(panel, "colorbar_length", 1.0) or 1.0, 0.1, 1.0))
+        width = fraction * box.width()
+        strip = QRectF(box.center().x() - width / 2, box.bottom() + below, width,
+                       style.colorbar_mm * scale)
+        painter.drawImage(strip, self._colorbar_column(panel))
+        painter.setPen(self._pen(style.axis_color, style.axis_width_pt, scale))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(strip)
+        ends = getattr(panel, "colorbar_ends", "values")
+        if ends != "none":
+            lo, hi = levels
+            low, high = (("Low", "High") if ends == "high-low"
+                         else (f"{lo:.4g}", f"{hi:.4g}"))
+            gap = 0.6 * pt_to_mm(tick_pt) * scale
+            baseline = strip.center().y() + 0.35 * pt_to_mm(tick_pt) * scale
+            self._draw_markup(painter, strip.left() - gap, baseline, low, tick_pt,
+                              scale, style.axis_color, anchor="right")
+            self._draw_markup(painter, strip.right() + gap, baseline, high, tick_pt,
+                              scale, style.axis_color, anchor="left")
+        if panel.colorbar_label:
+            metrics = QFontMetricsF(self._font(label_pt, scale))
+            self._draw_markup(painter, strip.center().x(),
+                              strip.bottom() + 1.1 * metrics.ascent(),
+                              panel.colorbar_label, label_pt, scale,
+                              style.axis_color, anchor="center")
 
     def _draw_panel_label(self, painter, panel, box, scale):
         style = self.figure.style
@@ -817,9 +967,60 @@ class FigurePainter:
             y = box.top() + margin + text_h if inside else box.top() - margin - above
         else:
             y = box.bottom() - margin if inside else box.bottom() + margin + text_h
+        aligned = getattr(self, "_label_at", {}).get(id(panel))
+        if aligned is not None and not inside:
+            x = aligned[0] if aligned[0] is not None else x
+            y = aligned[1] if aligned[1] is not None else y
+        dx, dy = getattr(panel, "label_offset", (0.0, 0.0)) or (0.0, 0.0)
+        x, y = x + float(dx) * scale, y + float(dy) * scale
         color = style.panel_label_color if inside else style.axis_color
         self._draw_markup(painter, x, y, panel.label, size, scale, color,
                           anchor=anchor, bold=style.panel_label_bold)
+
+    def _natural_label_point(self, panel, box, scale):
+        """Where :meth:`_draw_panel_label` puts a letter on its own (outside,
+        top left): ``(x, y)`` in device units."""
+        style = self.figure.style
+        margin = 0.05 * min(box.width(), box.height())
+        label_mm = pt_to_mm(style.label_pt or style.font_pt)
+        tick_mm = pt_to_mm(style.tick_pt or style.font_pt)
+        above = 0.0
+        if panel.title:
+            above += 1.4 * label_mm * scale
+        if panel.top_axis is not None and panel.top_axis.enabled:
+            above += (1.1 * tick_mm + 1.35 * label_mm) * scale
+        return box.left(), box.top() - margin - above
+
+    def _align_labels(self, rects, scale):
+        """The letters of a row of panels at one height (the highest any of
+        them needs), and of a column at one left edge -- so (a), (b), (c)
+        line up however the panels' titles and axes differ."""
+        self._label_at = {}
+        style = self.figure.style
+        if (not getattr(style, "panel_label_aligned", True) or style.panel_label_inside
+                or "top" not in style.panel_label_position
+                or "left" not in style.panel_label_position):
+            return
+        boxes, natural = {}, {}
+        for rect in rects:
+            panel = self.figure.panels[rect["index"]]
+            if not panel.label or panel.role == "inset":
+                continue
+            boxes[id(panel)] = (rect["x"], rect["y"], rect["w"], rect["h"])
+            box = QRectF(rect["x"] * scale, rect["y"] * scale,
+                         rect["w"] * scale, rect["h"] * scale)
+            natural[id(panel)] = self._natural_label_point(panel, box, scale)
+        rows, columns = Figure.label_groups(boxes)
+        point = {key: [None, None] for key in boxes}
+        for row in rows:
+            y = min(natural[key][1] for key in row)
+            for key in row:
+                point[key][1] = y
+        for column in columns:
+            x = min(natural[key][0] for key in column)
+            for key in column:
+                point[key][0] = x
+        self._label_at = {key: tuple(value) for key, value in point.items()}
 
     # -- outputs -------------------------------------------------------------
     def to_image(self, dpi: float = None, selection: int = None) -> QImage:
@@ -954,6 +1155,8 @@ class FigureCanvas(QWidget):
         self.painter = FigurePainter(figure)
         self.painter.placeholders = True
         self.selection = None          # ("panel", index) / ("shape", index)
+        #: more panels picked with Ctrl / Shift + click, for arranging
+        self.extra = []
         self.tool = "select"
         self.snap = True
         #: None fits the page to the window; otherwise screen px per mm
@@ -998,7 +1201,15 @@ class FigureCanvas(QWidget):
             return self.figure.panels[self.selection[1]]
         return None
 
+    def selected_indices(self):
+        """Every selected panel: the one clicked first, then those added
+        with Ctrl or Shift."""
+        first = [self.selection[1]] if self.selection and self.selection[0] == "panel" else []
+        return first + [i for i in self.extra if i not in first
+                        and 0 <= i < len(self.figure.panels)]
+
     def select(self, what, index=None):
+        self.extra = []
         self.selection = None if what is None else (what, int(index))
         self.update()
         self.selectionChanged.emit()
@@ -1097,11 +1308,11 @@ class FigureCanvas(QWidget):
             painter.drawRect(self.painter.text_box(shape, self._scale)
                              .translated(*self._origin).adjusted(-2, -2, 2, 2))
         elif shape is None:
-            panel = self.selected_panel()
-            frame = self._frame_of(panel)
-            if frame is not None:
-                x, y, w, h = frame
-                painter.drawRect(QRectF(self.to_px(x, y), self.to_px(x + w, y + h)))
+            for index in self.selected_indices():
+                frame = self._frame_of(self.figure.panels[index])
+                if frame is not None:
+                    x, y, w, h = frame
+                    painter.drawRect(QRectF(self.to_px(x, y), self.to_px(x + w, y + h)))
         painter.setPen(QPen(QColor("#1d7fa0"), 1.0))
         painter.setBrush(QBrush(QColor("#ffffff")))
         for _name, point in self._handles():
@@ -1347,6 +1558,18 @@ class FigureCanvas(QWidget):
             if found is None:
                 self.select(None)
                 return
+            adding = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)
+            if (adding and found[0] == "panel" and self.selection
+                    and self.selection[0] == "panel"):
+                # Ctrl / Shift: add the panel to the selection (or take it out)
+                index = int(found[1])
+                if index in self.extra:
+                    self.extra.remove(index)
+                elif index != self.selection[1]:
+                    self.extra.append(index)
+                self.update()
+                self.selectionChanged.emit()
+                return
             if found[0] != "handle":
                 self.select(*found)
             self._drag = {"kind": found[0], "name": found[1] if found[0] == "handle" else None,
@@ -1555,7 +1778,7 @@ class FigureCanvas(QWidget):
         xs = sorted((data_x(left), data_x(left + width)))
         ys = sorted((data_y(top), data_y(top + height)))
         inset = copy.copy(host)
-        for name in ("lines", "texts", "arrows", "overlays"):
+        for name in ("lines", "texts", "arrows", "overlays", "x_tick_labels"):
             setattr(inset, name, copy.deepcopy(getattr(host, name)))
         inset.uid = uuid.uuid4().hex[:10]
         inset.role, inset.zoom_of, inset.label = "inset", host.uid, ""
@@ -2187,6 +2410,7 @@ class FigureToolsDialog(QDialog):
         self.figure_title.setText(self.figure.title)
         self.label_position.setCurrentText(style.panel_label_position)
         self.label_inside.setChecked(style.panel_label_inside)
+        self.label_aligned.setChecked(getattr(style, "panel_label_aligned", True))
         self.label_bold.setChecked(style.panel_label_bold)
         self.label_color.set_color(style.panel_label_color)
 
@@ -2371,6 +2595,17 @@ class FigureToolsDialog(QDialog):
         self.label_edit.editingFinished.connect(
             lambda: self.apply(lambda p: setattr(p, "label", self.label_edit.text())))
         inner.addRow("Text", self.label_edit)
+        nudge = QHBoxLayout()
+        self.label_dx = spin(0.0, -50, 50, 1, 0.5, "Move this panel's letter right (mm).")
+        self.label_dy = spin(0.0, -50, 50, 1, 0.5, "Move it down (mm).")
+        for box in (self.label_dx, self.label_dy):
+            box.valueChanged.connect(lambda _v: self.apply(lambda p: setattr(
+                p, "label_offset", (self.label_dx.value(), self.label_dy.value()))))
+        nudge.addWidget(QLabel("x"))
+        nudge.addWidget(self.label_dx)
+        nudge.addWidget(QLabel("y"))
+        nudge.addWidget(self.label_dy)
+        inner.addRow("Nudge (mm)", nudge)
         self.label_position = QComboBox()
         self.label_position.addItems(list(CORNERS))
         self.label_position.currentTextChanged.connect(
@@ -2380,6 +2615,14 @@ class FigureToolsDialog(QDialog):
         self.label_inside.toggled.connect(
             lambda v: self._set_style("panel_label_inside", bool(v)))
         inner.addRow("", self.label_inside)
+        self.label_aligned = QCheckBox("In line: one height per row, one edge per column")
+        self.label_aligned.setToolTip(
+            "Letters of panels side by side sit at the same height, of panels "
+            "one above another at the same left edge, whatever titles or axes "
+            "each panel has.")
+        self.label_aligned.toggled.connect(
+            lambda v: self._set_style("panel_label_aligned", bool(v)))
+        inner.addRow("", self.label_aligned)
         self.label_bold = QCheckBox("Bold")
         self.label_bold.toggled.connect(
             lambda v: self._set_style("panel_label_bold", bool(v)))
@@ -2445,6 +2688,25 @@ class FigureToolsDialog(QDialog):
             lambda: self.apply(lambda p: setattr(p, "colorbar_label",
                                                  self.cbar_label.text())))
         inner.addRow("Label", self.cbar_label)
+        self.cbar_ends = QComboBox()
+        self.cbar_ends.addItems(["values", "high-low", "none"])
+        self.cbar_ends.setToolTip("What the bar's two ends say: the levels, "
+                                  "the words High and Low, or nothing.")
+        self.cbar_ends.currentTextChanged.connect(
+            lambda v: self.apply(lambda p: setattr(p, "colorbar_ends", v)))
+        inner.addRow("Ends", self.cbar_ends)
+        self.cbar_length = spin(100.0, 10.0, 100.0, 0, 5.0,
+                                "The bar's length, % of the panel's height.")
+        self.cbar_length.valueChanged.connect(
+            lambda v: self.apply(lambda p: setattr(p, "colorbar_length", v / 100.0)))
+        inner.addRow("Length (%)", self.cbar_length)
+        self.cbar_position = QComboBox()
+        self.cbar_position.addItems(["right", "below"])
+        self.cbar_position.setToolTip("Upright beside the panel, or lying "
+                                      "under it (centred).")
+        self.cbar_position.currentTextChanged.connect(
+            lambda v: self.apply(lambda p: setattr(p, "colorbar_position", v)))
+        inner.addRow("Position", self.cbar_position)
         self.cbar_width = spin(self.figure.style.colorbar_mm, 0.5, 20, 1, 0.2, "")
         self.cbar_width.valueChanged.connect(
             lambda v: self._set_style("colorbar_mm", v))
@@ -2572,8 +2834,44 @@ class FigureToolsDialog(QDialog):
         note.setWordWrap(True)
         inner.addWidget(note)
         self.overlay_list = QListWidget()
-        self.overlay_list.setMaximumHeight(80)
+        self.overlay_list.setMaximumHeight(110)
+        self.overlay_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.overlay_list.setToolTip("Select curves to restyle them below "
+                                     "(none selected: all of them).")
         inner.addWidget(self.overlay_list)
+        style_row = QWidget()
+        form = QFormLayout(style_row)
+        form.setContentsMargins(0, 0, 0, 0)
+        self.curve_colour = ColorButton("#000000")
+        self.curve_width = spin(0.8, 0.1, 8, 2, 0.1, "Line width (pt).")
+        self.curve_style = QComboBox()
+        self.curve_style.addItems(list(PEN_STYLES))
+        self.curve_marker = QComboBox()
+        for text, code in (("none", ""), ("● circle", "o"), ("■ square", "s"),
+                           ("▲ triangle", "^"), ("▼ triangle", "v"),
+                           ("◆ diamond", "d")):
+            self.curve_marker.addItem(text, code)
+        self.curve_marker_size = spin(1.0, 0.2, 6, 2, 0.1, "Symbol size (mm).")
+        self.curve_joined = QCheckBox("joined by a line")
+        self.curve_joined.setChecked(True)
+        self.curve_bars = QCheckBox("± σ as error bars")
+        self.curve_bars.setToolTip(
+            "A curve whose uncertainty came in as two dotted ± σ curves gets "
+            "them as error bars at its points instead (and the dotted "
+            "curves go).")
+        marker_row = QHBoxLayout()
+        marker_row.addWidget(self.curve_marker)
+        marker_row.addWidget(self.curve_marker_size)
+        form.addRow("Colour", self.curve_colour)
+        form.addRow("Width (pt)", self.curve_width)
+        form.addRow("Style", self.curve_style)
+        form.addRow("Symbols", marker_row)
+        form.addRow("", self.curve_joined)
+        form.addRow("", self.curve_bars)
+        restyle = QPushButton("Apply to the curves")
+        restyle.clicked.connect(lambda: self.restyle_curves())
+        form.addRow("", restyle)
+        inner.addWidget(style_row)
         row = QWidget()
         box = QHBoxLayout(row)
         box.setContentsMargins(0, 0, 0, 0)
@@ -2618,6 +2916,40 @@ class FigureToolsDialog(QDialog):
             self, "Reference line",
             "This dataset does not carry a fitted E_F. Fit the Fermi level "
             "first, or type the value above.")
+
+    def restyle_curves(self, rows=None):
+        """Colour, width, dash, symbols and error bars for the selected
+        curves of the panel (all of them when none is selected)."""
+        panel = self.panel()
+        if panel is None or not panel.overlays:
+            return
+        if rows is None:
+            rows = sorted(i.row() for i in self.overlay_list.selectedIndexes())
+        rows = rows or list(range(len(panel.overlays)))
+        chosen = [panel.overlays[i] for i in rows if i < len(panel.overlays)]
+        self._remember()
+        removed = []
+        for overlay in chosen:
+            overlay.color = self.curve_colour.color()
+            overlay.width_pt = self.curve_width.value()
+            overlay.style = self.curve_style.currentText()
+            overlay.marker = self.curve_marker.currentData() or ""
+            overlay.marker_mm = self.curve_marker_size.value()
+            overlay.line = self.curve_joined.isChecked()
+            if self.curve_bars.isChecked() and not overlay.y_errors:
+                plus = next((o for o in panel.overlays
+                             if o.name == f"{overlay.name} +σ"), None)
+                minus = next((o for o in panel.overlays
+                              if o.name == f"{overlay.name} −σ"), None)
+                if plus is not None and len(plus.ys) == len(overlay.ys):
+                    overlay.y_errors = [float(p) - float(y)
+                                        for p, y in zip(plus.ys, overlay.ys)]
+                    removed += [plus] + ([minus] if minus is not None else [])
+            elif not self.curve_bars.isChecked():
+                overlay.y_errors = []
+        panel.overlays = [o for o in panel.overlays if o not in removed]
+        self._resync()
+        self.redraw()
 
     def _copy_overlays(self):
         panel = self.panel()
@@ -2719,6 +3051,9 @@ class FigureToolsDialog(QDialog):
         self.xlabel_edit.setText(panel.label_x())
         self.ylabel_edit.setText(panel.label_y())
         self.label_edit.setText(panel.label)
+        dx, dy = getattr(panel, "label_offset", (0.0, 0.0)) or (0.0, 0.0)
+        self.label_dx.setValue(float(dx))
+        self.label_dy.setValue(float(dy))
         self.cmap_combo.setCurrentText(panel.colormap)
         self.flip_box.setChecked(panel.flip)
         lo, hi = self.figure.panel_levels(panel)
@@ -2728,6 +3063,9 @@ class FigureToolsDialog(QDialog):
         self.smooth_box.setChecked(panel.smooth)
         self.cbar_box.setChecked(panel.colorbar)
         self.cbar_label.setText(panel.colorbar_label)
+        self.cbar_ends.setCurrentText(getattr(panel, "colorbar_ends", "values"))
+        self.cbar_length.setValue(100.0 * float(getattr(panel, "colorbar_length", 1.0)))
+        self.cbar_position.setCurrentText(getattr(panel, "colorbar_position", "right"))
         bar = panel.scale_bar
         self.bar_box.setChecked(bar is not None)
         if bar is not None:
@@ -2776,13 +3114,19 @@ class FigureToolsDialog(QDialog):
 # Turning this program's datasets into panels
 # --------------------------------------------------------------------------
 def panel_from_arrays(array, x, y, x_label="", y_label="", name="", info=None,
-                      colormap="gray", flip=False, smooth=True) -> Panel:
-    return Panel(data=PanelData(array=np.asarray(array, dtype=float),
-                                x=np.asarray(x, dtype=float),
-                                y=np.asarray(y, dtype=float),
-                                x_label=x_label, y_label=y_label, name=name,
-                                info=dict(info or {})),
-                 colormap=colormap, flip=flip, smooth=smooth)
+                      colormap="gray", flip=False, smooth=True,
+                      sources=None) -> Panel:
+    """A panel of an image. ``sources`` names what it was made from
+    (:func:`tools.output.figfile.source_record`); by default the origin
+    ``info`` records."""
+    from tools.output.figfile import sources_from_info
+
+    data = PanelData(array=np.asarray(array, dtype=float),
+                     x=np.asarray(x, dtype=float), y=np.asarray(y, dtype=float),
+                     x_label=x_label, y_label=y_label, name=name,
+                     info=dict(info or {}))
+    data.sources = list(sources) if sources is not None else sources_from_info(info)
+    return Panel(data=data, colormap=colormap, flip=flip, smooth=smooth)
 
 
 def panel_from_dataset(data, name="") -> Panel:
@@ -2804,10 +3148,12 @@ def panel_from_dataset(data, name="") -> Panel:
             if sigma is not None:
                 errors[names[index]] = values[:, sigma]
         labels = getattr(scan, "labels", {}) or {}
-        return curve_panel(scan.x, columns, x_label=labels.get("x", ""),
-                           y_label=C.value_label(scan.info),
-                           name=name or getattr(data, "source_label", "") or "curve",
-                           errors=errors)
+        panel = curve_panel(scan.x, columns, x_label=labels.get("x", ""),
+                            y_label=C.value_label(scan.info),
+                            name=name or getattr(data, "source_label", "") or "curve",
+                            errors=errors)
+        panel.data.sources = _dataset_sources(data)
+        return panel
     if getattr(scan, "value", None) is None or np.asarray(scan.value).ndim != 2:
         raise ValueError("only a two-dimensional dataset can be a panel on "
                          "its own; take a slice of a map first")
@@ -2815,7 +3161,17 @@ def panel_from_dataset(data, name="") -> Panel:
     return panel_from_arrays(scan.value, scan.x, scan.y,
                              labels.get("x", ""), labels.get("y", ""),
                              name or getattr(data, "source_label", "") or "panel",
-                             info=getattr(scan, "info", {}))
+                             info=getattr(scan, "info", {}),
+                             sources=_dataset_sources(data))
+
+
+def _dataset_sources(data) -> list:
+    """The original file a dataset began as (its info's origin, else the
+    file it was read from), for a panel made of it."""
+    from tools.output.figfile import sources_from_info
+
+    info = getattr(getattr(data, "scan", None), "info", None) or {}
+    return sources_from_info(info, getattr(data, "path", "") or "")
 
 
 class SliceSeriesDialog(QDialog):
@@ -3170,6 +3526,22 @@ class FigureWindow(QMainWindow):
         bar.addWidget(self.undo_button)
         bar.addWidget(self.redo_button)
         bar.addWidget(self._separator())
+        #: the .afig file this figure was opened from or last saved to
+        self.file_path = ""
+        for text, slot, tip in (
+                ("Open...", lambda: self.open_file(),
+                 "Open a figure saved by this program (.afig) in a new window."),
+                ("Save", lambda: self.save_file(self.file_path or None),
+                 "Save the figure to edit later (.afig), with the data it was "
+                 "made from in a “data for …” folder beside it."),
+                ("Save as...", lambda: self.save_file(),
+                 "Save the figure under a new name (.afig), with its data "
+                 "folder.")):
+            button = QPushButton(text)
+            button.setToolTip(tip)
+            button.clicked.connect(slot)
+            bar.addWidget(button)
+        bar.addWidget(self._separator())
         for text, fmt in (("PDF", "pdf"), ("PNG", "png"), ("SVG", "svg")):
             button = QPushButton(text)
             button.setMaximumWidth(56)
@@ -3297,6 +3669,32 @@ class FigureWindow(QMainWindow):
         letter.setStyleSheet("text-align: left; padding: 4px 8px;")
         letter.clicked.connect(self.reletter)
         column.addWidget(letter)
+        column.addSpacing(8)
+        arrange = QLabel("<b>Arrange</b>")
+        arrange.setToolTip("Select several panels: click one, then Ctrl+click "
+                           "(or Shift+click) the others.")
+        column.addWidget(arrange)
+        grid = QGridLayout()
+        grid.setSpacing(2)
+        for n, (text, operation, tip) in enumerate((
+                ("⇤ Left", "left", "Line up the selected panels' left edges."),
+                ("Right ⇥", "right", "Line up their right edges."),
+                ("⤒ Top", "top", "Line up their top edges."),
+                ("Bottom ⤓", "bottom", "Line up their bottom edges."),
+                ("↔ Centres", "hcenter", "Their centres on one vertical line "
+                                          "(the first-selected panel's)."),
+                ("↕ Centres", "vcenter", "Their centres on one horizontal line."),
+                ("Space ↔", "space-x", "Equal gaps between them, left to right "
+                                       "(three or more)."),
+                ("Space ↕", "space-y", "Equal gaps between them, top to bottom."),
+                ("= Width", "width", "The first-selected panel's width for all."),
+                ("= Height", "height", "Its height for all."))):
+            button = QPushButton(text)
+            button.setToolTip(tip)
+            button.setStyleSheet("padding: 3px 4px;")
+            button.clicked.connect(lambda _c, o=operation: self.arrange(o))
+            grid.addWidget(button, n // 2, n % 2)
+        column.addLayout(grid)
         column.addStretch(1)
         palette.setMinimumWidth(150)
         palette.setMaximumWidth(220)
@@ -3528,6 +3926,7 @@ class FigureWindow(QMainWindow):
             return None
         rgba = _qimage_array(image)
         source = Panel(data=nf.picture_data(rgba, os.path.basename(path)))
+        source.data.sources = [figfile.source_record(path, kind="picture")]
         self.figure.freeze()
         self.fill_panel(panel, source)
         x, y, w, h = panel.frame
@@ -3652,6 +4051,109 @@ class FigureWindow(QMainWindow):
             os.path.basename(p) for p in written))
         return written
 
+    def arrange(self, operation: str, indices=None):
+        """Align, space or size the selected panels (or ``indices``)."""
+        indices = list(indices if indices is not None else self.canvas.selected_indices())
+        if len(indices) < 2:
+            self.statusBar().showMessage("Select two or more panels: click one, "
+                                         "then Ctrl+click the others")
+            return False
+        self.remember("arrange", force=True)
+        if operation in ("left", "right", "top", "bottom", "hcenter", "vcenter"):
+            self.figure.align_panels(indices, operation)
+        elif operation in ("space-x", "space-y"):
+            self.figure.distribute_panels(indices, operation[-1])
+        elif operation in ("width", "height"):
+            self.figure.match_size(indices, operation)
+        else:
+            raise ValueError(f"unknown arrangement {operation!r}")
+        self.refresh()
+        return True
+
+    # -- the program's own figure file ---------------------------------------
+    def save_file(self, path=None, *, with_data: bool = True):
+        """Save the figure as an .afig file to open and edit again, and
+        (``with_data``) the data each panel was made from in "data for
+        <name>" beside it. Returns the path, or None."""
+        if path is None:
+            start = self.file_path or self._default_name(figfile.EXTENSION)
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save the figure", start,
+                f"ARPES viewer figure (*{figfile.EXTENSION})")
+            if not path:
+                return None
+        if not path.lower().endswith(figfile.EXTENSION):
+            path += figfile.EXTENSION
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            from version import VERSION
+            path = figfile.save(path, self.figure, flatten=self._flatten_panel,
+                                app_version=VERSION)
+            copied = (figfile.write_data_folder(path, self.figure,
+                                                picture_writer=_write_png)
+                      if with_data else {})
+        except Exception as exc:
+            QMessageBox.warning(self, "Save the figure", f"Could not save it:\n{exc}")
+            return None
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.file_path = path
+        # the next save finds the originals in this one's data folder
+        self.figure.loaded_from = path
+        self.setWindowTitle(os.path.splitext(os.path.basename(path))[0])
+        files = sum(len(v) for v in copied.values())
+        self.statusBar().showMessage(
+            f"Saved {os.path.basename(path)}"
+            + (f"; {files} file(s) in \u201c{os.path.basename(figfile.data_folder_of(path))}\u201d"
+               if with_data else ""))
+        return path
+
+    def open_file(self, path=None):
+        """Open an .afig figure in a new window (this one stays)."""
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Open a figure", os.path.dirname(self.file_path or ""),
+                f"ARPES viewer figure (*{figfile.EXTENSION})")
+            if not path:
+                return None
+        try:
+            window = open_figure_file(path, dataset_source=self.dataset_source)
+        except Exception as exc:
+            QMessageBox.warning(self, "Open a figure", f"Could not open it:\n{exc}")
+            return None
+        keep_figure_window(window)
+        return window
+
+    def set_figure(self, figure):
+        """Show ``figure`` (a loaded one) in this window: its panels, page,
+        drawings and style replace what is here."""
+        self.figure.panels = list(figure.panels)
+        self.figure.shapes = list(figure.shapes)
+        self.figure.style = figure.style
+        self.figure.rows, self.figure.cols = figure.rows, figure.cols
+        self.figure.title = figure.title
+        self.figure.loaded_from = getattr(figure, "loaded_from", "")
+        self._undo.clear()
+        self._redo.clear()
+        self._update_undo()
+        self.canvas.selection = None
+        self._selection_changed()
+        if self._tools is not None:
+            self._tools.sync()
+        self.refresh()
+
+    def _flatten_panel(self, panel):
+        """A 3-D view panel as the picture it shows (an .afig keeps
+        pictures and arrays, not live 3-D scenes)."""
+        x, y, w, h = panel.frame or (0.0, 0.0, 60.0, 60.0)
+        single = copy.copy(panel)
+        single.label, single.colorbar, single.frame = "", False, (0.0, 0.0, w, h)
+        page = Figure([single], style=copy.deepcopy(self.figure.style))
+        page.style.margin_left_mm = page.style.margin_right_mm = 0.0
+        page.style.margin_top_mm = page.style.margin_bottom_mm = 0.0
+        page.style.width_mm, page.style.height_mm = w, h
+        return _qimage_array(FigurePainter(page).to_image())
+
     def write(self, path: str, fmt: str):
         """Write the figure. Returns every file written."""
         if fmt == "layers":
@@ -3721,6 +4223,33 @@ def write_figure(painter: FigurePainter, path: str, fmt: str):
                            keep_alpha=True, dpi=painter.figure.style.dpi)
         return [path]
     raise ValueError(f"unknown format {fmt!r}")
+
+
+def _write_png(rgba, path):
+    export.write_image(path, np.asarray(rgba), pil_format="PNG", keep_alpha=True)
+
+
+def open_figure_file(path: str, dataset_source=None, show: bool = True):
+    """A composer window with the figure saved in ``path`` (.afig), ready
+    to edit."""
+    figure = figfile.load(path)
+    window = FigureWindow([Panel(data=nf.empty_data())],
+                          os.path.splitext(os.path.basename(path))[0],
+                          dataset_source=dataset_source)
+    window.set_figure(figure)
+    window.file_path = os.path.abspath(path)
+    if show:
+        window.show()
+    return window
+
+
+def keep_figure_window(window):
+    from ui.viewers.windows import keep_alive
+
+    keep_alive(window)
+    window.show()
+    window.raise_()
+    return window
 
 
 def open_figure_windows():
