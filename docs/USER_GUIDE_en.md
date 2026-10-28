@@ -2,7 +2,7 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-*Last updated: 28 October 2026 — for ARPES viewer v1.1.1*
+*Last updated: 28 October 2026 — for ARPES viewer v1.2.0*
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
@@ -42,6 +42,7 @@ beamtime (see [Trying it with demo data](#2-trying-it-with-demo-data)).
 17. [Figures and export](#17-figures-and-export)
 18. [Autosave, memory and recovery](#18-autosave-memory-and-recovery)
 19. [Tips and troubleshooting](#19-tips-and-troubleshooting)
+20. [New in 1.2.0: tools from the MATLAB programs](#20-new-in-120-tools-from-the-matlab-programs)
 
 ---
 
@@ -118,13 +119,17 @@ kind is written after the name: `[Cut]`, `[Map]`, `[kz map]`, `[k-map]`,
 It has three parts:
 
 - **The tool panel** (left) — every analysis and processing tool, as a
-  button, in two tabs. **Basic** (shown at start) holds what nearly every
+  button, in three tabs. **Basic** (shown at start) holds what nearly every
   dataset goes through: Fermi edge fit, detector-grid removal, background
   subtraction, the three k conversions, the core-level check, aligning a kz
-  map's Fermi levels and the Brillouin zone. **Advanced** holds the rest:
+  map's Fermi levels, the Brillouin zone and the detector corrections.
+  **Advanced** holds the rest:
   figure composer, smoothing and the band-sharpening filters, symmetrising,
-  stack plots, MDC and EDC fits, cut arithmetic, the slice series figure and
-  the three 3-D views. Within a tab the tools are grouped by the data they
+  ridge detection, stack plots, MDC and EDC fits, cut arithmetic, the slice
+  series figure and the three 3-D views. **Calculation** holds what is
+  worked out rather than measured: the crystal structure and the
+  tight-binding fit (see [§20](#20-new-in-120-tools-from-the-matlab-programs)).
+  Within a tab the tools are grouped by the data they
   take (*2D & 3D — cuts, maps*, *2D only — cuts*, *3D only — maps* …).
 - **The list** (right), with its buttons.
 - **The Memory box** (bottom left) and the version line (bottom right).
@@ -157,10 +162,10 @@ not fit the selection is greyed, with the reason in its tooltip.
 **The Datasets box** (tool panel, between the tools and Memory) holds the
 rest of what is done to the rows: **Experiment info**, **Log format...** and
 **Auto Exp. log** side by side (see [the experiment log](#the-experiment-log)),
-**Rename...**, **Save datasets...**, **Remove from list** and **Session
-log...**. Its buttons grey out like the tools.
+**Rename**, **Save** and **Remove** on one row, **Sum repeated scans...**
+and **Session log...**. Its buttons grey out like the tools.
 
-### Where things are now (v1.1.1)
+### Where things are now (v1.2.0)
 
 If you used an earlier version: the tools moved out of the right-click menu
 and the viewers' *Functions* menus into the tool panel, so each has one way
@@ -182,9 +187,9 @@ in, always in sight.
 | Tool panel → Advanced → **3D slices**, **Notched cube**, **Volume projection** | right-click → 3D view (one window, three modes) |
 | Tool panel → Advanced → **Figure composer...** | right-click → Open in figure composer |
 | Right-click → **Open scan-axis cut**, viewer button **Scan-axis cut** | Open deflector cut, Deflector cut |
-| Memory box → **Free memory**, **Close all viewers**, **Open auto-save folder** | under the list |
+| Memory box → **Free RAM**, **Close all**, **Autosaves** (one row) | under the list; then Free memory, Close all viewers, Open auto-save folder |
 | Datasets box → **Experiment info** | right-click → Show information |
-| Datasets box → **Rename...**, **Save datasets...**, **Remove from list**, **Session log...** | right-click |
+| Datasets box → **Rename**, **Save**, **Remove** (one row), **Session log...** | right-click; then Rename..., Save datasets..., Remove from list |
 | **Combine...** under the list (only) | also right-click → Combine N datasets |
 
 **Experiment info** also opens the full metadata of the dataset in a window
@@ -1103,9 +1108,11 @@ confused with **3D slices**, which draws three planes in a 3-D view.)
 
 ### 17.3 Exporting a panel
 
-Right-click any image → **Export** → **Data (.nxs)...**, **Image...** or
+Right-click any image → **Export** → **Data (.nxs, Igor)...**, **Image...** or
 **Axes only (.eps)...**. It always exports exactly what the panel shows
-(range and all): the data as a dataset this program reads back; an image
+(range and all): the data as a dataset this program reads back, or for
+Igor Pro (`.itx` text or `.ibw` binary wave, with the axes scaled, the units
+set and the metadata in the wave note); an image
 with the colormap applied (PNG, TIFF or JPEG, at a chosen size and dpi, with
 or without the axes, with the Plot tools guides if there are any, and with
 the Brillouin zone if the dataset has one); or the frame, ticks and labels as
@@ -1114,9 +1121,10 @@ Brillouin zone drawn in the box — see [§8.2](#82-brillouin-zone)).
 
 ![Export](images/export_dialog.png)
 
-**Save datasets...** (tool panel, Datasets box) writes the selected
-datasets to a `.nxs` file of your own; several selected rows go into one
-file.
+**Save** (tool panel, Datasets box) writes the selected datasets to a
+`.nxs` file of your own -- several selected rows go into one file -- or, by
+choosing the file type, for Igor Pro: one `.itx` holding them all, or one
+`.ibw` per dataset. An Igor file is a copy; the rows stay as they were.
 
 ---
 
@@ -1136,11 +1144,11 @@ file.
 - **Operations log.** `~/.arpes_viewer/sessions/operations.log`, one line per
   store / save / discard — how to find what was where.
 - **Memory box** (bottom of the tool panel). This program's memory, the system's, how many viewers and
-  HDF5 files are open, and how much computed data is held. **Free memory**
+  HDF5 files are open, and how much computed data is held. **Free RAM**
   drops cached copies of computed data (they are re-read from their autosaved
-  file when needed); **Close all viewers** closes every window and then frees
+  file when needed); **Close all** closes every window and then frees
   memory.
-- **Open auto-save folder** (in the Memory box) shows the session folders
+- **Autosaves** (in the Memory box) shows the session folders
   in the system's file browser, to delete old working copies by hand. The
   folder of the session now running (named in the status bar) is in use.
 - **Long operations** (reading a big map, converting, de-gridding, assembling
@@ -1155,7 +1163,7 @@ file.
   MDC fit needs a cut already in Å⁻¹, cut arithmetic two cuts). Select the
   right rows in the list and it lights up.
 - **A tool is not in a viewer's Functions menu** — it is in the tool panel
-  (see *Where things are now* in [§3](#3-the-main-window)); check both tabs.
+  (see *Where things are now* in [§3](#3-the-main-window)); check all three tabs.
 - **A window is taller than the screen** — it opens no taller than the
   screen, and its contents scroll; the Apply / Close buttons stay at the
   bottom. Every window can be resized.
@@ -1174,4 +1182,87 @@ file.
 - **Typing numbers** — every number box takes a decimal point (`0.05`),
   whatever the system language; a comma is not accepted.
 - **The machine is paging** — watch the Memory bar (amber past a third of the
-  RAM, red past a half); use **Free memory** or **Close all viewers**.
+  RAM, red past a half); use **Free RAM** or **Close all**.
+
+---
+
+## 20. New in 1.2.0: tools from the MATLAB programs
+
+Five tools from the lab's MATLAB programs, each improved where the original
+could be. The ones that take several decisions open as **numbered steps**:
+the title says *Step 2 of 4: …*, a blue box says what the step is for and
+what to do, **Next →** stays greyed (with the reason beside it) until the
+step is done, and **← Back** or the list of steps on the left goes back.
+
+### 20.1 Sum repeated scans (Datasets box)
+
+For a fine cut or map taken as many short scans so that an ageing sample can
+be caught. Select the scans (two or more of one kind) → **Sum repeated
+scans...**:
+
+1. **Are these repeats?** Each scan's grid and recorded conditions (photon
+   energy, polarisation, angles, position, temperature, pass energy, lens
+   mode); orange marks a value that differs from the first scan.
+2. **Has the sample changed?** Press **Compare the scans**. Each scan is
+   compared with the sum of the others: *χ² / point* is about the same for
+   scans that differ only by counting noise and grows when the spectrum
+   changed; scans well above the rest are marked **changed**. The energy
+   shift of each scan's EDC and its count rate are listed; click a row to
+   see its EDC against the rest.
+3. **Sum.** Tick the scans to keep (changed ones start unticked), choose
+   whether to undo the energy shifts, **Sum** or **Mean**, and **Sum to
+   list**.
+
+### 20.2 Ridge detection (Advanced)
+
+Traces bands as ridges of the intensity, each point to a fraction of a
+pixel. Set the **smoothing** along each axis (in its own unit, about the
+band's width), raise the **threshold** until only the bands are left
+(yellow points on the source), then **Result to list** (the ridge image; a
+map plane by plane on the planes chosen) or **Save ridge points...** (a CSV
+the tight-binding fit reads).
+
+### 20.3 Detector corrections (Basic, under Remove detector grid)
+
+On a cut, map or kz map as measured:
+
+1. **Keystone** -- tick *Correct a trapezoidal image* and drag the four
+   yellow corners onto the lit area; the right picture shows it made
+   rectangular, each line's counts kept.
+2. **Bad regions** -- **Add a region** and drag it over a dead or hot spot,
+   or **Find bad pixels**; fill *smooth* (best for a spot) or *linear
+   along* an axis (for a stripe).
+3. **Apply** -- **Apply to list**. Do the grid removal, Fermi level and k
+   conversion on the result.
+
+### 20.4 Tight-binding fit (Calculation)
+
+With a k-map selected (or nothing, to use a file of points):
+
+1. **The lattice** -- a 2-D layer (a, b, γ) or a 3-D crystal, or **Take the
+   crystal from the Brillouin-zone tool**; the azimuth of a against kx; how
+   many shells of neighbours.
+2. **Band points** -- move to an energy and press **Trace this energy**
+   (ridge detection), or tick *Click* and click on the band, or **Read
+   points from a file**. Two or three energies are better than one: one
+   contour fixes the band's shape but not its energy scale.
+3. **Fit** -- the hoppings with their errors and the rms misfit; the model's
+   contour is drawn in red on the plane of step 2. With one energy, hold
+   t1; *Refine the azimuth* if the orientation is known only roughly. An
+   orange note means the points cannot tell the shells apart: use fewer.
+4. **Use the model** -- **Model to list** (its spectral function, as a map
+   beside the data), **Save parameters...**, **Copy results**.
+
+### 20.5 Crystal structure (Calculation)
+
+1. **The structure** -- type it in (cell, space group for its centering,
+   atoms), take the Brillouin-zone tool's last crystal, or **Read a CIF
+   file** (its symmetry is applied).
+2. **The look** -- cells along a, b, c, atom size, cell edges and bonds,
+   and per element colour, size, transparency and gloss. Drag the picture
+   to turn it, wheel to zoom; *View along* a, b, c or the plane normal.
+3. **Cleavage plane** -- tick *Draw a plane*, give (hkl), slide it, or
+   double-click an **atomic layer** in the list to put it there; *Hide the
+   atoms above* shows the termination; atoms in the plane are ringed red.
+4. **Export** -- **Save picture...** (PNG at any size) or **To figure
+   composer...**.

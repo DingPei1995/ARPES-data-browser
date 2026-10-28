@@ -1490,10 +1490,10 @@ class _InteractiveImageBase(pg.ImageView):
         export_menu = QMenu("Export", menu)
         menu.addMenu(export_menu)
         self._export_menu = export_menu
-        self.action_export_nxs = _menu_action(export_menu, "Data (.nxs)...")
+        self.action_export_nxs = _menu_action(export_menu, "Data (.nxs, Igor)...")
         self.action_export_nxs.setToolTip(
             "Write this panel's data, axes and metadata as a dataset this "
-            "program opens again.")
+            "program opens again, or for Igor Pro (.itx / .ibw).")
         self.action_export_nxs.triggered.connect(self.export_dataset)
         self.action_export_image = _menu_action(export_menu, "Image...")
         self.action_export_image.setToolTip(
@@ -2527,13 +2527,21 @@ def render_framed(rgba: np.ndarray, *, x_range, y_range, x_label: str = "",
     return _qimage_to_rgba(image)
 
 
+#: The data tab's formats: (label, code, extension, file-dialog filter).
+DATA_FORMATS = (
+    (".nxs -- reopened by this program", "nxs", ".nxs", "NeXus files (*.nxs)"),
+    ("Igor text (.itx)", "itx", ".itx", "Igor text (*.itx)"),
+    ("Igor binary wave (.ibw)", "ibw", ".ibw", "Igor binary wave (*.ibw)"),
+)
+
+
 class ExportDialog(QDialog):
     """The one place a panel is written out from.
 
     Three tabs, because a figure is assembled from three different files and
     they must agree with one another:
 
-    * **Data (.nxs)** -- the numbers, reopenable here.
+    * **Data** -- the numbers: a .nxs reopenable here, or Igor .itx/.ibw.
     * **Image** -- what is drawn, at a chosen pixel size, with or without
       the axes around it.
     * **Axes (.eps)** -- the frame and its annotation as vector PostScript,
@@ -2572,7 +2580,7 @@ class ExportDialog(QDialog):
         layout.addWidget(self.range_label)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_data_tab(), "Data (.nxs)")
+        self.tabs.addTab(self._build_data_tab(), "Data (.nxs, Igor)")
         self.tabs.addTab(self._build_image_tab(), "Image")
         self.tabs.addTab(self._build_axes_tab(), "Axes (.eps)")
         self.tabs.setCurrentIndex(int(page))
@@ -2612,10 +2620,18 @@ class ExportDialog(QDialog):
         self.name_edit.setToolTip("The dataset's name inside the file, and "
                                   "what the list shows when it is reopened.")
         form.addRow("Dataset name", self.name_edit)
+        self.data_format_combo = QComboBox()
+        for label, _code, _ext, _filter in DATA_FORMATS:
+            self.data_format_combo.addItem(label)
+        self.data_format_combo.setToolTip(
+            "The .nxs is read back by this program. The Igor files open in "
+            "Igor Pro with the axes scaled, the units set and the metadata "
+            "in the wave note.")
+        form.addRow("Format", self.data_format_combo)
         note = QLabel(
             "Writes the panel's array, both axes with their labels and this "
-            "file's metadata into a .nxs this program reads back as a dataset "
-            "of its own.")
+            "file's metadata: as a .nxs this program reads back as a dataset "
+            "of its own, or for Igor Pro.")
         note.setWordWrap(True)
         form.addRow(note)
         self.data_shape_label = QLabel("")
@@ -2854,19 +2870,28 @@ class ExportDialog(QDialog):
         if cropped is None:
             return None
         array, xaxis, yaxis = cropped
-        path = path or self._ask_path("Export data", ".nxs", "NeXus files (*.nxs)")
+        _label, code, ext, file_filter = DATA_FORMATS[
+            max(0, self.data_format_combo.currentIndex())]
+        path = path or self._ask_path("Export data", ext, file_filter)
         if path is None:
             return None
+        if code != "nxs" and not path.lower().endswith(ext):
+            path += ext
         name = self.name_edit.text().strip() or self.view.export_name()
         info = dict(self.view.export_info or {})
         info.update({"export.source": os.path.basename(self.view.export_source_path or ""),
                      "export.panel": self.view.export_title or "",
                      "export.region": "%.6g..%.6g, %.6g..%.6g" % (
                          *self.ranges()[0], *self.ranges()[1])})
-        save_dataset(path, [{
+        item = {
             "name": name, "kind": "cut", "axes": (xaxis, yaxis),
             "labels": {"x": self.view.x_label or "x", "y": self.view.y_label or "y"},
-            "value": array, "info": info, "motors": {}}])
+            "value": array, "info": info, "motors": {}}
+        if code == "nxs":
+            save_dataset(path, [item])
+        else:
+            from tools.output import igor
+            igor.write_datasets(path, [item], code)
         self.status.setText(f"Wrote {os.path.basename(path)} "
                             f"({array.shape[0]} x {array.shape[1]} points).")
         return path

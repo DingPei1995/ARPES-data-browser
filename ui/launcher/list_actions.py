@@ -32,7 +32,8 @@ PLANES = frozenset({"cut"}) | CUBES
 
 #: The filters that work on a cut and on a map alike, but through two
 #: different panels -- so a selection has to be one or the other.
-PROCESSING = frozenset({"smooth", "derivative", "curvature", "symmetry"})
+PROCESSING = frozenset({"smooth", "derivative", "curvature", "symmetry",
+                        "ridge"})
 
 #: action -> (how many rows: "one", "two", "many" (two or more), "any", or
 #: "optional" (none, or any number), the kinds it takes
@@ -81,6 +82,18 @@ RULES = {
     "degrid": ("one", frozenset({"cut", "map", "kz_map"}),
                "a cut, or a map or kz map before its k conversion"),
     "save": ("any", None, "datasets"),
+    # Repeats of one measurement: two or more of one kind (checked below).
+    "sumrepeat": ("many", PLANES, "two or more cuts or maps of one kind"),
+    # A band traced on a cut, or on each plane of a map.
+    "ridge": ("any", PLANES, "cuts or maps"),
+    # Band points come from a k-map, or from a file with nothing selected.
+    "tbfit": ("optional", frozenset({"k_map", "kz_map_k"}),
+              "a map in momentum (or nothing, to read points from a file)"),
+    # On the detector's pixels only, like the grid removal.
+    "detcorr": ("one", frozenset({"cut", "map", "kz_map"}),
+                "a cut, or a map or kz map before its k conversion"),
+    # Not about a dataset.
+    "lattice": ("none", "all", ""),
     "remove": ("any", "all", "datasets"),
     "log": ("none", "all", ""),
     # Setting the log up needs no selection; logging logs the selection.
@@ -124,6 +137,9 @@ def availability(action: str, rows):
             return False, (f"Works on {wanted} only; “{name}” is "
                            f"{'a ' if kind_of(label) != 'unknown' else ''}"
                            f"{what}.")
+    if action == "sumrepeat" and len({kind_of(row[1]) for row in rows}) > 1:
+        return False, ("Repeated scans are one measurement taken again: "
+                       "select datasets of one kind only.")
     if action == "combine" and len({kind_of(row[1]) for row in rows}) > 1:
         return False, ("Combines datasets of one kind: cuts with cuts, maps "
                        "with maps, kz maps with kz maps.")

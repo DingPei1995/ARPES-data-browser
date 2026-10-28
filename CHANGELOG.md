@@ -10,6 +10,89 @@ file is the record of how it got that way.
 
 ---
 
+## 1.2.0 — 2026-10-28
+
+Tools ported from the lab's MATLAB programs (`DataAnalysisPrograms_PD`),
+each checked against the original and improved where it could be; a third
+tab, **Calculation**; Igor Pro export; and a tidier tool panel. The windows
+that take several decisions in a row lead through them as numbered steps
+(*Step 2 of 4: ...*, Back / Next, Next greyed with the reason until the step
+is done; `ui/common/stepper.py`).
+
+- **Sum repeated scans** (Datasets box; replaces `add_two_value_arrays.m`,
+  `tools/processing/repeats.py`, `ui/panels/repeats.py`). A fine cut or map
+  taken in batches, to see an ageing sample and leave its late scans out.
+  Step 1 compares the grids and the recorded conditions with the first scan
+  (a slightly different grid is interpolated onto the first). Step 2
+  compares each scan with the sum of the *others* using counting
+  statistics -- χ²/point ≈ 1 for noise alone, a scan flagged when it stands
+  well above the set's median -- with the count rate and the energy shift of
+  its EDC (derivative cross-correlation against the others aligned by
+  their own shifts, sub-step by a parabola, 0 when the EDCs share no
+  structure). Step 3 sums the ticked scans (the changed ones start
+  unticked), undoing the shifts if asked. On synthetic data a 12 meV shift
+  is measured to ±1.5 meV and a broadened scan is flagged; noise-only
+  repeats give χ² within 15 % of 1 and flag nothing. The MATLAB tool added
+  two arrays with no check at all.
+- **Ridge detection** (Advanced; from `ridge_detection.m`,
+  `tools/processing/ridge.py`). Hessian ridges of the smoothed image, every
+  point placed to a fraction of a pixel. Changed from the .m file: the
+  smoothing is set per axis in that axis' own unit (it used one radius in
+  pixels of mixed units); the derivatives are taken in units of the
+  smoothing width, so the answer does not depend on the axes' units (tested:
+  eV and meV give the same points); Gaussian-derivative filters instead of
+  differences of a smoothed image; a sign-change test instead of an
+  absolute slope tolerance that needed retuning per image; vectorised
+  instead of `arrayfun`. Median error 0.2 meV on a synthetic band.
+- **Detector corrections** (Basic, under Remove detector grid; from
+  `StretchDitherImage.m`, `InterpRegionAlongX/Y.m`, `inpaint_nans.m`;
+  `tools/processing/detector.py`, `ui/panels/detector.py`). A keystone
+  (trapezoidal lit area) stretched to a rectangle as an exact inverse map,
+  with each line's total counts kept -- the .m file triangulated every pixel
+  (`TriScatteredInterp`) and did not conserve counts. Bad regions patched
+  linearly along x or y (as the .m files did) or by a harmonic (Laplace)
+  fill, factorised once for a whole map; *Find bad pixels* uses the map's
+  mean detector image against its median filter and its pixel-to-pixel
+  scatter, so noise is not taken for a faulty pixel. Refused, with the
+  reason, on data already moved off the detector's pixels (de-gridded data
+  is allowed).
+- **Tight-binding fit** (Calculation; from `TB_zph_zmd`,
+  `tools/crystal/tightbinding.py`, `ui/panels/tightbinding.py`). One hopping
+  per shell of neighbours of any 2-D or 3-D lattice (typed, or the
+  Brillouin-zone tool's last crystal), fitted to band points traced by ridge
+  detection on constant-energy planes of a k-map, clicked, or read from a
+  CSV. The model is linear in its parameters, so the fit is one linear
+  solve with standard errors (the .m files ran a nonlinear fit from all-ones
+  start values with ±1000 bounds). Robust: Tukey reweighting gives points
+  traced on something else no weight. Points at one energy fix the shape
+  but not the energy scale, so t1 is then held (the .m fit was undetermined
+  there); a scaled condition number says when the points cannot separate
+  the shells (one contour fixes about two). The azimuth can be refined by a
+  scan. The model's contour is drawn over the data; its spectral function
+  goes to the list as a map; parameters to JSON.
+- **Crystal structure** (Calculation; from `Lattice_plot_zqs`,
+  `tools/crystal/structure.py`, `ui/panels/crystal.py`). Typed in (cell,
+  centering, basis), from the Brillouin-zone tool's last crystal
+  (`tools/crystal/last_crystal.py`), or from a **CIF** with its symmetry
+  operations applied. Per element colour, size, transparency and gloss;
+  cell edges, bonds; a cleavage plane (hkl) slid along its normal or put on
+  one of the listed atomic layers (each with the atoms it holds), the atoms
+  above faded or hidden to show the termination. Painted with QPainter (no
+  OpenGL), so it renders at any size; *To figure composer* adds it as a
+  picture panel.
+- **Igor Pro export** (`tools/output/igor.py`; replaces
+  `Export2ScientaData.m`). The viewers' Export → *Data (.nxs, Igor)* and the
+  Datasets box's **Save** write `.itx` (all datasets in one file) or `.ibw`
+  version 5 (one per dataset): scaling, units, dimension labels, metadata
+  in the wave note, an unevenly spaced axis as its own wave. The `.ibw`
+  round-trips through this program's own SES `.ibw` reader in the tests.
+- **The tool panel**: a third tab, **Calculation** (Crystal structure,
+  Tight-binding fit; calculated band structures to follow). The Memory
+  box's three buttons share one row, renamed **Free RAM**, **Close all**,
+  **Autosaves** (the old names are in their tooltips). The Datasets box puts
+  **Rename**, **Save** and **Remove** on one row, and gains **Sum repeated
+  scans...**.
+
 ## 1.1.1 — 2026-10-28
 
 The experiment log, and a Datasets box for what is done to the rows. (A

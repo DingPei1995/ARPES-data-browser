@@ -1,6 +1,6 @@
 # ARPES viewer
 
-**Version 1.1.1** (last modified 28 October 2026) — see
+**Version 1.2.0** (last modified 28 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
@@ -375,8 +375,8 @@ Right-click a row (or a selection) for the three ways of opening it:
 **Open**, **Open slit cut** and **Open scan-axis cut** (a map's cut in a
 window of its own, without its contour on screen). Everything else done to
 the rows -- **Experiment info**, **Log format...** / **Auto Exp. log**,
-**Rename...**,
-**Save datasets...**, **Remove from list**, **Session log...** -- is the
+**Rename** | **Save** | **Remove** (one row), **Sum repeated scans...**,
+**Session log...** -- is the
 *Datasets* box of the tool panel, between the tools and the Memory box;
 combining datasets is the **Combine...** button under the list.
 
@@ -415,6 +415,11 @@ not fit and why -- at once, as the pointer moves.
 | 3D view | one | map |
 | Cut arithmetic on the two | two | cuts |
 | Save, Remove | one or more | any readable / any |
+| Sum repeated scans | two or more | cuts, or maps of one kind |
+| Ridge detection | one or more | cuts, or maps |
+| Detector corrections | one | cut, map or kz map as measured |
+| Tight-binding fit | none or one | a map in momentum (or points from a file) |
+| Crystal structure | none needed | -- |
 
 A cut opened from the list keeps its map's contour off screen; the cut's
 **Functions → Show the map** brings it up, double-clicking the map's row
@@ -505,7 +510,7 @@ Since 1.1.0 the tools that take a dataset -- Fermi edge fit, the k and kz
 conversions, Align Fermi levels (kz), Remove detector grid, Brillouin zone,
 the filters, MDC / EDC fit, cut arithmetic, Slice series figure, the 3-D
 views, the figure composer -- are buttons of the launcher's tool panel
-(Basic and Advanced tabs), not Functions entries. What is left in
+(Basic, Advanced and Calculation tabs), not Functions entries. What is left in
 **Functions** works on the window itself:
 
 | Viewer | Functions |
@@ -623,6 +628,10 @@ mouse to pause; a map held in memory follows it live.
 - **The curve viewer**, its **curve fit** and **spin analysis** -- see below.
 - **De-grid** -- remove the detector's grid (MCP pattern or mesh) from a map
   or a cut; see below.
+- **Detector corrections**, **sum repeated scans**, **ridge detection**,
+  the **tight-binding fit** and the **crystal structure** -- ported from
+  the lab's MATLAB programs, each improved where the MATLAB version could
+  be; see *Tools ported from the MATLAB programs* below.
 
 ### Core-level check
 
@@ -936,6 +945,70 @@ the contrast and shift of every slice, and the numbers above. **Advanced**
 holds the parameters; the defaults are the tested best and are what the
 button uses.
 
+### Tools ported from the MATLAB programs
+
+Five tools from `DataAnalysisPrograms_PD` (yulinARPES, Quick_Panel,
+PD_program, TB_zph_zmd, Lattice_plot_zqs), each checked against the MATLAB
+original and changed where the original could be bettered. The windows that
+take several decisions lead through them as numbered steps (*Step 2 of 4:
+...*, with Back / Next, and Next greyed with the reason until the step has
+what the next one needs; `ui/common/stepper.py`).
+
+**Sum repeated scans** (Datasets box; `add_two_value_arrays.m`). A fine cut
+or map taken in batches, so that an ageing sample can be seen, added back
+together in three steps: *are these repeats?* (grids and recorded
+conditions against the first scan; a slightly different grid is
+interpolated onto the first), *has the sample changed?* (each scan against
+the sum of the **others**, with counting statistics: χ²/point ≈ 1 for noise
+only, flagged when it stands well above the set's median; the count rate;
+the energy shift of its EDC, measured by cross-correlating derivatives
+against the others aligned by their own shifts), and *sum* (the changed
+scans start unticked; shifts undone if asked, the energy axis then cropped
+to what every scan covers; sum or mean). The MATLAB tool added two arrays
+with no check at all.
+
+**Ridge detection** (Advanced; `ridge_detection.m`). Bands as ridges of the
+smoothed intensity: where the Hessian curves down across the band and the
+slope across it changes sign, each point placed to a fraction of a pixel.
+Changed from the .m file: smoothing per axis in that axis' unit (it used
+one radius in pixels of mixed units); derivatives in units of the smoothing
+width, so the result does not depend on whether energy is in eV or meV;
+Gaussian-derivative filters; a sign-change test instead of an absolute
+slope tolerance; vectorised. On a synthetic parabolic band the points sit
+within 0.2 meV (median). Results: the ridge image to the list (a map plane
+by plane), the points to a CSV.
+
+**Detector corrections** (Basic, under Remove detector grid;
+`StretchDitherImage.m`, `InterpRegionAlongX/Y.m`, `inpaint_nans.m`). On the
+detector's own pixels, a cut or every slice of a map: a **keystone** (the
+lit trapezoid) stretched to a rectangle, as an exact inverse map with each
+line's counts kept (the .m file re-gridded a Delaunay triangulation of every
+pixel and did not conserve counts); and **bad regions** patched -- linear
+along x or y as in MATLAB, or a harmonic (Laplace) fill, factorised once
+for a whole map. *Find bad pixels* compares the mean detector image with
+its own median filter and its pixel-to-pixel scatter.
+
+**Tight-binding fit** (Calculation; `TB_zph_zmd`). E(k) = e0 + Σ t_n Σ cos(k·R)
+over shells of neighbours of any 2-D or 3-D lattice (typed, or the
+Brillouin-zone tool's last crystal), fitted to band points traced by ridge
+detection on constant-energy planes of a k-map, clicked, or read from a
+file. A **linear** least-squares fit with standard errors (the .m file ran
+a nonlinear fit from all-ones starting values); robust to stray points
+(Tukey reweighting); the azimuth can be refined. One contour alone fixes the
+shape and not the energy scale, so t1 is then held (the .m file's fit was
+undetermined there); a condition-number check says when the points cannot
+tell the shells apart. The model's contours are drawn over the data, and
+its spectral function goes to the list as a map.
+
+**Crystal structure** (Calculation; `Lattice_plot_zqs`). The crystal in 3-D
+-- typed in (cell, space-group centering, basis), from the Brillouin-zone
+tool's last crystal, or from a **CIF** (symmetry operations applied).
+Element by element colour, size, transparency and gloss; cell edges and
+bonds; a **cleavage plane** (hkl) slid along its normal or put on one of the
+listed atomic layers, with the atoms above faded or hidden to show the
+termination. Drawn with QPainter (no OpenGL), so it renders at any size;
+*To figure composer* puts it on a figure page.
+
 ### Cut arithmetic
 
 Two cuts combined into a third: LH − LV linear dichroism, circular
@@ -1025,7 +1098,14 @@ from a frozen slice's **Figure composer...** button, or from a map's
 **Slice series figure...**. Empty slots are never written to a file.
 
 Export gives what the panel actually shows, in the formats that make sense
-for it -- image, data, or both.
+for it -- image, data, or both. Data go to a `.nxs` this program reopens, or
+**for Igor Pro**: an Igor text file (`.itx`) or a binary wave (`.ibw`,
+version 5), with the wave scaling, units, dimension labels and the
+metadata in the wave note (`tools/output/igor.py`); an unevenly spaced axis
+is written as a wave of its own beside the data. The Datasets box's
+**Save** offers the same two formats for whole datasets (cuts, maps,
+spatial scans, curves); an Igor export is a copy, so the rows keep pointing
+where they did.
 
 ---
 
@@ -1230,6 +1310,11 @@ subpackages group modules by what they are for.
 | `processing/stackcuts.py`, `processing/combine.py` | Combining datasets: stacking cuts along a new axis, and joining pieces end to end along one of their own axes. |
 | `processing/process.py`, `processing/volume.py` | Smoothing, derivatives, curvature, backgrounds, symmetrisation -- in 2-D and over a cube. |
 | `processing/degrid.py` | Removing the detector grid: the map's own grid estimate, the per-slice contrast / shift / local fit, the single-cut paths, and the pixel-lock check. |
+| `processing/repeats.py` | Summing repeated scans: grid check, χ² of each scan against the others, energy shifts, the sum. |
+| `processing/ridge.py` | Ridge detection, on a plane or plane by plane through a cube. |
+| `processing/detector.py` | Keystone correction, bad-region patches, finding bad pixels, and the on-the-detector check. |
+| `crystal/tightbinding.py` | Neighbour shells, the linear (and robust) tight-binding fit, the azimuth scan, reading band points. |
+| `crystal/structure.py`, `crystal/last_crystal.py` | Crystal structures: CIF reading and symmetry expansion, cells of atoms, Miller planes and atomic layers; and the Brillouin-zone tool's last crystal, for the tools that reuse it. |
 | `processing/cutops.py` | Arithmetic between two cuts: scaling, resampling, dichroism, reference division, Poisson uncertainty, and which recorded conditions differ. |
 | `spectra/curves.py` | One-dimensional data as tables: channel names, the σ convention, and the σ-aware crop / bin / normalise / background operations. |
 | `spectra/spin.py` | Spin channels from their labels, the cross ratio, the instrumental asymmetry, polarisation and spin-resolved spectra with counting errors. |
@@ -1237,6 +1322,7 @@ subpackages group modules by what they are for.
 | `spectra/corelevel.py`, `spectra/corelevel_table.py` | The core-level check: the integrated EDC, the energy reference, peak finding, assignment against Table 1-1 and typical chemical states, contaminants, higher-order light, the rigid-shift test. The table is generated. |
 | `output/figure.py`, `output/export.py` | What a publication figure *is*, and what leaves the program. |
 | `output/colormaps.py` | Generated colormap tables. |
+| `output/igor.py` | Igor Pro export: `.itx` text and `.ibw` binary waves with scaling, units and notes. |
 | `output/explog.py` | The experiment log: its format, each dataset's row (scanned ranges included), continuing a CSV log after its last record, and reformatting it in place. |
 | `runtime/memory.py`, `runtime/system.py` | Memory use, and the stand-ins for the lab's `tools_packages`. |
 | **`ui/`** | |
@@ -1253,6 +1339,9 @@ subpackages group modules by what they are for.
 | `panels/stackcuts.py`, `panels/cutops.py` | The Combine datasets window (stack or join), and the cut arithmetic window. |
 | `panels/corelevel.py`, `panels/degrid.py` | The core-level check (elements, energy reference, results window), and the Remove detector grid window. |
 | `panels/explog.py` | The experiment log's format window, and logging the selection in that format. |
+| `panels/repeats.py`, `panels/ridge.py`, `panels/detector.py` | Sum repeated scans, ridge detection, and the detector corrections. |
+| `panels/tightbinding.py`, `panels/crystal.py` | The tight-binding fit and the crystal-structure viewer (the Calculation tab). |
+| `common/stepper.py` | The numbered steps with Back / Next that the multi-step tool windows are built on. |
 | `common/jobs.py` | Running one long operation at a time off the GUI thread. |
 | `common/gcguard.py` | Cyclic garbage collection from the event loop only, never inside a Qt call (prevents random crashes on opening and closing windows). |
 | `common/notify.py` | The message boxes. |
