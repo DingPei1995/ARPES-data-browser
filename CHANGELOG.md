@@ -80,6 +80,52 @@ is done; `ui/common/stepper.py`).
   above faded or hidden to show the termination. Painted with QPainter (no
   OpenGL), so it renders at any size; *To figure composer* adds it as a
   picture panel.
+- **Crystal view, improved for papers.** Atoms shaded as glossy spheres
+  with real transparency; grey, thin bonds; lattice constants written on
+  the cell edges; the element key optional. The Brillouin zone and
+  polyhedra are drawn in the same view: k axes as arrows, high-symmetry
+  labels set off from their points and optionally placed at a left-hand
+  equivalent (*Label on the left*), a path drawn in colour, and a measured
+  k-map painted on the plane through Γ or the zone top, clipped to the
+  zone's outline.
+- **Calculated bands** (Calculation; `tools/crystal/bands.py`,
+  `ui/panels/bands.py`). Reads a Wannier90 `_hr.dat` (and the other
+  formats listed in the guide) with orbital weights; draws bands along a
+  path, constant-energy contours, and compares with a measured cut or map
+  -- a renormalisation Z and an energy shift fitted to the cut's bands
+  apply to the contours too. A band can be *followed* through crossings by
+  eigenvector overlap (diabatic), and a crossing line traced through k_z.
+  *To figure composer* sends the comparison, a constant-energy series or
+  the calculated guides as dashed overlays on a cut.
+- **Stacked slices** (Advanced; `ui/panels/volume.py`). Constant-energy (or
+  constant-k_z) slices of a volume as separated, faded layers in 3-D, with
+  spread, aspect and view angle, and curves marked through the layers --
+  the stacked contour plots of papers.
+- **Band crossings.** The MDC fit's *Dispersion...* window reports where two
+  fitted linear branches cross, with its error (`line_crossing` in
+  `tools/spectra/dispersion.py`); a collapsed error no longer makes the fit
+  singular (sigma floored at a tenth of the median).
+- **Figure composer: own file format, `.afig`** (`tools/output/figfile.py`).
+  A zip of the figure as JSON plus its arrays (no pickle); *Open figure...*
+  in the composer or the launcher reopens it for editing. Saving writes
+  beside it a folder *data for <name>* with one subfolder per panel letter
+  holding the data as shown (`.nxs`, line CSVs, a PNG) and the original
+  measurement it came from, traced back through conversions and cuts, plus
+  an imported picture's own file.
+- **Figure composer: arranging.** Select several panels (Ctrl-click) and
+  line them up: top, bottom, left, right, distribute, same width or
+  height. Panel letters line up row by row and run (a), (b), (c) in
+  reading order; a letter can be nudged. Colour bars can sit below a
+  panel, shorter, with high or low at either end. Curve overlays take
+  symbols and error bars and break at gaps.
+- **Demo data and example figures.** The demo set gains a tetragonal CIF, a
+  calculated band structure that matches the demo bands, and a photon-energy
+  scan with a band crossing; `devtools/figure_tests.py` builds the two
+  example figures of the guide's worked example from it.
+- **User guide (English) reorganised** by the tool panel's tabs: Getting
+  started, Basic, Advanced, Calculation, Figures and output, Housekeeping;
+  it ends with a worked example making two paper figures in the figure
+  composer. PDF regenerated.
 - **Igor Pro export** (`tools/output/igor.py`; replaces
   `Export2ScientaData.m`). The viewers' Export → *Data (.nxs, Igor)* and the
   Datasets box's **Save** write `.itx` (all datasets in one file) or `.ibw`
@@ -87,7 +133,7 @@ is done; `ui/common/stepper.py`).
   in the wave note, an unevenly spaced axis as its own wave. The `.ibw`
   round-trips through this program's own SES `.ibw` reader in the tests.
 - **The tool panel**: a third tab, **Calculation** (Crystal structure,
-  Tight-binding fit; calculated band structures to follow). The Memory
+  Tight-binding fit, Calculated bands). The Memory
   box's three buttons share one row, renamed **Free RAM**, **Close all**,
   **Autosaves** (the old names are in their tooltips). The Datasets box puts
   **Rename**, **Save** and **Remove** on one row, and gains **Sum repeated

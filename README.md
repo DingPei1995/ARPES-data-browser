@@ -1008,6 +1008,18 @@ bonds; a **cleavage plane** (hkl) slid along its normal or put on one of the
 listed atomic layers, with the atoms above faded or hidden to show the
 termination. Drawn with QPainter (no OpenGL), so it renders at any size;
 *To figure composer* puts it on a figure page.
+The Brillouin zone in the same view, with k axes as arrows, a coloured path
+and a measured k-map painted on the plane through Γ or the zone top.
+
+**Calculated bands** (Calculation). A band structure calculated elsewhere
+(Wannier90 `_hr.dat` and the other formats in the guide), with orbital
+weights: bands along a path, constant-energy contours, and a comparison
+with a measured cut or map -- a renormalisation Z and an energy shift fitted
+to the cut's bands. Bands can be followed through crossings by eigenvector
+overlap; the calculated bands go to the figure composer as dashed guides.
+
+**Stacked slices** (Advanced). Constant-energy or constant-k_z slices of a
+volume as separated, faded layers in 3-D, with curves marked through them.
 
 ### Cut arithmetic
 
@@ -1096,6 +1108,11 @@ constant-energy contours, or of cuts) from one cube work as before. It is
 reached from the list (tool panel → Advanced → **Figure composer...**),
 from a frozen slice's **Figure composer...** button, or from a map's
 **Slice series figure...**. Empty slots are never written to a file.
+Several panels can be selected (Ctrl/Shift-click) and lined up, spaced
+or matched in size; the letters line up and run (a), (b), (c). **Save
+as...** writes the composer's own `.afig` file, which reopens for editing,
+and beside it a folder *data for <name>* with each panel's data as shown and
+the original measurement it came from.
 
 Export gives what the panel actually shows, in the formats that make sense
 for it -- image, data, or both. Data go to a `.nxs` this program reopens, or

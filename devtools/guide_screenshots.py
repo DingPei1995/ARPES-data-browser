@@ -113,7 +113,9 @@ def main():
     from devtools import demo_data
 
     data_dir = os.path.join(_HOME, "demo_data")
-    paths = demo_data.write_all(data_dir)
+    # the measurements go in the list; the calculation and CIF files are
+    # opened by the Calculation tab's windows
+    paths = [p for p in demo_data.write_all(data_dir) if p.endswith(".nxs")]
 
     av.win = av._MainWindow()
     av.ui = main_window_ui.Ui_MainWindow()
@@ -152,7 +154,7 @@ class Shots:
              "fs_correction", "process", "stack", "volume", "cut_arithmetic",
              "kz_processing", "kz_conversion", "degrid", "curves", "spin",
              "figure", "export", "data_operations", "spatial", "slice_figure",
-             "plot_tools", "combine"]
+             "plot_tools", "combine", "calculation"]
 
     def __init__(self, av, app, paths, data_dir):
         self.av, self.app, self.paths, self.data_dir = av, app, paths, data_dir
@@ -175,7 +177,87 @@ class Shots:
         self.av.ui.ToolTabs.setCurrentIndex(1)
         pump()
         shot(self.av.win, "main_window_advanced", (860, 900))
+        self.av.ui.ToolTabs.setCurrentIndex(2)
+        pump()
+        shot(self.av.win, "main_window_calculation", (860, 900))
         self.av.ui.ToolTabs.setCurrentIndex(0)
+
+    def calculation(self):
+        """The Calculation tab's windows, the stacked slices and the
+        composer's Arrange tools, on the demo crystal and its calculation
+        (devtools/paper_figures.py converts the measurements to momentum
+        with the program's own conversions)."""
+        sys.path.insert(0, os.path.join(HERE, "devtools"))
+        import paper_figures as P
+        import figure_tests as T
+        from ui.panels.crystal import CrystalDialog
+        from ui.panels.figure import open_figure_file
+        from ui.panels.volume import VolumeWindow
+
+        folder = self.data_dir
+        datasets = P.converted(folder)
+        data = dict(datasets)
+        # the crystal: structure, then its zone with the maps on its planes
+        crystal = CrystalDialog(datasets=[(n, d) for n, d in datasets
+                                          if d.kind == "k_map"],
+                                colormap="blue", flip=True)
+        crystal.read_cif(os.path.join(folder, "demo_tetragonal_crystal.cif"))
+        crystal.stepper.go(1)
+        for element, colour in (("Hf", "#3fb4b0"), ("Si", "#1f3f9e"), ("S", "#d6df2c")):
+            crystal.set_style(element, colour=colour, gloss=0.85)
+        crystal.bond_grey.setChecked(True)
+        crystal.legend_box.setChecked(True)
+        crystal.lengths_box.setChecked(True)
+        crystal.view.camera.azimuth, crystal.view.camera.elevation = -68.0, 14.0
+        shot(crystal, "crystal_structure", (1180, 760))
+        crystal.read_cif(os.path.join(folder, "demo_crystal.cif"))
+        crystal.stepper.go(3)
+        crystal.path_edit.setText("K-H")
+        crystal.zone_left_edit.setText("L, M")
+        for (box, _h, _c, source, energy), name, e in zip(
+                crystal.plane_rows, ("Γ-plane map", "A-plane map"), (-0.65, -0.55)):
+            source.setCurrentText(name)
+            energy.setValue(e)
+        crystal._zone_changed()
+        crystal.view.camera.azimuth, crystal.view.camera.elevation = -28.0, 22.0
+        shot(crystal, "crystal_zone", (1180, 760))
+        crystal.close()
+        # the calculated bands: along the path, and against a cut
+        bands = P.bands_window(folder, datasets)
+        bands.stepper.go(1)
+        shot(bands, "bands_path", (1180, 780))
+        bands.stepper.go(2)
+        bands.compare_combo.setCurrentText("cut_GM_LH")
+        bands.direction_box.setValue(90.0)
+        bands.fit_alignment()
+        shot(bands, "bands_compare", (1180, 780))
+        bands.stepper.go(3)
+        bands.series_box.setChecked(True)
+        shot(bands, "bands_output", (1180, 680))
+        # the stacked slices
+        scan = data["Γ-plane map"].scan
+        stack = VolumeWindow(scan.value, (scan.x, scan.k, scan.z),
+                             ("k_x (Å⁻¹)", "k_y (Å⁻¹)", "E - E_F (eV)"), "Γ-plane map",
+                             colormap="blue", flip=True, mode="stack",
+                             sampling=([(-1.2, 1.2), (-1.2, 1.2), (-1.0, 0.05)],
+                                       [120, 120, 100]))
+        stack.set_stack(2, [0.0, -0.15, -0.3, -0.45, -0.6, -0.75, -0.9], width=0.04)
+        stack.z_aspect.setValue(1.8)
+        stack.azimuth.setValue(-45.0)
+        stack.elevation.setValue(14.0)
+        shot(stack, "stacked_slices", (1180, 800))
+        stack.close()
+        # the composer: the example figures, saved and opened again
+        T.main(OUT, folder)
+        composer = open_figure_file(os.path.join(folder, "example_figure_1.afig"))
+        composer.canvas.select("panel", 1)
+        composer.canvas.extra = [2, 3, 4]
+        composer.canvas.update()
+        shot(composer, "composer_arrange", (1500, 860))
+        composer.canvas.select("panel", 0)
+        composer._tools.tabs.setCurrentIndex(3)            # Colour
+        shot(composer, "composer_colour_bar", (1500, 860))
+        composer.close()
 
     def _open(self, text):
         self._select(text)

@@ -1152,6 +1152,9 @@ class VolumeWindow(QMainWindow):
         self.stack_axis.setCurrentIndex(int(axis))
         self.stack_axis.blockSignals(False)
         self.stack_positions.setText(", ".join(f"{float(v):.6g}" for v in positions))
+        self.stack_count.blockSignals(True)
+        self.stack_count.setValue(len(list(positions)))
+        self.stack_count.blockSignals(False)
         if width is not None:
             self.stack_width.setValue(float(width))
         if hasattr(self, "z_aspect"):

@@ -3670,7 +3670,10 @@ class FigureWindow(QMainWindow):
         letter.clicked.connect(self.reletter)
         column.addWidget(letter)
         column.addSpacing(8)
-        column.addWidget(QLabel("<b>Arrange</b> <i>(Ctrl+click: several)</i>"))
+        arrange = QLabel("<b>Arrange</b>")
+        arrange.setToolTip("Select several panels: click one, then Ctrl+click "
+                           "(or Shift+click) the others.")
+        column.addWidget(arrange)
         grid = QGridLayout()
         grid.setSpacing(2)
         for n, (text, operation, tip) in enumerate((
@@ -3684,8 +3687,8 @@ class FigureWindow(QMainWindow):
                 ("Space ↔", "space-x", "Equal gaps between them, left to right "
                                        "(three or more)."),
                 ("Space ↕", "space-y", "Equal gaps between them, top to bottom."),
-                ("Same width", "width", "The first-selected panel's width for all."),
-                ("Same height", "height", "Its height for all."))):
+                ("= Width", "width", "The first-selected panel's width for all."),
+                ("= Height", "height", "Its height for all."))):
             button = QPushButton(text)
             button.setToolTip(tip)
             button.setStyleSheet("padding: 3px 4px;")

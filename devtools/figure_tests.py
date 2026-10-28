@@ -1,27 +1,25 @@
-"""Three more figure formats rebuilt from the demo data, as a test of the
-figure tools.
+"""The two example figures of the user guide's worked example (§30), rebuilt
+from the demo data as a test of the figure tools.
 
-The formats are those of a study of a nodal-line semimetal (HfSiS): a
-constant-energy overview, a Dirac line node followed through k_z, and a
-crystal structure. Here every panel is made from the demo crystal of
-``devtools/demo_data.py`` -- a layered hexagonal crystal whose two bands
-cross along a line through the zone -- and the demo tetragonal (ZrSiS-type)
-structure, with the program's own tools:
+The formats are those of a study of a nodal-line semimetal (HfSiS). Every
+panel is made from the demo crystal of ``devtools/demo_data.py`` -- a
+layered hexagonal crystal whose two bands cross along a line through the
+zone -- and the demo tetragonal (ZrSiS-type) structure, with the program's
+own tools:
 
-* **Test figure 1** -- (a) the notched cube of a k-map (3-D view), (b) the
-  constant-energy maps at four energies above the calculated contours at
-  the same energies (Calculated bands), coloured by orbital weight, the
+* **Example figure 1** -- (a) the notched cube of a k-map (3-D view), (b)
+  the constant-energy maps at four energies above the calculated contours
+  at the same energies (Calculated bands), coloured by orbital weight, the
   zones dashed, (c) the constant-energy maps stacked up the energy axis
-  (Stacked slices), the Dirac point marked;
-* **Test figure 2** -- (a) the Brillouin zone with the measured
-  constant-energy maps on its Γ and zone-top planes and the line node
-  (crystal window), (c) the cuts at four k_z stacked along k_z with the
-  Dirac points joined (Stacked slices), (d) (i)-(iv) the four cuts with the
-  two straight branches fitted to MDC peaks and the Dirac point where they
-  cross (MDC fit), (v) the MDC stack round the Dirac point (Stack plot),
-  (vi) the fitted Dirac points against k_z with the calculated line node;
-  and (a) the layered (ZrSiS-type) crystal structure: glossy atoms, the
-  cell's lattice constants, the cleavage plane.
+  (Stacked slices);
+* **Example figure 2** -- (a) the layered crystal structure: glossy atoms,
+  the cell's lattice constants, the cleavage plane; (b) the Brillouin zone
+  with the measured constant-energy maps on its Γ and zone-top planes and
+  the crossing line; (c) the cuts at four k_z stacked along k_z with the
+  crossings joined (Stacked slices); (d) (i)-(iv) the four cuts with the
+  calculated bands as dashed guides, (v) the MDC stack round the crossing
+  (Stack plot), (vi) the fitted crossing energies against k_z with the
+  calculated line.
 
 Usage:  python devtools/figure_tests.py [PNG folder] [.afig folder]
         (PNGs default to docs/images)
@@ -149,7 +147,7 @@ def test_figure_1(folder, dialog, datasets, out, save_to=None):
         panel.title = ""
     pc = stack_panel(plane, [0.0, -0.15, -0.3, -0.45, -0.6, -0.75, -0.9])
 
-    window = FigureWindow([pa] + series + [pc], "Test figure 1 — demo crystal")
+    window = FigureWindow([pa] + series + [pc], "Example figure 1")
     figure = window.figure
     _style(figure, 200, 80)
     size, gap = 20.0, 2.0
@@ -171,7 +169,7 @@ def test_figure_1(folder, dialog, datasets, out, save_to=None):
         panel.y_labels = i % 4 == 0
     pa.x_labels = pa.y_labels = True
     window.refresh()
-    return _write(window, out, "test_figure_1", save_to), window
+    return _write(window, out, "example_figure_1", save_to), window
 
 
 # --------------------------------------------------------------------------
@@ -449,7 +447,7 @@ def test_figure_2(folder, dialog, datasets, out, save_to=None):
     pw.y_label = "E_c - E_F (eV)"                    # the crossing's energy
     crystal = crystal_panel(folder)
     window = FigureWindow([crystal, pa, pc] + panels_d + [pv, pw],
-                          "Test figure 2 — demo crystal")
+                          "Example figure 2")
     figure = window.figure
     _style(figure, 186, 112)
     w, h = 21.0, 34.0
@@ -470,14 +468,14 @@ def test_figure_2(folder, dialog, datasets, out, save_to=None):
     for i, panel in enumerate(panels_d):
         panel.y_labels = i == 0
     window.refresh()
-    print("Dirac points: " + ", ".join(
+    print("crossings: " + ", ".join(
         f"k_z = {c[3] / PI_C:.2f}π/c: E = {d[1]:.3f} ± {d[3]:.3f} eV"
         for c, d in zip(cuts, dps)))
-    return _write(window, out, "test_figure_2", save_to), window
+    return _write(window, out, "example_figure_2", save_to), window
 
 
 # --------------------------------------------------------------------------
-# Test figure 3
+# Figure 2 (a): the crystal structure
 # --------------------------------------------------------------------------
 def crystal_panel(folder, size=1000):
     """The layered structure as a picture panel: glossy atoms, the cell's
