@@ -127,6 +127,10 @@ is done; `ui/common/stepper.py`).
   output, Housekeeping; each ends with a worked example making two paper
   figures in the figure composer. The French guide gains the Plot tools
   section it lacked. PDFs regenerated.
+- **Terms of use** in the README gain two lines: an ARPES paper made with
+  the program is asked to cite this repository; a paper related to AI that
+  uses the program or its code must first be discussed with the author by
+  e-mail.
 - **Igor Pro export** (`tools/output/igor.py`; replaces
   `Export2ScientaData.m`). The viewers' Export → *Data (.nxs, Igor)* and the
   Datasets box's **Save** write `.itx` (all datasets in one file) or `.ibw`
