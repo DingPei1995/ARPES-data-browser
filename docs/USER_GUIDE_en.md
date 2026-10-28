@@ -33,7 +33,8 @@ beamtime (see [Trying it with demo data](#2-trying-it-with-demo-data)).
 4. [Loading data](#4-loading-data)  
 5. [What the viewers have in common](#5-what-the-viewers-have-in-common)  
 6. [Maps: the contour and its two cuts](#6-maps-the-contour-and-its-two-cuts)  
-7. [Arbitrary cuts and Fermi-surface correction](#7-arbitrary-cuts-and-fermi-surface-correction)  
+7. [Arbitrary cuts and Fermi-surface correction](#7-arbitrary-cuts-and-fermi-surface-correction)
+
 **[Part II — The Basic tab](#part-ii--the-basic-tab)**
 
 8. [Fermi edge fit](#8-fermi-edge-fit)  
@@ -43,7 +44,8 @@ beamtime (see [Trying it with demo data](#2-trying-it-with-demo-data)).
 12. [Core-level check](#12-core-level-check)  
 13. [Converting a map to momentum](#13-converting-a-map-to-momentum)  
 14. [Photon-energy scans (kz)](#14-photon-energy-scans-kz)  
-15. [Brillouin zone](#15-brillouin-zone)  
+15. [Brillouin zone](#15-brillouin-zone)
+
 **[Part III — The Advanced tab](#part-iii--the-advanced-tab)**
 
 16. [Smoothing, derivatives, curvature and symmetrising](#16-smoothing-derivatives-curvature-and-symmetrising)  
@@ -54,17 +56,20 @@ beamtime (see [Trying it with demo data](#2-trying-it-with-demo-data)).
 21. [Slice series figure](#21-slice-series-figure)  
 22. [The 3-D views](#22-the-3-d-views)  
 23. [Curves: EDCs, MDCs and spin-resolved data](#23-curves-edcs-mdcs-and-spin-resolved-data)  
-24. [Spatially resolved scans (nano-ARPES)](#24-spatially-resolved-scans-nano-arpes)  
+24. [Spatially resolved scans (nano-ARPES)](#24-spatially-resolved-scans-nano-arpes)
+
 **[Part IV — The Calculation tab](#part-iv--the-calculation-tab)**
 
 25. [Crystal structure](#25-crystal-structure)  
 26. [Tight-binding fit](#26-tight-binding-fit)  
-27. [Calculated bands](#27-calculated-bands)  
+27. [Calculated bands](#27-calculated-bands)
+
 **[Part V — Figures and output](#part-v--figures-and-output)**
 
 28. [The figure composer](#28-the-figure-composer)  
 29. [Exporting a panel and saving data](#29-exporting-a-panel-and-saving-data)  
-30. [Worked example: two figures in the figure composer](#30-worked-example-two-figures-in-the-figure-composer)  
+30. [Worked example: two figures in the figure composer](#30-worked-example-two-figures-in-the-figure-composer)
+
 **[Part VI — Housekeeping](#part-vi--housekeeping)**
 
 31. [Autosave, memory and recovery](#31-autosave-memory-and-recovery)  
@@ -177,7 +182,7 @@ It has three parts:
   **Advanced** holds the rest:
   figure composer, smoothing and the band-sharpening filters, symmetrising,
   ridge detection, stack plots, MDC and EDC fits, cut arithmetic, the slice
-  series figure and the three 3-D views. **Calculation** holds what is
+  series figure and the four 3-D views. **Calculation** holds what is
   worked out rather than measured: the crystal structure, the
   tight-binding fit and calculated band structures (see
   [Part IV](#part-iv--the-calculation-tab)).

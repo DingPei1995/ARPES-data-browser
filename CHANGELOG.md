@@ -122,10 +122,11 @@ is done; `ui/common/stepper.py`).
   calculated band structure that matches the demo bands, and a photon-energy
   scan with a band crossing; `devtools/figure_tests.py` builds the two
   example figures of the guide's worked example from it.
-- **User guide (English) reorganised** by the tool panel's tabs: Getting
-  started, Basic, Advanced, Calculation, Figures and output, Housekeeping;
-  it ends with a worked example making two paper figures in the figure
-  composer. PDF regenerated.
+- **User guides (English, Chinese, French) reorganised** by the tool
+  panel's tabs: Getting started, Basic, Advanced, Calculation, Figures and
+  output, Housekeeping; each ends with a worked example making two paper
+  figures in the figure composer. The French guide gains the Plot tools
+  section it lacked. PDFs regenerated.
 - **Igor Pro export** (`tools/output/igor.py`; replaces
   `Export2ScientaData.m`). The viewers' Export → *Data (.nxs, Igor)* and the
   Datasets box's **Save** write `.itx` (all datasets in one file) or `.ibw`
