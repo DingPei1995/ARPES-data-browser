@@ -63,6 +63,18 @@ small change, so only the last number moves.)
 - **Show information is Experiment info**, and its window is titled so.
 - **Combining is the Combine... button under the list only**; the
   right-click entry for it is gone.
+- **macOS: double-click to start.** `ARPES viewer.app`, in the program's
+  folder, starts the main panel without Terminal. Finder gives an app no
+  conda or Homebrew on its PATH, so the app looks for a Python with the
+  packages itself -- what `python3` is in a login shell (conda included),
+  then the usual Anaconda / Miniforge / Homebrew / python.org / pyenv places
+  -- and remembers the one that works. Without one, it says what to install
+  (command copied to the clipboard) or lets the user choose a Python; Apple's
+  `/usr/bin/python3` stub is skipped without the developer tools, so it
+  never pops up their installer. A copy moved elsewhere asks once for the
+  program's folder; an error exit shows the end of
+  `~/.arpes_viewer/launcher.log`. The icon is drawn by
+  `devtools/make_mac_icon.py`.
 - **Terms of use** in the README: non-commercial use only; new readers are
   for public large-scale facilities, not individual laboratories.
 

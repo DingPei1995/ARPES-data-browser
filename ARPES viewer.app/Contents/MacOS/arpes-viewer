@@ -1,0 +1,161 @@
+#!/bin/bash
+# ARPES viewer.app -- start the program with a double-click on macOS.
+#
+# Finder starts an app with almost no environment: no conda, no Homebrew on
+# the PATH. So this finds a Python that has the program's packages itself:
+#
+#   1. the one it found last time (~/.arpes_viewer/python_path);
+#   2. what `python3` / `python` are in a login shell -- the same Python the
+#      user types in Terminal, conda environment included;
+#   3. the usual places: Anaconda / Miniconda / Miniforge and their
+#      environments, Homebrew, python.org, pyenv.
+#
+# The first that imports PyQt5, pyqtgraph, numpy, h5py and scipy is kept.
+# If none does, a dialog says how to install them (the command is copied to
+# the clipboard) or lets the user point at a Python.
+#
+# The program's folder is the one this app sits in. An app copied elsewhere
+# (the Dock, Applications, the Desktop) uses the folder found last time, or
+# asks for it once (~/.arpes_viewer/install_path).
+#
+# Plain bash 3.2, the version macOS ships.
+
+TITLE="ARPES viewer"
+CONFIG="$HOME/.arpes_viewer"
+PY_FILE="$CONFIG/python_path"
+ROOT_FILE="$CONFIG/install_path"
+LOG="$CONFIG/launcher.log"
+PACKAGES="PyQt5 pyqtgraph numpy h5py scipy"
+mkdir -p "$CONFIG"
+
+# Dialogs take their text as an argument, never spliced into the script,
+# so a quote or a backslash in a path cannot break them.
+say() {   # a message with an OK button
+    /usr/bin/osascript -e 'on run argv' \
+        -e 'display dialog (item 1 of argv) buttons {"OK"} default button 1 with title (item 2 of argv) with icon caution' \
+        -e 'end run' "$1" "$TITLE" >/dev/null 2>&1
+}
+
+ask() {   # a message with Quit / Choose Python...; prints the button
+    /usr/bin/osascript -e 'on run argv' \
+        -e 'button returned of (display dialog (item 1 of argv) buttons {"Quit", "Choose Python..."} default button 1 with title (item 2 of argv) with icon caution)' \
+        -e 'end run' "$1" "$TITLE" 2>/dev/null
+}
+
+NL='
+'
+
+# -- the program's folder ---------------------------------------------------
+HERE="$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)"
+ROOT=""
+if [ -f "$HERE/ARPES_viewer.py" ]; then
+    ROOT="$HERE"
+elif [ -f "$ROOT_FILE" ]; then
+    saved="$(cat "$ROOT_FILE")"
+    [ -f "$saved/ARPES_viewer.py" ] && ROOT="$saved"
+fi
+if [ -z "$ROOT" ]; then
+    # Copied away from the program, or run from a quarantined download
+    # (macOS then runs it from a hidden read-only copy): ask once.
+    chosen="$(/usr/bin/osascript -e "POSIX path of (choose folder with prompt \"Where is the ARPES viewer folder (the one with ARPES_viewer.py)?\")" 2>/dev/null)"
+    chosen="${chosen%/}"
+    if [ -n "$chosen" ] && [ -f "$chosen/ARPES_viewer.py" ]; then
+        ROOT="$chosen"
+    else
+        [ -n "$chosen" ] && say "There is no ARPES_viewer.py in $chosen."
+        exit 1
+    fi
+fi
+echo "$ROOT" > "$ROOT_FILE"
+
+# -- a Python with the packages --------------------------------------------
+works() {
+    [ -n "$1" ] && [ -x "$1" ] || return 1
+    # Apple's /usr/bin/python3 is a stub that offers to install the
+    # developer tools when they are missing: not run then, from any list.
+    case "$1" in
+        /usr/bin/python*)
+            /usr/bin/xcode-select -p >/dev/null 2>&1 || return 1 ;;
+    esac
+    "$1" -c "import PyQt5.QtWidgets, pyqtgraph, numpy, h5py, scipy" >/dev/null 2>&1
+}
+
+candidates() {
+    [ -f "$PY_FILE" ] && cat "$PY_FILE"
+    # The login shell's own python, as typed in Terminal (zsh is the default
+    # shell since macOS 10.15; bash before).
+    for shell in /bin/zsh /bin/bash; do
+        [ -x "$shell" ] || continue
+        "$shell" -lic 'command -v python3; command -v python' 2>/dev/null </dev/null \
+            | grep '^/'
+    done
+    for base in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" \
+                "$HOME/mambaforge" "$HOME/opt/miniconda3" "$HOME/opt/anaconda3" \
+                /opt/miniconda3 /opt/anaconda3 /opt/miniforge3 \
+                /opt/homebrew/Caskroom/miniconda/base \
+                /usr/local/Caskroom/miniconda/base; do
+        [ -d "$base" ] || continue
+        echo "$base/bin/python"
+        for env in "$base"/envs/*; do
+            [ -x "$env/bin/python" ] && echo "$env/bin/python"
+        done
+    done
+    echo /opt/homebrew/bin/python3
+    echo /usr/local/bin/python3
+    for framework in /Library/Frameworks/Python.framework/Versions/3.*; do
+        [ -x "$framework/bin/python3" ] && echo "$framework/bin/python3"
+    done
+    echo "$HOME/.pyenv/shims/python3"
+    echo /usr/bin/python3
+}
+
+PYTHON=""
+FIRST=""
+while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if [ -z "$FIRST" ] && [ -x "$candidate" ]; then
+        case "$candidate" in
+            /usr/bin/python*)
+                /usr/bin/xcode-select -p >/dev/null 2>&1 && FIRST="$candidate" ;;
+            *) FIRST="$candidate" ;;
+        esac
+    fi
+    if works "$candidate"; then
+        PYTHON="$candidate"
+        break
+    fi
+done <<EOF
+$(candidates)
+EOF
+
+while [ -z "$PYTHON" ]; do
+    if [ -n "$FIRST" ]; then
+        command="\"$FIRST\" -m pip install $PACKAGES"
+        text="No Python on this Mac has the packages ARPES viewer needs ($PACKAGES).${NL}${NL}To install them, open Terminal and run (copied to the clipboard):${NL}${NL}$command${NL}${NL}then double-click ARPES viewer again. Or choose the Python that has them."
+    else
+        command="pip3 install $PACKAGES"
+        text="No Python 3 was found on this Mac. Install Python 3.9 or newer (python.org, or Anaconda), then in Terminal:${NL}${NL}$command${NL}${NL}(copied to the clipboard), and double-click ARPES viewer again."
+    fi
+    printf '%s' "$command" | /usr/bin/pbcopy
+    answer="$(ask "$text")"
+    [ "$answer" = "Choose Python..." ] || exit 1
+    picked="$(/usr/bin/osascript -e "POSIX path of (choose file with prompt \"Choose the python executable (for a conda environment: <environment>/bin/python)\" invisibles true)" 2>/dev/null)"
+    if works "$picked"; then
+        PYTHON="$picked"
+    elif [ -n "$picked" ]; then
+        say "$picked does not have all of: $PACKAGES."
+    fi
+done
+echo "$PYTHON" > "$PY_FILE"
+
+# -- start ------------------------------------------------------------------
+cd "$ROOT" || exit 1
+{
+    echo "=== $(date) -- $PYTHON"
+} > "$LOG"
+"$PYTHON" ARPES_viewer.py >>"$LOG" 2>&1
+status=$?
+if [ $status -ne 0 ]; then
+    say "ARPES viewer stopped with an error (code $status). The end of its log ($LOG):${NL}${NL}$(tail -n 12 "$LOG")"
+fi
+exit $status

@@ -59,6 +59,23 @@ Then, from the `ARPES_viewer` folder:
 python ARPES_viewer.py
 ```
 
+**On a Mac you do not need Terminal to start it:** double-click
+**`ARPES viewer.app`** in the program's folder (drag it to the Dock to keep
+it there). It finds the Python that has the packages above -- the same one
+as `python3` in Terminal, conda environments included -- and remembers it.
+If no Python has them, a dialog gives the `pip install` command (already
+copied to the clipboard: paste it into Terminal once) or lets you choose
+a Python yourself.
+
+- If macOS says the app *cannot be opened because it is from an unidentified
+  developer* (the program was downloaded as a ZIP): open **System Settings →
+  Privacy & Security** and click **Open Anyway** (older macOS: right-click
+  the app → **Open**). Only the first time.
+- A copy of the app moved out of the program's folder (to Applications, say)
+  asks once where the folder is.
+- If the program stops with an error, the dialog shows the end of
+  `~/.arpes_viewer/launcher.log`; please send that file with a bug report.
+
 The program reads:
 
 | Beamline / source | Files |

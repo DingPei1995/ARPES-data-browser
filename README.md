@@ -46,6 +46,19 @@ python ARPES_viewer.py
 
 Needs Python 3.9+, PyQt5, pyqtgraph, numpy, h5py, scipy.
 
+**On a Mac, double-click `ARPES viewer.app`** (in this folder) instead. It
+finds a Python that has the packages -- the one `python3` is in Terminal,
+conda environments included, or the usual Anaconda / Homebrew / python.org
+places -- remembers it (`~/.arpes_viewer/python_path`) and opens the main
+panel. If none has them, it says what to install (the command is copied to
+the clipboard), or lets you choose a Python. Drag it to the Dock to keep it
+at hand; a copy moved elsewhere asks once where the program's folder is.
+The first time, if macOS says the app is from an unidentified developer
+(the repository was downloaded as a ZIP rather than cloned): **System
+Settings → Privacy & Security → Open Anyway** (on older macOS: right-click
+the app → Open). If the program stops with an error, a dialog shows the end
+of `~/.arpes_viewer/launcher.log`.
+
 ---
 
 ## Contents
@@ -1159,6 +1172,7 @@ set `info["axis0.role"]` if the reader can tell what its first axis is.
 ```
 ARPES_viewer.py      the launcher: the dataset list, and everything it opens
 version.py           the version number and date shown in the launcher
+ARPES viewer.app/    the macOS launcher: double-click to start   (bash)
 loader/              reading data in, and keeping it              (no Qt)
   beamlines/         one reader per beamline
   formats/           what several readers share: NeXus layouts, Scienta SES
