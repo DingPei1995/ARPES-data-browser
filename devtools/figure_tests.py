@@ -125,7 +125,7 @@ def test_figure_1(folder, dialog, datasets, out, save_to=None):
     plane = data["Γ-plane map"]
     pa = notch_panel(plane)
     pa.colorbar, pa.colorbar_ends, pa.colorbar_label = True, "high-low", ""
-    pa.colorbar_length = 0.4
+    pa.colorbar_position, pa.colorbar_length = "below", 0.6
 
     energies = [0.0, -0.3, -0.6, -0.9]
     dialog.compare_combo.setCurrentText("Γ-plane map")
@@ -154,13 +154,15 @@ def test_figure_1(folder, dialog, datasets, out, save_to=None):
     figure = window.figure
     _style(figure, 200, 72)
     size, gap = 20.0, 2.0
-    frames = [(2, 9, 44, 54)]
+    frames = [(2, 11, 44, 50)]
     for i in range(8):
         row, col = divmod(i, 4)
         frames.append((66 + col * (size + gap), 10 + row * (size + 8.5), size, size))
-    frames.append((154, 6, 44, 62))
+    frames.append((154, 9, 44, 58))
     for panel, frame in zip(figure.panels, frames):
         panel.frame = frame
+    # the composer's Arrange tools: (a), (b) and (c) start on one line
+    window.arrange("top", [0, 1, 2, 3, 4, 9])
     labels = ["(a)", "(b)"] + [""] * 7 + ["(c)"]
     for panel, label in zip(figure.panels, labels):
         panel.label = label
@@ -443,6 +445,7 @@ def test_figure_2(folder, dialog, datasets, out, save_to=None):
     # (c), right: the cuts stacked along k_z, the line node through them
     pc = kz_stack_panel(kz_map, [c[3] for c in cuts], [(d[0], d[1]) for d in dps])
 
+    pw.y_label = "E_c - E_F (eV)"                    # the crossing's energy
     window = FigureWindow([pa, pc] + panels_d + [pv, pw],
                           "Test figure 2 — demo crystal")
     figure = window.figure
@@ -455,8 +458,11 @@ def test_figure_2(folder, dialog, datasets, out, save_to=None):
     frames.append((12 + 4 * (w + 2.0) + 50, 70, 26, h))
     for panel, frame in zip(figure.panels, frames):
         panel.frame = frame
-    for panel, label in zip(figure.panels, ["(a)", "(c)", "(d)", "", "", "", "", ""]):
+    for panel, label in zip(figure.panels, ["(a)", "(b)", "(c)", "", "", "", "", ""]):
         panel.label = label
+    window.arrange("top", [0, 1])                      # the first row
+    window.arrange("top", list(range(2, 8)))           # the second
+    window.arrange("height", list(range(2, 8)))
     for i, panel in enumerate(panels_d):
         panel.y_labels = i == 0
     window.refresh()

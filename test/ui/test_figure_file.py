@@ -257,3 +257,57 @@ def test_points_with_error_bars_are_drawn(app):
     tools.curve_marker.setCurrentIndex(2)        # squares
     tools.restyle_curves([0])
     assert panel.overlays[0].marker == "s"
+
+
+def test_arrange_aligns_spaces_and_sizes_panels(app):
+    from ui.panels.figure import FigureWindow, panel_from_arrays
+
+    panels = [panel_from_arrays(np.ones((3, 3)), [0, 1, 2], [0, 1, 2]) for _ in range(3)]
+    window = FigureWindow(panels, "f")
+    figure = window.figure
+    figure.freeze()
+    for panel, frame in zip(figure.panels, ((5, 10, 30, 20), (45, 13, 25, 24),
+                                            (100, 8, 20, 20))):
+        panel.frame = frame
+    assert window.arrange("top", [0, 1, 2])
+    assert {p.frame[1] for p in figure.panels} == {8}
+    window.arrange("space-x", [0, 1, 2])
+    gaps = [figure.panels[i + 1].frame[0] - (figure.panels[i].frame[0] + figure.panels[i].frame[2])
+            for i in range(2)]
+    assert gaps[0] == pytest.approx(gaps[1])
+    window.arrange("height", [0, 1, 2])
+    assert {p.frame[3] for p in figure.panels} == {20}
+    assert not window.arrange("left", [0])          # one panel: nothing to do
+
+
+def test_letters_of_a_row_share_a_height(app):
+    from ui.panels.figure import FigurePainter, FigureWindow, panel_from_arrays
+
+    a = panel_from_arrays(np.ones((3, 3)), [0, 1, 2], [0, 1, 2])
+    b = panel_from_arrays(np.ones((3, 3)), [0, 1, 2], [0, 1, 2])
+    b.title = "with a title"
+    window = FigureWindow([a, b], "f")
+    figure = window.figure
+    figure.freeze()
+    a.frame, b.frame = (10, 12, 30, 30), (60, 13, 30, 30)
+    painter = FigurePainter(figure)
+    painter.to_image(dpi=100)
+    ya, yb = (painter._label_at[id(p)][1] for p in (a, b))
+    assert ya == pytest.approx(yb)
+    figure.style.panel_label_aligned = False
+    painter.to_image(dpi=100)
+    assert painter._label_at == {}
+
+
+def test_a_colour_bar_can_lie_under_the_panel(app):
+    from ui.panels.figure import FigureWindow, panel_from_arrays
+
+    panel = panel_from_arrays(np.arange(9.0).reshape(3, 3), [0, 1, 2], [0, 1, 2])
+    panel.colorbar, panel.colorbar_position, panel.colorbar_length = True, "below", 0.5
+    panel.colorbar_ends = "high-low"
+    window = FigureWindow([panel], "f")
+    image = window.painter.to_image(dpi=150)
+    assert not image.isNull()
+    _left, bottom, _top, _right = window.figure.margins_mm()
+    panel.colorbar_position = "right"
+    assert window.figure.margins_mm()[1] < bottom   # room kept below for it

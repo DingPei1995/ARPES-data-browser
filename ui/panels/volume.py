@@ -257,6 +257,7 @@ def paint_scene(state, painter, rect, *, font=None, title_font=None,
     ``line_px``, ``tick_px`` and ``color`` size and colour the axes and
     their labels: screen defaults in the window, the figure's own style
     (font, point sizes, axis line width, tick length) in a figure.
+    Returns the rectangle the box was drawn in (None for an empty scene).
     """
     if not state.faces and state.image is None:
         return
@@ -341,6 +342,13 @@ def paint_scene(state, painter, rect, *, font=None, title_font=None,
                          tick_px, color)
     if state.show_axes:
         _paint_tripod(state, painter, rect, font)
+    # where the box itself landed, for what is placed against it (a figure
+    # panel's colour bar)
+    bounds = state.bounds
+    corners = np.array([[bounds[0][i], bounds[1][j], bounds[2][k]]
+                        for i in (0, 1) for j in (0, 1) for k in (0, 1)], float)
+    pixels = world(corners)
+    return QRectF(QPointF(*pixels.min(axis=0)), QPointF(*pixels.max(axis=0)))
 
 
 def _fit_with_labels(state, rect, fit, world, font, title_font, tick_px):

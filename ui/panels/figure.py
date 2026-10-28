@@ -47,7 +47,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QFileDialog, QMessageBox, QListWidget, QScrollArea,
                              QFrame, QApplication, QRadioButton, QInputDialog,
                              QSizePolicy, QColorDialog, QListWidgetItem,
-                             QMenu, QShortcut, QSplitter)
+                             QMenu, QShortcut, QSplitter, QGridLayout)
 
 from tools.output import colormaps
 from tools.output import export
@@ -183,6 +183,7 @@ class FigurePainter:
         painter.fillRect(QRectF(0, 0, width * scale, height * scale),
                          QColor(style.background))
 
+        self._align_labels(rects, scale)
         for rect in rects:
             self._paint_panel(painter, figure.panels[rect["index"]], rect,
                               scale, rect["index"])
@@ -387,7 +388,7 @@ class FigurePainter:
         label_pt = style.label_pt or style.font_pt
         painter.save()
         painter.setClipRect(box)
-        paint_scene(panel.data.scene, painter, box,
+        drawn = paint_scene(panel.data.scene, painter, box,
                     font=self._font(tick_pt, scale),
                     title_font=self._font(label_pt, scale),
                     line_px=max(pt_to_mm(style.axis_width_pt) * scale, 0.5),
@@ -404,7 +405,17 @@ class FigurePainter:
                               box.top() - metrics.descent(), panel.title,
                               label_pt, scale, style.axis_color, anchor="center")
         if panel.colorbar:
-            self._draw_colorbar(painter, panel, None, box, scale, levels)
+            # against the cube as drawn, not the whole frame round it: as
+            # tall as the cube beside it, as wide as the cube under the frame
+            # (below the cube's own axis labels)
+            against = box
+            if drawn is not None:
+                drawn = drawn.intersected(box)
+                if getattr(panel, "colorbar_position", "right") == "below":
+                    against = QRectF(drawn.left(), box.top(), drawn.width(), box.height())
+                else:
+                    against = QRectF(box.left(), drawn.top(), box.width(), drawn.height())
+            self._draw_colorbar(painter, panel, None, against, scale, levels)
         self._draw_panel_label(painter, panel, box, scale)
 
     #: no raster wider or taller than this, whatever the dpi asks for
@@ -823,6 +834,8 @@ class FigurePainter:
 
     def _draw_colorbar(self, painter, panel, rect, box, scale, levels):
         style = self.figure.style
+        if getattr(panel, "colorbar_position", "right") == "below":
+            return self._draw_colorbar_below(painter, panel, box, scale, levels)
         tick_pt = style.tick_pt or style.font_pt
         left = box.right() + style.colorbar_gap_mm * scale
         width = style.colorbar_mm * scale
@@ -871,6 +884,59 @@ class FigurePainter:
                 style.label_pt or style.font_pt, scale, style.axis_color,
                 anchor="center", rotate=-90.0)
 
+    def _colorbar_column(self, panel, length: int = 256) -> QImage:
+        """The colour map as an image ``length`` px long, low to high."""
+        try:
+            lut = np.asarray(colormaps.get_lut(panel.colormap, flip=panel.flip))
+        except Exception:
+            lut = np.asarray(colormaps.get_lut("gray"))
+        ramp = np.linspace(0.0, 1.0, length)
+        if panel.gamma and panel.gamma != 1.0:
+            ramp = ramp ** panel.gamma
+        index = np.rint(ramp * (lut.shape[0] - 1)).astype(np.intp)
+        row = np.empty((1, length, 4), dtype=np.uint8)
+        row[..., :3] = lut[index][None, :, :3]
+        row[..., 3] = 255
+        buffer = np.ascontiguousarray(row)
+        return QImage(buffer.data, length, 1, 4 * length,
+                      QImage.Format_RGBA8888).copy()
+
+    def _draw_colorbar_below(self, painter, panel, box, scale, levels):
+        """A lying colour bar under the panel -- under its tick labels and
+        axis title when it has them -- centred, ``colorbar_length`` of the
+        panel's width, its ends (or its levels) at either side."""
+        style = self.figure.style
+        tick_pt = style.tick_pt or style.font_pt
+        label_pt = style.label_pt or style.font_pt
+        below = 0.8 * scale
+        if panel.data.is_plot() and panel.x_labels:
+            below += (1.3 * pt_to_mm(tick_pt) + 1.6 * pt_to_mm(label_pt)) * scale
+        fraction = float(np.clip(getattr(panel, "colorbar_length", 1.0) or 1.0, 0.1, 1.0))
+        width = fraction * box.width()
+        strip = QRectF(box.center().x() - width / 2, box.bottom() + below, width,
+                       style.colorbar_mm * scale)
+        painter.drawImage(strip, self._colorbar_column(panel))
+        painter.setPen(self._pen(style.axis_color, style.axis_width_pt, scale))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(strip)
+        ends = getattr(panel, "colorbar_ends", "values")
+        if ends != "none":
+            lo, hi = levels
+            low, high = (("Low", "High") if ends == "high-low"
+                         else (f"{lo:.4g}", f"{hi:.4g}"))
+            gap = 0.6 * pt_to_mm(tick_pt) * scale
+            baseline = strip.center().y() + 0.35 * pt_to_mm(tick_pt) * scale
+            self._draw_markup(painter, strip.left() - gap, baseline, low, tick_pt,
+                              scale, style.axis_color, anchor="right")
+            self._draw_markup(painter, strip.right() + gap, baseline, high, tick_pt,
+                              scale, style.axis_color, anchor="left")
+        if panel.colorbar_label:
+            metrics = QFontMetricsF(self._font(label_pt, scale))
+            self._draw_markup(painter, strip.center().x(),
+                              strip.bottom() + 1.1 * metrics.ascent(),
+                              panel.colorbar_label, label_pt, scale,
+                              style.axis_color, anchor="center")
+
     def _draw_panel_label(self, painter, panel, box, scale):
         style = self.figure.style
         if not panel.label:
@@ -901,9 +967,58 @@ class FigurePainter:
             y = box.top() + margin + text_h if inside else box.top() - margin - above
         else:
             y = box.bottom() - margin if inside else box.bottom() + margin + text_h
+        aligned = getattr(self, "_label_at", {}).get(id(panel))
+        if aligned is not None and not inside:
+            x = aligned[0] if aligned[0] is not None else x
+            y = aligned[1] if aligned[1] is not None else y
         color = style.panel_label_color if inside else style.axis_color
         self._draw_markup(painter, x, y, panel.label, size, scale, color,
                           anchor=anchor, bold=style.panel_label_bold)
+
+    def _natural_label_point(self, panel, box, scale):
+        """Where :meth:`_draw_panel_label` puts a letter on its own (outside,
+        top left): ``(x, y)`` in device units."""
+        style = self.figure.style
+        margin = 0.05 * min(box.width(), box.height())
+        label_mm = pt_to_mm(style.label_pt or style.font_pt)
+        tick_mm = pt_to_mm(style.tick_pt or style.font_pt)
+        above = 0.0
+        if panel.title:
+            above += 1.4 * label_mm * scale
+        if panel.top_axis is not None and panel.top_axis.enabled:
+            above += (1.1 * tick_mm + 1.35 * label_mm) * scale
+        return box.left(), box.top() - margin - above
+
+    def _align_labels(self, rects, scale):
+        """The letters of a row of panels at one height (the highest any of
+        them needs), and of a column at one left edge -- so (a), (b), (c)
+        line up however the panels' titles and axes differ."""
+        self._label_at = {}
+        style = self.figure.style
+        if (not getattr(style, "panel_label_aligned", True) or style.panel_label_inside
+                or "top" not in style.panel_label_position
+                or "left" not in style.panel_label_position):
+            return
+        boxes, natural = {}, {}
+        for rect in rects:
+            panel = self.figure.panels[rect["index"]]
+            if not panel.label or panel.role == "inset":
+                continue
+            boxes[id(panel)] = (rect["x"], rect["y"], rect["w"], rect["h"])
+            box = QRectF(rect["x"] * scale, rect["y"] * scale,
+                         rect["w"] * scale, rect["h"] * scale)
+            natural[id(panel)] = self._natural_label_point(panel, box, scale)
+        rows, columns = Figure.label_groups(boxes)
+        point = {key: [None, None] for key in boxes}
+        for row in rows:
+            y = min(natural[key][1] for key in row)
+            for key in row:
+                point[key][1] = y
+        for column in columns:
+            x = min(natural[key][0] for key in column)
+            for key in column:
+                point[key][0] = x
+        self._label_at = {key: tuple(value) for key, value in point.items()}
 
     # -- outputs -------------------------------------------------------------
     def to_image(self, dpi: float = None, selection: int = None) -> QImage:
@@ -1038,6 +1153,8 @@ class FigureCanvas(QWidget):
         self.painter = FigurePainter(figure)
         self.painter.placeholders = True
         self.selection = None          # ("panel", index) / ("shape", index)
+        #: more panels picked with Ctrl / Shift + click, for arranging
+        self.extra = []
         self.tool = "select"
         self.snap = True
         #: None fits the page to the window; otherwise screen px per mm
@@ -1082,7 +1199,15 @@ class FigureCanvas(QWidget):
             return self.figure.panels[self.selection[1]]
         return None
 
+    def selected_indices(self):
+        """Every selected panel: the one clicked first, then those added
+        with Ctrl or Shift."""
+        first = [self.selection[1]] if self.selection and self.selection[0] == "panel" else []
+        return first + [i for i in self.extra if i not in first
+                        and 0 <= i < len(self.figure.panels)]
+
     def select(self, what, index=None):
+        self.extra = []
         self.selection = None if what is None else (what, int(index))
         self.update()
         self.selectionChanged.emit()
@@ -1181,11 +1306,11 @@ class FigureCanvas(QWidget):
             painter.drawRect(self.painter.text_box(shape, self._scale)
                              .translated(*self._origin).adjusted(-2, -2, 2, 2))
         elif shape is None:
-            panel = self.selected_panel()
-            frame = self._frame_of(panel)
-            if frame is not None:
-                x, y, w, h = frame
-                painter.drawRect(QRectF(self.to_px(x, y), self.to_px(x + w, y + h)))
+            for index in self.selected_indices():
+                frame = self._frame_of(self.figure.panels[index])
+                if frame is not None:
+                    x, y, w, h = frame
+                    painter.drawRect(QRectF(self.to_px(x, y), self.to_px(x + w, y + h)))
         painter.setPen(QPen(QColor("#1d7fa0"), 1.0))
         painter.setBrush(QBrush(QColor("#ffffff")))
         for _name, point in self._handles():
@@ -1430,6 +1555,18 @@ class FigureCanvas(QWidget):
             found = self.item_at(event.pos())
             if found is None:
                 self.select(None)
+                return
+            adding = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)
+            if (adding and found[0] == "panel" and self.selection
+                    and self.selection[0] == "panel"):
+                # Ctrl / Shift: add the panel to the selection (or take it out)
+                index = int(found[1])
+                if index in self.extra:
+                    self.extra.remove(index)
+                elif index != self.selection[1]:
+                    self.extra.append(index)
+                self.update()
+                self.selectionChanged.emit()
                 return
             if found[0] != "handle":
                 self.select(*found)
@@ -2271,6 +2408,7 @@ class FigureToolsDialog(QDialog):
         self.figure_title.setText(self.figure.title)
         self.label_position.setCurrentText(style.panel_label_position)
         self.label_inside.setChecked(style.panel_label_inside)
+        self.label_aligned.setChecked(getattr(style, "panel_label_aligned", True))
         self.label_bold.setChecked(style.panel_label_bold)
         self.label_color.set_color(style.panel_label_color)
 
@@ -2464,6 +2602,14 @@ class FigureToolsDialog(QDialog):
         self.label_inside.toggled.connect(
             lambda v: self._set_style("panel_label_inside", bool(v)))
         inner.addRow("", self.label_inside)
+        self.label_aligned = QCheckBox("In line: one height per row, one edge per column")
+        self.label_aligned.setToolTip(
+            "Letters of panels side by side sit at the same height, of panels "
+            "one above another at the same left edge, whatever titles or axes "
+            "each panel has.")
+        self.label_aligned.toggled.connect(
+            lambda v: self._set_style("panel_label_aligned", bool(v)))
+        inner.addRow("", self.label_aligned)
         self.label_bold = QCheckBox("Bold")
         self.label_bold.toggled.connect(
             lambda v: self._set_style("panel_label_bold", bool(v)))
@@ -2541,6 +2687,13 @@ class FigureToolsDialog(QDialog):
         self.cbar_length.valueChanged.connect(
             lambda v: self.apply(lambda p: setattr(p, "colorbar_length", v / 100.0)))
         inner.addRow("Length (%)", self.cbar_length)
+        self.cbar_position = QComboBox()
+        self.cbar_position.addItems(["right", "below"])
+        self.cbar_position.setToolTip("Upright beside the panel, or lying "
+                                      "under it (centred).")
+        self.cbar_position.currentTextChanged.connect(
+            lambda v: self.apply(lambda p: setattr(p, "colorbar_position", v)))
+        inner.addRow("Position", self.cbar_position)
         self.cbar_width = spin(self.figure.style.colorbar_mm, 0.5, 20, 1, 0.2, "")
         self.cbar_width.valueChanged.connect(
             lambda v: self._set_style("colorbar_mm", v))
@@ -2896,6 +3049,7 @@ class FigureToolsDialog(QDialog):
         self.cbar_label.setText(panel.colorbar_label)
         self.cbar_ends.setCurrentText(getattr(panel, "colorbar_ends", "values"))
         self.cbar_length.setValue(100.0 * float(getattr(panel, "colorbar_length", 1.0)))
+        self.cbar_position.setCurrentText(getattr(panel, "colorbar_position", "right"))
         bar = panel.scale_bar
         self.bar_box.setChecked(bar is not None)
         if bar is not None:
@@ -3499,6 +3653,29 @@ class FigureWindow(QMainWindow):
         letter.setStyleSheet("text-align: left; padding: 4px 8px;")
         letter.clicked.connect(self.reletter)
         column.addWidget(letter)
+        column.addSpacing(8)
+        column.addWidget(QLabel("<b>Arrange</b> <i>(Ctrl+click: several)</i>"))
+        grid = QGridLayout()
+        grid.setSpacing(2)
+        for n, (text, operation, tip) in enumerate((
+                ("⇤ Left", "left", "Line up the selected panels' left edges."),
+                ("Right ⇥", "right", "Line up their right edges."),
+                ("⤒ Top", "top", "Line up their top edges."),
+                ("Bottom ⤓", "bottom", "Line up their bottom edges."),
+                ("↔ Centres", "hcenter", "Their centres on one vertical line "
+                                          "(the first-selected panel's)."),
+                ("↕ Centres", "vcenter", "Their centres on one horizontal line."),
+                ("Space ↔", "space-x", "Equal gaps between them, left to right "
+                                       "(three or more)."),
+                ("Space ↕", "space-y", "Equal gaps between them, top to bottom."),
+                ("Same width", "width", "The first-selected panel's width for all."),
+                ("Same height", "height", "Its height for all."))):
+            button = QPushButton(text)
+            button.setToolTip(tip)
+            button.setStyleSheet("padding: 3px 4px;")
+            button.clicked.connect(lambda _c, o=operation: self.arrange(o))
+            grid.addWidget(button, n // 2, n % 2)
+        column.addLayout(grid)
         column.addStretch(1)
         palette.setMinimumWidth(150)
         palette.setMaximumWidth(220)
@@ -3854,6 +4031,25 @@ class FigureWindow(QMainWindow):
         self.statusBar().showMessage("Wrote " + ", ".join(
             os.path.basename(p) for p in written))
         return written
+
+    def arrange(self, operation: str, indices=None):
+        """Align, space or size the selected panels (or ``indices``)."""
+        indices = list(indices if indices is not None else self.canvas.selected_indices())
+        if len(indices) < 2:
+            self.statusBar().showMessage("Select two or more panels: click one, "
+                                         "then Ctrl+click the others")
+            return False
+        self.remember("arrange", force=True)
+        if operation in ("left", "right", "top", "bottom", "hcenter", "vcenter"):
+            self.figure.align_panels(indices, operation)
+        elif operation in ("space-x", "space-y"):
+            self.figure.distribute_panels(indices, operation[-1])
+        elif operation in ("width", "height"):
+            self.figure.match_size(indices, operation)
+        else:
+            raise ValueError(f"unknown arrangement {operation!r}")
+        self.refresh()
+        return True
 
     # -- the program's own figure file ---------------------------------------
     def save_file(self, path=None, *, with_data: bool = True):
