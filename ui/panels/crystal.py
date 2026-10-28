@@ -28,12 +28,14 @@ import os
 
 import numpy as np
 from PyQt5.QtCore import QPointF, Qt, pyqtSignal
-from PyQt5.QtGui import (QBrush, QColor, QImage, QPainter, QPen, QPolygonF,
+from PyQt5.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage,
+                         QPainter, QPainterPath, QPen, QPolygonF,
                          QRadialGradient)
 from PyQt5.QtWidgets import (QAbstractItemView, QCheckBox, QColorDialog,
                              QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
                              QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
-                             QInputDialog, QLabel, QListWidget, QPushButton,
+                             QInputDialog, QLabel, QLineEdit, QListWidget,
+                             QPushButton,
                              QRadioButton, QSlider, QSpinBox, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -76,6 +78,19 @@ class CrystalView(QWidget):
         self.camera = Camera(azimuth=-35.0, elevation=28.0)
         self.zoom = 1.0
         self._drag = None
+        #: coordination polyhedra: centre element -> {"colour", "alpha"}
+        self.polyhedra = {}
+        #: "real" (the crystal) or "zone" (its Brillouin zone)
+        self.mode = "real"
+        #: planes in the zone: [{"height", "colour", "alpha", "label"}],
+        #: height along the plane normal (Å⁻¹) through the zone centre
+        self.zone_planes = []
+        self.zone_normal = (0.0, 0.0, 1.0)
+        #: the labelled path drawn in the zone, e.g. ["Γ", "M", "K", "Γ"]
+        self.zone_path = []
+        self.zone_labels = True
+        self.zone_axes = True
+        self.font_px = 14.0
 
     # -- state -------------------------------------------------------------
     def set_structure(self, structure):
@@ -98,11 +113,15 @@ class CrystalView(QWidget):
     def _items(self):
         """Every primitive, in world coordinates: ("atom", centre, radius,
         style, marked), ("line", p, q, colour, width), ("tri", a, b, c,
-        colour)."""
+        colour, alpha), ("text", point, text, colour) -- the texts drawn
+        last, on top. An atom or line may carry a sixth entry, a depth
+        bias towards the viewer."""
         items = []
         st = self.structure
         if st is None:
             return items, np.zeros((1, 3))
+        if self.mode == "zone":
+            return self._zone_items()
         atoms, xyz = S.cartesian_atoms(st, self.repeats)
         corners = np.array([p for edge in S.box_edges(st, self.repeats)
                             for p in edge])
@@ -143,6 +162,20 @@ class CrystalView(QWidget):
                             "colour", "#888888"))
                         colour.setAlphaF(min(faded[i], faded[j]))
                         items.append(("line", end, mid, colour, 4.0))
+        for element, look in self.polyhedra.items():
+            for _centre, vertices, triangles in S.coordination_polyhedra(
+                    st, element, self.repeats, self.bond_factor):
+                edges = set()
+                for tri in triangles:
+                    a, b, c = vertices[tri]
+                    for sub in _subdivide((a, b, c), 1):
+                        items.append(("tri", *sub, look["colour"], look["alpha"]))
+                    for i, j in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+                        edges.add((min(i, j), max(i, j)))
+                corners = np.vstack([corners, vertices])
+                edge_colour = QColor(look["colour"]).darker(140)
+                for i, j in edges:
+                    items.append(("line", vertices[i], vertices[j], edge_colour, 1.0))
         if self.show_cell:
             for p, q in S.box_edges(st, self.repeats):
                 for t0, t1 in zip(np.linspace(0, 1, 9)[:-1], np.linspace(0, 1, 9)[1:]):
@@ -159,6 +192,76 @@ class CrystalView(QWidget):
                                       self.plane["alpha"]))
                     items.append(("line", a, b, self.plane["colour"], 2.0))
         return items, corners
+
+    def zone(self):
+        """``(params, b, zone, points)`` of the structure's Brillouin zone:
+        the primitive reciprocal vectors, the Wigner-Seitz cell and the
+        labelled high-symmetry points."""
+        from tools.crystal.bz3d import wigner_seitz_cell
+        from tools.crystal.highsym import high_symmetry_points
+        from tools.crystal.lattice import primitive_vectors, reciprocal_vectors
+
+        params = self.structure.lattice_params()
+        b = reciprocal_vectors(primitive_vectors(params))
+        return params, b, wigner_seitz_cell(b), high_symmetry_points(params)
+
+    def _zone_items(self):
+        from tools.crystal.bz3d import cut_points_3d, plane_cut
+
+        items = []
+        _params, b, zone, points = self.zone()
+        lift = 0.03 * float(np.linalg.norm(b[0]))
+        edges = set()
+        for loop in zone.faces:
+            for p, q in zip(loop[:-1], loop[1:]):
+                key = tuple(sorted((tuple(np.round(p, 6)), tuple(np.round(q, 6)))))
+                edges.add(key)
+        for p, q in edges:
+            p, q = np.array(p), np.array(q)
+            for t0, t1 in zip(np.linspace(0, 1, 7)[:-1], np.linspace(0, 1, 7)[1:]):
+                items.append(("line", p + t0 * (q - p), p + t1 * (q - p),
+                              "#222222", 1.2, lift))
+        normal = np.asarray(self.zone_normal, dtype=float)
+        normal = normal / (np.linalg.norm(normal) or 1.0)
+        for plane in self.zone_planes:
+            u, v = plane_cut(zone.faces, normal, normal * plane["height"])
+            if u is None:
+                continue
+            outline = cut_points_3d(u[:-1], v[:-1], normal, normal * plane["height"])
+            centre = outline.mean(axis=0)
+            for k in range(len(outline)):
+                a, c = outline[k], outline[(k + 1) % len(outline)]
+                for tri in _subdivide((centre, a, c), 2):
+                    # the planes go down first: lines and points lying in
+                    # them would otherwise be cut by their triangles
+                    items.append(("tri", *tri, plane["colour"], plane["alpha"],
+                                  -1e6))
+                items.append(("line", a, c, QColor(plane["colour"]).darker(130), 1.0))
+        table = {p.label: np.asarray(p.k, dtype=float) for p in points}
+        if self.zone_path:
+            path = [table[l] for l in self.zone_path if l in table]
+            for p, q in zip(path[:-1], path[1:]):
+                for t0, t1 in zip(np.linspace(0, 1, 7)[:-1], np.linspace(0, 1, 7)[1:]):
+                    items.append(("line", p + t0 * (q - p), p + t1 * (q - p),
+                                  "#d62728", 2.0, 2 * lift))
+        if self.zone_labels:
+            for label, k in table.items():
+                items.append(("atom", k, 0.025 * float(np.linalg.norm(b[0])),
+                              {"colour": "#111111", "alpha": 1.0, "gloss": 0.0},
+                              False, 3 * lift))
+                items.append(("text", k, label, "#111111"))
+        reach = 1.35 * float(np.max(np.abs(zone.vertices)))
+        if self.zone_axes:
+            reach = 1.35 * float(np.max(np.abs(zone.vertices)))
+            for axis, name in ((0, "k_x"), (1, "k_y"), (2, "k_z")):
+                end = np.zeros(3)
+                end[axis] = reach
+                items.append(("line", np.zeros(3), end, "#555555", 1.0))
+                items.append(("text", end * 1.06, name, "#333333"))
+        frame = np.asarray(zone.vertices, dtype=float)
+        if self.zone_axes:
+            frame = np.vstack([frame, 1.4 * np.eye(3) * reach])
+        return items, frame
 
     def paint_into(self, painter: QPainter, width: int, height: int):
         painter.fillRect(0, 0, width, height, self.background)
@@ -182,33 +285,71 @@ class CrystalView(QWidget):
         def depth(point):
             return float((np.asarray(point) - centre) @ basis[2])
 
+        texts = [item for item in items if item[0] == "text"]
+        items = [item for item in items if item[0] != "text"]
         keyed = []
         for item in items:
             if item[0] == "atom":
-                keyed.append((depth(item[1]), item))
+                bias = item[5] if len(item) > 5 else 0.0
+                keyed.append((depth(item[1]) + bias, item))
             elif item[0] == "line":
-                keyed.append((depth(0.5 * (item[1] + item[2])), item))
+                # an optional sixth entry lifts a line towards the viewer, so
+                # one lying in a translucent plane is not cut into dashes
+                bias = item[5] if len(item) > 5 else 0.0
+                keyed.append((depth(0.5 * (item[1] + item[2])) + bias, item))
             else:
-                keyed.append((depth((item[1] + item[2] + item[3]) / 3), item))
+                bias = item[6] if len(item) > 6 else 0.0
+                keyed.append((depth((item[1] + item[2] + item[3]) / 3) + bias, item))
         keyed.sort(key=lambda pair: pair[0])
         painter.setRenderHint(QPainter.Antialiasing, True)
         for _d, item in keyed:
             if item[0] == "atom":
-                _k, c, r, style, marked = item
+                _k, c, r, style, marked = item[:5]
                 self._paint_atom(painter, screen(c), r * scale, style, marked)
             elif item[0] == "line":
-                _k, p, q, colour, w = item
+                _k, p, q, colour, w = item[:5]
                 pen = QPen(QColor(colour), w * max(1.0, scale / 60.0))
                 pen.setCapStyle(Qt.RoundCap)
                 painter.setPen(pen)
                 painter.drawLine(screen(p), screen(q))
             else:
-                _k, a, b, c, colour, alpha = item
+                _k, a, b, c, colour, alpha = item[:6]
                 fill = QColor(colour)
                 fill.setAlphaF(float(alpha))
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QBrush(fill))
                 painter.drawPolygon(QPolygonF([screen(a), screen(b), screen(c)]))
+        if texts:
+            font = painter.font()
+            font.setPixelSize(max(8, int(round(self.font_px * min(width, height) / 600))))
+            font.setItalic(False)
+            painter.setFont(font)
+            for _k, point, text, colour in texts:
+                at = screen(point)
+                painter.setPen(QColor(colour))
+                self._draw_label(painter, at, text)
+
+    @staticmethod
+    def _draw_label(painter, at: QPointF, text: str):
+        """A label beside a point, with "k_x"-style subscripts."""
+        from tools.output.figure import parse_markup
+
+        x = at.x() + 0.35 * painter.font().pixelSize()
+        y = at.y() - 0.35 * painter.font().pixelSize()
+        base = painter.font()
+        colour = painter.pen().color()
+        outline = QPainterPath()
+        for run, kind in parse_markup(text):
+            font = QFont(base)
+            font.setPixelSize(max(6, int(base.pixelSize() * (0.7 if kind != "base" else 1.0))))
+            offset = {"sub": 0.3, "super": -0.45}.get(kind, 0.0) * base.pixelSize()
+            outline.addText(QPointF(x, y + offset), font, run)
+            x += QFontMetricsF(font).horizontalAdvance(run)
+        # a white halo keeps the label legible over lines and planes
+        halo = QPen(QColor(255, 255, 255, 220), max(2.0, base.pixelSize() / 6))
+        halo.setJoinStyle(Qt.RoundJoin)
+        painter.strokePath(outline, halo)
+        painter.fillPath(outline, colour)
 
     @staticmethod
     def _paint_atom(painter, centre: QPointF, radius: float, style, marked):
@@ -322,10 +463,12 @@ class CrystalDialog(QDialog):
         self.view = CrystalView(self)
         layout = QHBoxLayout(self)
         self.stepper = Stepper([self._step_structure(), self._step_look(),
-                                self._step_plane(), self._step_export()], self,
+                                self._step_plane(), self._step_zone(),
+                                self._step_export()], self,
                                finish_text="Close", show_index=False)
         self.stepper.setMinimumWidth(470)
         self.stepper.finished.connect(self.accept)
+        self.stepper.stepChanged.connect(self._step_shown)
         layout.addWidget(self.stepper, 2)
         right = QVBoxLayout()
         right.addWidget(self.view, 1)
@@ -588,6 +731,24 @@ class CrystalDialog(QDialog):
         self.background_combo.addItems(["White", "Black", "Transparent"])
         self.background_combo.currentIndexChanged.connect(self._look_changed)
         form.addRow("Background", self.background_combo)
+        poly = QHBoxLayout()
+        self.poly_combo = QComboBox()
+        self.poly_combo.setToolTip("Draw the coordination polyhedron around "
+                                   "every atom of this element (its bonded "
+                                   "neighbours as corners) -- the CuS4 "
+                                   "tetrahedra, the TiSe6 octahedra.")
+        self.poly_combo.currentIndexChanged.connect(self._look_changed)
+        poly.addWidget(self.poly_combo, 1)
+        self.poly_colour = _ColourButton("#8fc3e8")
+        self.poly_colour.colourChanged.connect(self._look_changed)
+        poly.addWidget(self.poly_colour)
+        self.poly_alpha = QSpinBox()
+        self.poly_alpha.setRange(0, 100)
+        self.poly_alpha.setValue(45)
+        self.poly_alpha.setSuffix(" % transparent")
+        self.poly_alpha.valueChanged.connect(self._look_changed)
+        poly.addWidget(self.poly_alpha)
+        form.addRow("Polyhedra around", poly)
         column.addLayout(form)
         self.style_table = QTableWidget(0, 5)
         self.style_table.setHorizontalHeaderLabels(
@@ -596,7 +757,9 @@ class CrystalDialog(QDialog):
         self.style_table.setSelectionMode(QAbstractItemView.NoSelection)
         column.addWidget(self.style_table, 1)
         text = ("How it looks. Repeat the cell along a, b and c, set the "
-                "atoms' overall size, and for each element its "
+                "atoms' overall size, choose an element to draw "
+                "<b>coordination polyhedra</b> around (its bonded neighbours "
+                "as corners), and for each element its "
                 "<b>colour</b>, <b>size</b>, <b>transparency</b> and "
                 "<b>gloss</b> (0 % a matt ball, 100 % a shiny one). Drag the "
                 "picture to turn it, scroll to zoom; the buttons under it "
@@ -606,6 +769,13 @@ class CrystalDialog(QDialog):
     def _fill_styles(self):
         table = self.style_table
         elements = self.structure.elements() if self.structure else []
+        current = self.poly_combo.currentText()
+        self.poly_combo.blockSignals(True)
+        self.poly_combo.clear()
+        self.poly_combo.addItems(["(none)"] + elements)
+        if current in elements:
+            self.poly_combo.setCurrentText(current)
+        self.poly_combo.blockSignals(False)
         table.setRowCount(len(elements))
         for row, element in enumerate(elements):
             style = self.view.styles.setdefault(element, {
@@ -649,6 +819,10 @@ class CrystalDialog(QDialog):
             ("white", "black", "transparent")[self.background_combo.currentIndex()])
         if self.background_combo.currentIndex() == 2:
             self.view.background = QColor(0, 0, 0, 0)
+        centre = self.poly_combo.currentText()
+        self.view.polyhedra = ({} if centre in ("", "(none)") else {
+            centre: {"colour": self.poly_colour.colour,
+                     "alpha": 1.0 - self.poly_alpha.value() / 100.0}})
         if hasattr(self, "plane_box"):
             self._plane_changed()
         self.view.update()
@@ -777,7 +951,113 @@ class CrystalDialog(QDialog):
         self.view.view_along(self.structure.vectors()[which])
 
     # ==================================================================
-    # Step 4: export
+    # Step 4: the Brillouin zone
+    # ==================================================================
+    def _step_zone(self):
+        page = QWidget()
+        form = QFormLayout(page)
+        self.zone_label = QLabel("")
+        self.zone_label.setWordWrap(True)
+        form.addRow(self.zone_label)
+        self.path_edit = QLineEdit("")
+        self.path_edit.setPlaceholderText("e.g. Γ-X-M-Γ-Z-R-A-Z  (G for Γ)")
+        self.path_edit.setToolTip("A path through the labelled points, drawn "
+                                  "in red -- the band-structure path.")
+        self.path_edit.editingFinished.connect(self._zone_changed)
+        form.addRow("Path", self.path_edit)
+        self.plane_rows = []
+        for title, colour, fraction in (("Plane through Γ", "#9ad29a", 0.0),
+                                        ("Plane at the zone top", "#9bb8e8", 0.5)):
+            row = QHBoxLayout()
+            box = QCheckBox(title)
+            box.setChecked(True)
+            box.toggled.connect(self._zone_changed)
+            row.addWidget(box)
+            height = QDoubleSpinBox()
+            height.setRange(-1.0, 1.0)
+            height.setSingleStep(0.05)
+            height.setDecimals(3)
+            height.setValue(fraction)
+            height.setToolTip("Height along the normal, in units of the "
+                              "zone's reciprocal vector along it (0.5 = the "
+                              "zone boundary).")
+            height.valueChanged.connect(self._zone_changed)
+            row.addWidget(height)
+            colour_button = _ColourButton(colour)
+            colour_button.colourChanged.connect(self._zone_changed)
+            row.addWidget(colour_button)
+            form.addRow(row)
+            self.plane_rows.append((box, height, colour_button))
+        normal = QHBoxLayout()
+        self.zone_normal_boxes = []
+        for name, value in (("h", 0), ("k", 0), ("l", 1)):
+            box = QSpinBox()
+            box.setRange(-9, 9)
+            box.setValue(value)
+            box.valueChanged.connect(self._zone_changed)
+            normal.addWidget(QLabel(name))
+            normal.addWidget(box)
+            self.zone_normal_boxes.append(box)
+        form.addRow("Planes normal to", normal)
+        self.zone_labels_box = QCheckBox("Label the high-symmetry points")
+        self.zone_labels_box.setChecked(True)
+        self.zone_axes_box = QCheckBox("Draw the k_x, k_y, k_z axes")
+        self.zone_axes_box.setChecked(True)
+        for box in (self.zone_labels_box, self.zone_axes_box):
+            box.toggled.connect(self._zone_changed)
+            form.addRow(box)
+        text = ("The crystal's <b>Brillouin zone</b>, from the cell and the "
+                "space group (for a CIF, its own; typed in, the one set in "
+                "step 1): its labelled high-symmetry points, the "
+                "<b>planes</b> a measurement cuts (through Γ and at the zone "
+                "top, coloured), and a <b>path</b> through the points. The "
+                "picture beside it shows the zone while this step is open; "
+                "step 5 exports either picture.")
+        return Step("Brillouin zone", text, page, enter=self._zone_changed)
+
+    def _step_shown(self, index):
+        self.view.mode = "zone" if index == 3 else (
+            self.view.mode if index == 4 else "real")
+        if index == 4 and hasattr(self, "export_what"):
+            self.view.mode = "zone" if self.export_what.currentIndex() == 1 else "real"
+        self.view.update()
+
+    def _zone_changed(self, *_):
+        if self.structure is None:
+            return
+        from tools.crystal.bands import parse_path
+        from tools.crystal.lattice import reciprocal_vectors
+
+        params = self.structure.lattice_params()
+        hkl = tuple(box.value() for box in self.zone_normal_boxes)
+        try:
+            g = np.asarray(hkl, dtype=float) @ reciprocal_vectors(
+                self.structure.vectors())
+            length = float(np.linalg.norm(g))
+            normal = g / length
+        except (ValueError, ZeroDivisionError, FloatingPointError):
+            return
+        self.view.zone_normal = tuple(normal)
+        self.view.zone_planes = [
+            {"height": height.value() * length, "colour": colour.colour,
+             "alpha": 0.45}
+            for box, height, colour in self.plane_rows if box.isChecked()]
+        self.view.zone_path = [l for l in parse_path(self.path_edit.text())
+                               if l != "|"]
+        self.view.zone_labels = self.zone_labels_box.isChecked()
+        self.view.zone_axes = self.zone_axes_box.isChecked()
+        try:
+            _p, _b, _zone, points = self.view.zone()
+            names = ", ".join(p.label for p in points)
+            self.zone_label.setText(
+                f"Space group {params.space_group or '(none: primitive)'}; "
+                f"labelled points: {names}.")
+        except Exception as exc:                              # noqa: BLE001
+            self.zone_label.setText(f"No zone: {exc}")
+        self.view.update()
+
+    # ==================================================================
+    # Step 5: export
     # ==================================================================
     def _step_export(self):
         page = QWidget()
@@ -791,6 +1071,10 @@ class CrystalDialog(QDialog):
             box.setSingleStep(100)
             size.addWidget(box)
         form.addRow("Size (px)", size)
+        self.export_what = QComboBox()
+        self.export_what.addItems(["The crystal", "The Brillouin zone"])
+        self.export_what.currentIndexChanged.connect(lambda *_: self._step_shown(4))
+        form.addRow("Picture of", self.export_what)
         save = QPushButton("Save picture...")
         save.clicked.connect(lambda: self.save_picture())
         form.addRow(save)
@@ -807,7 +1091,7 @@ class CrystalDialog(QDialog):
                 "writes a PNG (transparent if the background is). <b>To "
                 "figure composer</b> puts it on a figure page beside your "
                 "data, where it is labelled and arranged like any panel.")
-        return Step("Export", text, page)
+        return Step("Export", text, page, enter=lambda: self._step_shown(4))
 
     def picture(self):
         return self.view.render_image(self.width_box.value(),

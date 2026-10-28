@@ -518,6 +518,15 @@ TOOLS = {
                 "file. Draw a cleavage plane (hkl) and slide it through the "
                 "cell; atoms' colours, gloss, transparency and size are "
                 "yours to set. The picture goes to the figure composer."),
+    "bands": ("Calculated bands...",
+              "A band structure from the theory side -- a .bxsf band grid "
+              "(Wien2k, QE, VASP, Wannier90), a Wannier90 _hr.dat "
+              "Hamiltonian, or bands along a path (_band.dat, "
+              ".spaghetti_ene, VASP EIGENVAL) -- along a high-symmetry path "
+              "over the measurement assembled from the selected k-maps, and "
+              "over a cut or a map where it was really measured (its k_z). "
+              "Fits the renormalisation Z and the shift; panels go to the "
+              "figure composer. Select k-maps, kz maps in k and cuts in k."),
     "bz": ("Brillouin zone...",
            "Overlay a Brillouin zone (or a moire zone) on a map in momentum "
            "-- a k-map or a converted kz map. Once plotted, the zone stays "
@@ -546,10 +555,11 @@ TOOL_SECTIONS = (
                                   "projection3d")),
     )),
     # What is worked out rather than measured: the crystal itself, band
-    # models fitted to the data, and (to come) calculated band structures.
+    # models fitted to the data, and calculated band structures.
     ("Calculation", (
         ("Crystal \u2014 real space", ("lattice",)),
         ("Band models \u2014 fitted to the data", ("tbfit",)),
+        ("Band structures \u2014 calculated", ("bands",)),
     )),
 )
 

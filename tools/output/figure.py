@@ -322,6 +322,9 @@ class Panel:
     label: str = ""                # "(a)"
     colorbar: bool = False
     colorbar_label: str = ""
+    #: what the colour bar's ends say: "values" (the levels), "high-low"
+    #: (the words, as a figure of raw intensity usually has), or "none"
+    colorbar_ends: str = "values"
     lines: list = field(default_factory=list)
     texts: list = field(default_factory=list)
     arrows: list = field(default_factory=list)
@@ -344,6 +347,9 @@ class Panel:
     y_labels: bool = True
     #: this panel's font size; 0 = the figure's
     font_pt: float = 0.0
+    #: named ticks along x instead of numbers: ``[(value, text), ...]`` --
+    #: the high-symmetry points of a band-structure path (Γ, M, K, ...)
+    x_tick_labels: list = field(default_factory=list)
     uid: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
 
     # -- what the painter asks for ---------------------------------------

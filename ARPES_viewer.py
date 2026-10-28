@@ -620,6 +620,7 @@ def run_list_action(name):
         "tbfit": open_tight_binding,
         "detcorr": open_detector_corrections,
         "lattice": open_crystal_structure,
+        "bands": open_calculated_bands,
         "log": show_operations_log,
         "explogformat": open_exp_log_format,
         "explog": record_exp_log,
@@ -2034,6 +2035,19 @@ def open_detector_corrections():
         QMessageBox.information(win, "Detector corrections", str(exc))
         return None
     return _show_tool(dialog, datasets)
+
+
+def open_calculated_bands():
+    """A calculated band structure against the selected maps and cuts in
+    momentum (ui.panels.bands)."""
+    from ui.panels.bands import BandsDialog
+
+    datasets = _load_selection("Calculated bands", ("k_map", "kz_map_k", "cut")) \
+        if selected_keys() else []
+    if datasets is None:
+        return None
+    return _show_tool(BandsDialog(datasets, win, existing_names=listed_names),
+                      datasets)
 
 
 def open_crystal_structure():

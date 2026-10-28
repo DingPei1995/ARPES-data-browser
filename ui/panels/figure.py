@@ -469,6 +469,12 @@ class FigurePainter:
 
         target_x, target_y = figure.tick_targets(rect["w"], rect["h"])
         x_ticks, x_step = self._ticks(x0, x1, style.x_tick_step, target_x)
+        named = [(float(v), str(t)) for v, t in (panel.x_tick_labels or ())]
+        if named:
+            # A band-structure path: one tick per labelled point, no
+            # numbers and no minor ticks between them.
+            x_ticks = np.array([v for v, _t in named])
+            x_step = 0.0
         y_ticks, y_step = self._ticks(y0, y1, style.y_tick_step, target_y)
         x_fmt, y_fmt = export.tick_format(x_step), export.tick_format(y_step)
 
@@ -502,7 +508,8 @@ class FigurePainter:
             sub_x = np.concatenate([x_ticks + x_step * (i + 1) / (minor + 1)
                                     for i in range(minor)]
                                    + [x_ticks - x_step * (i + 1) / (minor + 1)
-                                      for i in range(minor)]) if x_ticks.size else x_ticks
+                                      for i in range(minor)]) if (
+                x_ticks.size and not named) else np.zeros(0)
             sub_y = np.concatenate([y_ticks + y_step * (i + 1) / (minor + 1)
                                     for i in range(minor)]
                                    + [y_ticks - y_step * (i + 1) / (minor + 1)
@@ -514,8 +521,11 @@ class FigurePainter:
         outward = tick if style.tick_direction == "out" else 0.0
         if figure.shows_x_labels(index):
             baseline = box.bottom() + outward + gap + metrics.ascent()
+            names = dict(named)
             for value in x_ticks:
-                self._draw_markup(painter, px(value), baseline, x_fmt % value,
+                text = names.get(float(value), None) if named else None
+                self._draw_markup(painter, px(value), baseline,
+                                  x_fmt % value if text is None else text,
                                   tick_pt, scale, style.axis_color, anchor="center")
             label_width = self._markup_width(painter, panel.label_x(), label_pt, scale)
             self._draw_markup(painter,
@@ -773,8 +783,12 @@ class FigurePainter:
         metrics = QFontMetricsF(self._font(tick_pt, scale))
         gap = 0.3 * pt_to_mm(tick_pt) * scale
         widest = 0.0
+        ends = getattr(panel, "colorbar_ends", "values")
         for value, y in ((hi, strip.top()), (lo, strip.bottom())):
-            text = f"{value:.4g}"
+            if ends == "none":
+                continue
+            text = (("High" if value == hi else "Low") if ends == "high-low"
+                    else f"{value:.4g}")
             widest = max(widest, self._markup_width(painter, text, tick_pt, scale))
             baseline = (y + metrics.ascent() if value == hi and y == strip.top()
                         else y)
@@ -1555,7 +1569,7 @@ class FigureCanvas(QWidget):
         xs = sorted((data_x(left), data_x(left + width)))
         ys = sorted((data_y(top), data_y(top + height)))
         inset = copy.copy(host)
-        for name in ("lines", "texts", "arrows", "overlays"):
+        for name in ("lines", "texts", "arrows", "overlays", "x_tick_labels"):
             setattr(inset, name, copy.deepcopy(getattr(host, name)))
         inset.uid = uuid.uuid4().hex[:10]
         inset.role, inset.zoom_of, inset.label = "inset", host.uid, ""
@@ -2445,6 +2459,13 @@ class FigureToolsDialog(QDialog):
             lambda: self.apply(lambda p: setattr(p, "colorbar_label",
                                                  self.cbar_label.text())))
         inner.addRow("Label", self.cbar_label)
+        self.cbar_ends = QComboBox()
+        self.cbar_ends.addItems(["values", "high-low", "none"])
+        self.cbar_ends.setToolTip("What the bar's two ends say: the levels, "
+                                  "the words High and Low, or nothing.")
+        self.cbar_ends.currentTextChanged.connect(
+            lambda v: self.apply(lambda p: setattr(p, "colorbar_ends", v)))
+        inner.addRow("Ends", self.cbar_ends)
         self.cbar_width = spin(self.figure.style.colorbar_mm, 0.5, 20, 1, 0.2, "")
         self.cbar_width.valueChanged.connect(
             lambda v: self._set_style("colorbar_mm", v))
@@ -2728,6 +2749,7 @@ class FigureToolsDialog(QDialog):
         self.smooth_box.setChecked(panel.smooth)
         self.cbar_box.setChecked(panel.colorbar)
         self.cbar_label.setText(panel.colorbar_label)
+        self.cbar_ends.setCurrentText(getattr(panel, "colorbar_ends", "values"))
         bar = panel.scale_bar
         self.bar_box.setChecked(bar is not None)
         if bar is not None:

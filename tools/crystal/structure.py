@@ -35,7 +35,8 @@ import numpy as np
 __all__ = ["Atom", "Structure", "parse_cif", "read_cif", "parse_symop",
            "expand", "lattice_point_atoms", "cartesian_atoms", "plane_normal",
            "plane_outline", "atomic_layers", "element_of", "ELEMENTS",
-           "covalent_radius", "element_colour"]
+           "covalent_radius", "element_colour", "space_group_number",
+           "coordination_polyhedra"]
 
 #: Element -> (covalent radius in Å, colour) -- radii after Cordero et al.,
 #: Dalton Trans. 2008; colours the usual Jmol/CPK scheme.
@@ -116,6 +117,16 @@ class Structure:
     atoms: list = field(default_factory=list)
     name: str = ""
     space_group: str = ""
+    #: the International Tables number, when known (a CIF's, or typed)
+    space_group_number: int = 0
+
+    def lattice_params(self):
+        """The cell as :class:`tools.crystal.lattice.LatticeParams`, with the
+        space group when it is known (for the zone's labelled points)."""
+        from tools.crystal.lattice import LatticeParams
+        number = self.space_group_number or space_group_number(self.space_group)
+        return LatticeParams(self.a, self.b, self.c, self.alpha, self.beta,
+                             self.gamma, space_group=number or None)
 
     def vectors(self) -> np.ndarray:
         """The cell vectors as rows (Å), a along x and b in the xy plane --
@@ -156,6 +167,26 @@ class Structure:
 # --------------------------------------------------------------------------
 # Symmetry operations
 # --------------------------------------------------------------------------
+def space_group_number(symbol) -> int:
+    """The International Tables number of a Hermann-Mauguin symbol ("P 4/n
+    m m", "P6_3/mmc", "F m -3 m"), or of a number given as text; 0 when
+    it is not recognised."""
+    from tools.crystal.spacegroups import SPACEGROUPS, spacegroup_info
+
+    text = str(symbol or "").strip()
+    if text.isdigit():
+        return int(text) if 1 <= int(text) <= 230 else 0
+    wanted = re.sub(r"[\s_]", "", text).lower()
+    wanted = re.sub(r":.*$", "", wanted)
+    if not wanted:
+        return 0
+    for number in SPACEGROUPS:
+        symbol = re.sub(r"[\s_]", "", spacegroup_info(number).symbol).lower()
+        if symbol == wanted:
+            return int(number)
+    return 0
+
+
 def parse_symop(text: str):
     """``(R, t)`` from a symmetry operation written as in a CIF:
     ``"-y, x-y, z+1/3"`` -> a 3x3 integer-ish matrix and a translation."""
@@ -330,6 +361,10 @@ def parse_cif(text: str) -> Structure:
                       or values.get("_chemical_name_systematic") or "").strip()
     structure.space_group = (values.get("_symmetry_space_group_name_h-m")
                              or values.get("_space_group_name_h-m_alt") or "").strip()
+    number = (values.get("_space_group_it_number")
+              or values.get("_symmetry_int_tables_number") or "")
+    structure.space_group_number = (space_group_number(number)
+                                    or space_group_number(structure.space_group))
 
     operations = []
     for names, rows in loops:
@@ -493,3 +528,51 @@ def atomic_layers(structure: Structure, hkl, repeats=(1, 1, 1),
         element = atoms[index].element
         counts[element] = counts.get(element, 0) + 1
     return [(float(h), counts) for h, counts in layers]
+
+
+def coordination_polyhedra(structure: Structure, centre: str, repeats=(1, 1, 1),
+                           factor: float = 1.15, ligands=None):
+    """The coordination polyhedra around every ``centre`` atom of the
+    block: ``[(centre xyz, vertices (m, 3), triangles (t, 3) indices)]``.
+
+    The ligands are the atoms (of the elements ``ligands``, or any other
+    element) closer than ``factor`` times the sum of the covalent radii,
+    searched in the block grown by one cell, so the polyhedra of atoms on
+    the block's faces are complete. A polyhedron needs at least four
+    non-coplanar ligands; a planar one (a square) is returned as two
+    triangles.
+    """
+    from scipy.spatial import ConvexHull, QhullError
+
+    grown = tuple(int(n) + 2 for n in repeats)
+    atoms, xyz = cartesian_atoms(structure, grown)
+    shift = np.ones(3) @ structure.vectors()
+    xyz = xyz - shift
+    _atoms_in, inside = cartesian_atoms(structure, repeats)
+    out = []
+    radii = np.array([covalent_radius(a.element) for a in atoms])
+    for atom, point in zip(_atoms_in, inside):
+        if atom.element != centre:
+            continue
+        distance = np.linalg.norm(xyz - point, axis=1)
+        reach = factor * (covalent_radius(centre) + radii)
+        near = [i for i in np.flatnonzero((distance > 0.1) & (distance <= reach))
+                if (ligands is None and atoms[i].element != centre)
+                or (ligands is not None and atoms[i].element in ligands)]
+        if len(near) < 3:
+            continue
+        vertices = xyz[near]
+        try:
+            hull = ConvexHull(vertices)
+            triangles = hull.simplices
+        except (QhullError, ValueError):
+            centroid = vertices.mean(axis=0)
+            normal = np.cross(vertices[1] - vertices[0], vertices[2] - vertices[0])
+            u = vertices[0] - centroid
+            v = np.cross(normal, u)
+            order = np.argsort(np.arctan2((vertices - centroid) @ v,
+                                          (vertices - centroid) @ u))
+            triangles = np.array([[order[0], order[i], order[i + 1]]
+                                  for i in range(1, len(order) - 1)])
+        out.append((point, vertices, np.asarray(triangles, dtype=int)))
+    return out

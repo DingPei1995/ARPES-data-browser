@@ -58,9 +58,10 @@ def test_tool_buttons_follow_the_selection(launcher):
     lv = launcher
     _select(lv)
     # all but the figure composer, which opens a blank page, and the
-    # Calculation tab's crystal and tight-binding fit (points from a file)
+    # Calculation tab's crystal, tight-binding fit (points from a file)
+    # and calculated bands (a calculation alone)
     assert not any(b.isEnabled() for name, b in lv.ui.ToolButtons.items()
-                   if name not in ("figure", "lattice", "tbfit"))
+                   if name not in ("figure", "lattice", "tbfit", "bands"))
     assert lv.ui.ToolButtons["figure"].isEnabled()
     assert "Select a dataset" in lv.ui.ToolButtons["smooth"].toolTip()
     _select(lv, "c")

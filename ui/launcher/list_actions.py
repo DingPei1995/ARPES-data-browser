@@ -89,6 +89,9 @@ RULES = {
     # Band points come from a k-map, or from a file with nothing selected.
     "tbfit": ("optional", frozenset({"k_map", "kz_map_k"}),
               "a map in momentum (or nothing, to read points from a file)"),
+    # A calculation on its own, or against maps and cuts in momentum.
+    "bands": ("optional", frozenset({"k_map", "kz_map_k", "cut"}),
+              "maps or cuts in momentum (or nothing, for the calculation alone)"),
     # On the detector's pixels only, like the grid removal.
     "detcorr": ("one", frozenset({"cut", "map", "kz_map"}),
                 "a cut, or a map or kz map before its k conversion"),
