@@ -334,6 +334,8 @@ class Panel:
     x_label: str = None            # None -> the data's own label
     y_label: str = None
     label: str = ""                # "(a)"
+    #: the letter nudged from where it would sit, ``(dx, dy)`` in mm
+    label_offset: tuple = (0.0, 0.0)
     colorbar: bool = False
     colorbar_label: str = ""
     #: what the colour bar's ends say: "values" (the levels), "high-low"

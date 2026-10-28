@@ -971,6 +971,8 @@ class FigurePainter:
         if aligned is not None and not inside:
             x = aligned[0] if aligned[0] is not None else x
             y = aligned[1] if aligned[1] is not None else y
+        dx, dy = getattr(panel, "label_offset", (0.0, 0.0)) or (0.0, 0.0)
+        x, y = x + float(dx) * scale, y + float(dy) * scale
         color = style.panel_label_color if inside else style.axis_color
         self._draw_markup(painter, x, y, panel.label, size, scale, color,
                           anchor=anchor, bold=style.panel_label_bold)
@@ -2593,6 +2595,17 @@ class FigureToolsDialog(QDialog):
         self.label_edit.editingFinished.connect(
             lambda: self.apply(lambda p: setattr(p, "label", self.label_edit.text())))
         inner.addRow("Text", self.label_edit)
+        nudge = QHBoxLayout()
+        self.label_dx = spin(0.0, -50, 50, 1, 0.5, "Move this panel's letter right (mm).")
+        self.label_dy = spin(0.0, -50, 50, 1, 0.5, "Move it down (mm).")
+        for box in (self.label_dx, self.label_dy):
+            box.valueChanged.connect(lambda _v: self.apply(lambda p: setattr(
+                p, "label_offset", (self.label_dx.value(), self.label_dy.value()))))
+        nudge.addWidget(QLabel("x"))
+        nudge.addWidget(self.label_dx)
+        nudge.addWidget(QLabel("y"))
+        nudge.addWidget(self.label_dy)
+        inner.addRow("Nudge (mm)", nudge)
         self.label_position = QComboBox()
         self.label_position.addItems(list(CORNERS))
         self.label_position.currentTextChanged.connect(
@@ -3038,6 +3051,9 @@ class FigureToolsDialog(QDialog):
         self.xlabel_edit.setText(panel.label_x())
         self.ylabel_edit.setText(panel.label_y())
         self.label_edit.setText(panel.label)
+        dx, dy = getattr(panel, "label_offset", (0.0, 0.0)) or (0.0, 0.0)
+        self.label_dx.setValue(float(dx))
+        self.label_dy.setValue(float(dy))
         self.cmap_combo.setCurrentText(panel.colormap)
         self.flip_box.setChecked(panel.flip)
         lo, hi = self.figure.panel_levels(panel)

@@ -90,6 +90,9 @@ class CrystalView(QWidget):
         self.zone_path = []
         self.zone_labels = True
         self.zone_axes = True
+        #: labels drawn at their leftmost symmetry-equivalent point (as the
+        #: picture is turned), to keep them clear of the path and the axes
+        self.zone_left_labels = set()
         self.font_px = 14.0
         #: a key of the elements' colours, and the cell's lengths on its edges
         self.show_legend = False
@@ -268,22 +271,35 @@ class CrystalView(QWidget):
                                   "#d62728", 2.0, 2 * lift))
         if self.zone_labels:
             for label, k in table.items():
+                if label in self.zone_left_labels:
+                    k = self._leftmost_equivalent(k)
                 items.append(("atom", k, 0.025 * float(np.linalg.norm(b[0])),
                               {"colour": "#111111", "alpha": 1.0, "gloss": 0.0},
                               False, 3 * lift))
-                items.append(("text", k, label, "#111111"))
+                items.append(("text", k, label, "#111111", 0.7))
         reach = 1.35 * float(np.max(np.abs(zone.vertices)))
         if self.zone_axes:
-            reach = 1.35 * float(np.max(np.abs(zone.vertices)))
             for axis, name in ((0, "k_x"), (1, "k_y"), (2, "k_z")):
                 end = np.zeros(3)
                 end[axis] = reach
-                items.append(("line", np.zeros(3), end, "#555555", 1.0))
-                items.append(("text", end * 1.06, name, "#333333"))
+                items.append(("arrow", np.zeros(3), end, "#555555", 1.2))
+                items.append(("text", end * 1.08, name, "#333333", 0.3))
         frame = np.asarray(zone.vertices, dtype=float)
         if self.zone_axes:
             frame = np.vstack([frame, 1.4 * np.eye(3) * reach])
         return items, frame
+
+    def _leftmost_equivalent(self, k):
+        """Of the points the crystal's rotation axis along k_z makes of
+        ``k``, the one furthest left on the picture."""
+        from tools.crystal.compare import in_plane_operations, symmetry_fold
+
+        params = self.structure.lattice_params()
+        fold = symmetry_fold(params.space_group or 1)
+        right = self.camera.basis()[0]
+        options = [np.concatenate([op @ k[:2], k[2:]])
+                   for op in in_plane_operations(fold, mirror=False)]
+        return min(options, key=lambda p: float(p @ right))
 
     def paint_into(self, painter: QPainter, width: int, height: int):
         painter.fillRect(0, 0, width, height, self.background)
@@ -314,7 +330,7 @@ class CrystalView(QWidget):
             if item[0] == "atom":
                 bias = item[5] if len(item) > 5 else 0.0
                 keyed.append((depth(item[1]) + bias, item))
-            elif item[0] == "line":
+            elif item[0] in ("line", "arrow"):
                 # an optional sixth entry lifts a line towards the viewer, so
                 # one lying in a translucent plane is not cut into dashes
                 bias = item[5] if len(item) > 5 else 0.0
@@ -332,6 +348,10 @@ class CrystalView(QWidget):
                 self._paint_atom(painter, screen(c), r * scale, style, marked)
             elif item[0] == "img":
                 self._paint_picture(painter, item, screen)
+            elif item[0] == "arrow":
+                _k, p, q, colour, w = item[:5]
+                self._paint_arrow(painter, screen(p), screen(q), QColor(colour),
+                                  w * max(1.0, scale / 60.0))
             elif item[0] == "line":
                 _k, p, q, colour, w = item[:5]
                 pen = QPen(QColor(colour), w * max(1.0, scale / 60.0))
@@ -349,10 +369,11 @@ class CrystalView(QWidget):
         font.setPixelSize(max(8, int(round(self.font_px * min(width, height) / 600))))
         font.setItalic(False)
         painter.setFont(font)
-        for _k, point, text, colour in texts:
+        for item in texts:
+            _k, point, text, colour = item[:4]
             at = screen(point)
             painter.setPen(QColor(colour))
-            self._draw_label(painter, at, text)
+            self._draw_label(painter, at, text, *(item[4:5]))
         if self.mode == "real" and self.structure is not None:
             if self.show_lengths:
                 self._paint_lengths(painter, screen, corners)
@@ -423,12 +444,34 @@ class CrystalView(QWidget):
             y += line
 
     @staticmethod
-    def _draw_label(painter, at: QPointF, text: str):
-        """A label beside a point, with "k_x"-style subscripts."""
+    def _paint_arrow(painter, start: QPointF, end: QPointF, colour, width):
+        """A line with a filled head at ``end``."""
+        dx, dy = end.x() - start.x(), end.y() - start.y()
+        length = float(np.hypot(dx, dy))
+        if length < 1e-6:
+            return
+        ux, uy = dx / length, dy / length
+        head = max(6.0, 4.5 * width)
+        base = QPointF(end.x() - ux * head, end.y() - uy * head)
+        pen = QPen(colour, width)
+        pen.setCapStyle(Qt.FlatCap)
+        painter.setPen(pen)
+        painter.drawLine(start, base)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(colour))
+        nx, ny = -uy * head * 0.38, ux * head * 0.38
+        painter.drawPolygon(QPolygonF([end, QPointF(base.x() + nx, base.y() + ny),
+                                       QPointF(base.x() - nx, base.y() - ny)]))
+        painter.setBrush(Qt.NoBrush)
+
+    @staticmethod
+    def _draw_label(painter, at: QPointF, text: str, offset_em: float = 0.35):
+        """A label beside a point, with "k_x"-style subscripts, ``offset_em``
+        (of the font size) right of and above it."""
         from tools.output.figure import parse_markup
 
-        x = at.x() + 0.35 * painter.font().pixelSize()
-        y = at.y() - 0.35 * painter.font().pixelSize()
+        x = at.x() + offset_em * painter.font().pixelSize()
+        y = at.y() - offset_em * painter.font().pixelSize()
         base = painter.font()
         colour = painter.pen().color()
         outline = QPainterPath()
@@ -1182,6 +1225,14 @@ class CrystalDialog(QDialog):
         for box in (self.zone_labels_box, self.zone_axes_box):
             box.toggled.connect(self._zone_changed)
             form.addRow(box)
+        self.zone_left_edit = QLineEdit("")
+        self.zone_left_edit.setPlaceholderText("e.g. L, M")
+        self.zone_left_edit.setToolTip(
+            "Points labelled at their leftmost equivalent (by the zone's "
+            "rotation axis), as the picture is turned -- away from the path "
+            "and the axes where they would crowd.")
+        self.zone_left_edit.editingFinished.connect(self._zone_changed)
+        form.addRow("Label on the left", self.zone_left_edit)
         text = ("The crystal's <b>Brillouin zone</b>, from the cell and the "
                 "space group (for a CIF, its own; typed in, the one set in "
                 "step 1): its labelled high-symmetry points, the "
@@ -1269,6 +1320,9 @@ class CrystalDialog(QDialog):
         self.view.zone_path = [l for l in parse_path(self.path_edit.text())
                                if l != "|"]
         self.view.zone_labels = self.zone_labels_box.isChecked()
+        from tools.crystal.bands import parse_path
+        self.view.zone_left_labels = {l for l in parse_path(self.zone_left_edit.text())
+                                      if l != "|"}
         self.view.zone_axes = self.zone_axes_box.isChecked()
         try:
             _p, _b, _zone, points = self.view.zone()

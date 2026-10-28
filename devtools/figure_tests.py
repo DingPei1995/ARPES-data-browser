@@ -20,9 +20,8 @@ structure, with the program's own tools:
   two straight branches fitted to MDC peaks and the Dirac point where they
   cross (MDC fit), (v) the MDC stack round the Dirac point (Stack plot),
   (vi) the fitted Dirac points against k_z with the calculated line node;
-* **Test figure 3** -- (b) the crystal structure: glossy, partly
-  transparent atoms, the cell's lattice constants, the cleavage plane,
-  the key of the elements.
+  and (a) the layered (ZrSiS-type) crystal structure: glossy atoms, the
+  cell's lattice constants, the cleavage plane.
 
 Usage:  python devtools/figure_tests.py [PNG folder] [.afig folder]
         (PNGs default to docs/images)
@@ -107,9 +106,9 @@ def stack_panel(data, energies, mark=None, name="Γ-plane map"):
     window.set_stack(2, energies, width=0.04)
     for d in range(3):
         window.scene.styles[d].fade = 0.45
-    window.azimuth.setValue(-60.0)
-    window.elevation.setValue(16.0)
-    window.z_aspect.setValue(1.4)
+    window.azimuth.setValue(-45.0)
+    window.elevation.setValue(14.0)
+    window.z_aspect.setValue(2.2)
     if mark is not None:
         window.set_marks(*mark)
     panel = window.figure_panel()
@@ -152,13 +151,13 @@ def test_figure_1(folder, dialog, datasets, out, save_to=None):
 
     window = FigureWindow([pa] + series + [pc], "Test figure 1 — demo crystal")
     figure = window.figure
-    _style(figure, 200, 72)
+    _style(figure, 200, 80)
     size, gap = 20.0, 2.0
-    frames = [(2, 11, 44, 50)]
+    frames = [(2, 13, 44, 50)]
     for i in range(8):
         row, col = divmod(i, 4)
-        frames.append((66 + col * (size + gap), 10 + row * (size + 8.5), size, size))
-    frames.append((154, 9, 44, 58))
+        frames.append((66 + col * (size + gap), 12 + row * (size + 8.5), size, size))
+    frames.append((154, 12, 44, 66))
     for panel, frame in zip(figure.panels, frames):
         panel.frame = frame
     # the composer's Arrange tools: (a), (b) and (c) start on one line
@@ -166,6 +165,7 @@ def test_figure_1(folder, dialog, datasets, out, save_to=None):
     labels = ["(a)", "(b)"] + [""] * 7 + ["(c)"]
     for panel, label in zip(figure.panels, labels):
         panel.label = label
+    series[0].label_offset = (-6.0, 0.0)             # clear of its k_y axis
     for i, panel in enumerate(series):
         panel.x_labels = i >= 4
         panel.y_labels = i % 4 == 0
@@ -282,6 +282,7 @@ def bz_picture(folder, datasets, size=900):
     dialog.read_cif(os.path.join(folder, "demo_crystal.cif"))
     dialog.stepper.go(3)
     dialog.path_edit.setText("K-H")
+    dialog.zone_left_edit.setText("L, M")             # clear of the path and axes
     for (box, height, colour, source, energy), name, e in zip(
             dialog.plane_rows, ("Γ-plane map", "A-plane map"), (-0.65, -0.55)):
         source.setCurrentText(name)
@@ -446,23 +447,26 @@ def test_figure_2(folder, dialog, datasets, out, save_to=None):
     pc = kz_stack_panel(kz_map, [c[3] for c in cuts], [(d[0], d[1]) for d in dps])
 
     pw.y_label = "E_c - E_F (eV)"                    # the crossing's energy
-    window = FigureWindow([pa, pc] + panels_d + [pv, pw],
+    crystal = crystal_panel(folder)
+    window = FigureWindow([crystal, pa, pc] + panels_d + [pv, pw],
                           "Test figure 2 — demo crystal")
     figure = window.figure
     _style(figure, 186, 112)
     w, h = 21.0, 34.0
-    frames = [(4, 8, 54, 48), (66, 6, 90, 52)]
+    frames = [(4, 8, 34, 50), (46, 8, 48, 50), (96, 8, 88, 50)]
     for i in range(4):
         frames.append((12 + i * (w + 2.0), 70, w, h))
     frames.append((12 + 4 * (w + 2.0) + 12, 70, 22, h))
     frames.append((12 + 4 * (w + 2.0) + 50, 70, 26, h))
     for panel, frame in zip(figure.panels, frames):
         panel.frame = frame
-    for panel, label in zip(figure.panels, ["(a)", "(b)", "(c)", "", "", "", "", ""]):
+    for panel, label in zip(figure.panels, ["(a)", "(b)", "(c)", "(d)", "", "", "",
+                                            "", ""]):
         panel.label = label
-    window.arrange("top", [0, 1])                      # the first row
-    window.arrange("top", list(range(2, 8)))           # the second
-    window.arrange("height", list(range(2, 8)))
+    window.arrange("top", [0, 1, 2])                   # the first row
+    window.arrange("height", [0, 1, 2])
+    window.arrange("top", list(range(3, 9)))           # the second
+    window.arrange("height", list(range(3, 9)))
     for i, panel in enumerate(panels_d):
         panel.y_labels = i == 0
     window.refresh()
@@ -475,13 +479,13 @@ def test_figure_2(folder, dialog, datasets, out, save_to=None):
 # --------------------------------------------------------------------------
 # Test figure 3
 # --------------------------------------------------------------------------
-def test_figure_3(folder, out, save_to=None, size=1000):
-    """(b): the structure, glossy and partly transparent, its lattice
-    constants and cleavage plane, and the key of the elements."""
+def crystal_panel(folder, size=1000):
+    """The layered structure as a picture panel: glossy atoms, the cell's
+    lattice constants and the cleavage plane between the S layers."""
     from tools.output import figure as F
     from tools.output.figfile import source_record
     from ui.panels.crystal import CrystalDialog
-    from ui.panels.figure import FigureWindow, Panel, _qimage_array
+    from ui.panels.figure import Panel, _qimage_array
 
     cif = os.path.join(folder, "demo_tetragonal_crystal.cif")
     dialog = CrystalDialog()
@@ -490,13 +494,9 @@ def test_figure_3(folder, out, save_to=None, size=1000):
     for box, n in zip(dialog.repeat_boxes, (1, 1, 1)):
         box.setValue(n)
     dialog.scale_box.setValue(0.52)
-    for element, colour, gloss, alpha in (("Hf", "#3fb4b0", 85, 0),
-                                          ("Si", "#1f3f9e", 85, 0),
-                                          ("S", "#d6df2c", 85, 0)):
-        dialog.set_style(element, colour=colour, gloss=gloss / 100.0,
-                         alpha=1.0 - alpha / 100.0)
+    for element, colour in (("Hf", "#3fb4b0"), ("Si", "#1f3f9e"), ("S", "#d6df2c")):
+        dialog.set_style(element, colour=colour, gloss=0.85, alpha=1.0)
     dialog.bond_grey.setChecked(True)
-    dialog.legend_box.setChecked(True)
     dialog.lengths_box.setChecked(True)
     dialog.stepper.go(2)
     dialog.plane_box.setChecked(True)
@@ -510,14 +510,7 @@ def test_figure_3(folder, out, save_to=None, size=1000):
     panel = Panel(data=F.picture_data(picture, "crystal structure"))
     panel.x_labels = panel.y_labels = False
     panel.data.sources = [source_record(cif, kind="structure")]
-    window = FigureWindow([panel], "Test figure 3 — crystal")
-    figure = window.figure
-    _style(figure, 60, 78)
-    panel.frame = (4, 6, 52, 70)
-    panel.label = "(b)"
-    _note(panel, "Cleavage plane", 0.02, 0.5, "#000000")
-    window.refresh()
-    return _write(window, out, "test_figure_3", save_to), window
+    return panel
 
 
 def main(out=None, save_to=None):
@@ -532,8 +525,7 @@ def main(out=None, save_to=None):
         dialog = P.bands_window(folder, datasets)
         written = []
         for make in (lambda: test_figure_1(folder, dialog, datasets, out, save_to),
-                     lambda: test_figure_2(folder, dialog, datasets, out, save_to),
-                     lambda: test_figure_3(folder, out, save_to)):
+                     lambda: test_figure_2(folder, dialog, datasets, out, save_to)):
             files, _window = make()
             written += files
     for path in written:

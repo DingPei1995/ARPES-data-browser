@@ -56,7 +56,7 @@ FORMAT = "arpes-viewer-figure"
 VERSION = 1
 
 #: Panel fields that are tuples in the model (JSON hands lists back)
-_TUPLE_FIELDS = ("levels", "x_range", "y_range", "frame")
+_TUPLE_FIELDS = ("levels", "x_range", "y_range", "frame", "label_offset")
 #: the drawing dataclasses a panel holds, by name
 _TYPES = {cls.__name__: cls for cls in (nf.Line, nf.TextNote, nf.Arrow,
                                          nf.Overlay, nf.ScaleBar, nf.Inset,
