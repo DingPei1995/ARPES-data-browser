@@ -220,6 +220,15 @@ class Overlay:
     style: str = "solid"
     closed: bool = False
     name: str = ""
+    #: a symbol at every point -- "o", "s" (square), "^", "v", "d" -- for
+    #: measured points rather than a curve; "" draws none
+    marker: str = ""
+    marker_mm: float = 1.0
+    #: whether the points are joined (False: symbols only)
+    line: bool = True
+    #: error bars, one per point (empty: none), in data units
+    y_errors: list = field(default_factory=list)
+    x_errors: list = field(default_factory=list)
 
 
 @dataclass
@@ -330,6 +339,9 @@ class Panel:
     #: what the colour bar's ends say: "values" (the levels), "high-low"
     #: (the words, as a figure of raw intensity usually has), or "none"
     colorbar_ends: str = "values"
+    #: the colour bar's length, as a fraction of the panel's height (it
+    #: sits at the bottom of the panel's edge)
+    colorbar_length: float = 1.0
     lines: list = field(default_factory=list)
     texts: list = field(default_factory=list)
     arrows: list = field(default_factory=list)

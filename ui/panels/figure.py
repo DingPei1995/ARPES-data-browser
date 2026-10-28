@@ -653,20 +653,8 @@ class FigurePainter:
                                       point.y() - 0.5 * scale, line.label, size,
                                       scale, line.color)
         for overlay in panel.overlays:
-            if len(overlay.xs) < 2:
-                continue
-            painter.setPen(self._pen(overlay.color, overlay.width_pt, scale,
-                                     overlay.style))
-            path = QPainterPath()
-            first = self._map_point(box, panel, x_range, y_range,
-                                    overlay.xs[0], overlay.ys[0])
-            path.moveTo(first)
-            for x, y in zip(overlay.xs[1:], overlay.ys[1:]):
-                path.lineTo(self._map_point(box, panel, x_range, y_range, x, y))
-            if overlay.closed:
-                path.closeSubpath()
-            painter.setBrush(Qt.NoBrush)
-            painter.drawPath(path)
+            self._draw_overlay(painter, panel, box, x_range, y_range, overlay,
+                               scale)
         for arrow in panel.arrows:
             self._draw_arrow(painter, panel, box, x_range, y_range, arrow, scale)
         for note in panel.texts:
@@ -675,6 +663,85 @@ class FigurePainter:
             self._draw_markup(painter, point.x(), point.y(), note.text, size,
                               scale, note.color, anchor=note.anchor,
                               bold=note.bold)
+
+    def _draw_overlay(self, painter, panel, box, x_range, y_range, overlay,
+                      scale):
+        """One polyline: broken wherever a point is NaN, with its symbols
+        and error bars when it has them."""
+        xs = np.asarray(overlay.xs, dtype=float)
+        ys = np.asarray(overlay.ys, dtype=float)
+        if xs.size == 0 or xs.size != ys.size:
+            return
+        good = np.isfinite(xs) & np.isfinite(ys)
+        points = [self._map_point(box, panel, x_range, y_range, x, y) if ok else None
+                  for x, y, ok in zip(xs, ys, good)]
+        pen = self._pen(overlay.color, overlay.width_pt, scale, overlay.style)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        if getattr(overlay, "line", True) and xs.size >= 2:
+            path = QPainterPath()
+            drawing = False
+            for point in points:
+                if point is None:
+                    drawing = False
+                elif drawing:
+                    path.lineTo(point)
+                else:
+                    path.moveTo(point)
+                    drawing = True
+            if overlay.closed and all(p is not None for p in points):
+                path.closeSubpath()
+            painter.drawPath(path)
+        cap = 0.5 * max(getattr(overlay, "marker_mm", 1.0), 0.6) * scale
+        solid = self._pen(overlay.color, overlay.width_pt, scale, "solid")
+        for errors, vertical in ((getattr(overlay, "y_errors", None), True),
+                                 (getattr(overlay, "x_errors", None), False)):
+            if not errors or len(errors) != xs.size:
+                continue
+            painter.setPen(solid)
+            for x, y, e, ok in zip(xs, ys, errors, good):
+                if not ok or not np.isfinite(e) or e <= 0:
+                    continue
+                if vertical:
+                    a = self._map_point(box, panel, x_range, y_range, x, y - e)
+                    b = self._map_point(box, panel, x_range, y_range, x, y + e)
+                    ends = ((QPointF(a.x() - cap, a.y()), QPointF(a.x() + cap, a.y())),
+                            (QPointF(b.x() - cap, b.y()), QPointF(b.x() + cap, b.y())))
+                else:
+                    a = self._map_point(box, panel, x_range, y_range, x - e, y)
+                    b = self._map_point(box, panel, x_range, y_range, x + e, y)
+                    ends = ((QPointF(a.x(), a.y() - cap), QPointF(a.x(), a.y() + cap)),
+                            (QPointF(b.x(), b.y() - cap), QPointF(b.x(), b.y() + cap)))
+                painter.drawLine(a, b)
+                for p, q in ends:
+                    painter.drawLine(p, q)
+        marker = getattr(overlay, "marker", "")
+        if marker:
+            size = max(float(getattr(overlay, "marker_mm", 1.0)), 0.2) * scale
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(overlay.color)))
+            for point in points:
+                if point is None:
+                    continue
+                self._draw_marker(painter, point, marker, size)
+            painter.setBrush(Qt.NoBrush)
+
+    @staticmethod
+    def _draw_marker(painter, point, marker, size):
+        half = size / 2.0
+        x, y = point.x(), point.y()
+        if marker == "s":
+            painter.drawRect(QRectF(x - half, y - half, size, size))
+        elif marker in ("^", "v", "d"):
+            if marker == "^":
+                corners = [(x, y - half), (x + half, y + half), (x - half, y + half)]
+            elif marker == "v":
+                corners = [(x, y + half), (x + half, y - half), (x - half, y - half)]
+            else:
+                corners = [(x, y - half), (x + half, y), (x, y + half), (x - half, y)]
+            painter.drawPolygon(QPolygonF([QPointF(*c) for c in corners]))
+        else:
+            painter.drawEllipse(point, half, half)
 
     def _draw_arrow(self, painter, panel, box, x_range, y_range, arrow, scale):
         start = self._map_point(box, panel, x_range, y_range, arrow.x0, arrow.y0)
@@ -759,7 +826,9 @@ class FigurePainter:
         tick_pt = style.tick_pt or style.font_pt
         left = box.right() + style.colorbar_gap_mm * scale
         width = style.colorbar_mm * scale
-        strip = QRectF(left, box.top(), width, box.height())
+        fraction = float(np.clip(getattr(panel, "colorbar_length", 1.0) or 1.0, 0.1, 1.0))
+        strip = QRectF(left, box.bottom() - fraction * box.height(), width,
+                       fraction * box.height())
         try:
             lut = np.asarray(colormaps.get_lut(panel.colormap, flip=panel.flip))
         except Exception:
@@ -2467,6 +2536,11 @@ class FigureToolsDialog(QDialog):
         self.cbar_ends.currentTextChanged.connect(
             lambda v: self.apply(lambda p: setattr(p, "colorbar_ends", v)))
         inner.addRow("Ends", self.cbar_ends)
+        self.cbar_length = spin(100.0, 10.0, 100.0, 0, 5.0,
+                                "The bar's length, % of the panel's height.")
+        self.cbar_length.valueChanged.connect(
+            lambda v: self.apply(lambda p: setattr(p, "colorbar_length", v / 100.0)))
+        inner.addRow("Length (%)", self.cbar_length)
         self.cbar_width = spin(self.figure.style.colorbar_mm, 0.5, 20, 1, 0.2, "")
         self.cbar_width.valueChanged.connect(
             lambda v: self._set_style("colorbar_mm", v))
@@ -2594,8 +2668,44 @@ class FigureToolsDialog(QDialog):
         note.setWordWrap(True)
         inner.addWidget(note)
         self.overlay_list = QListWidget()
-        self.overlay_list.setMaximumHeight(80)
+        self.overlay_list.setMaximumHeight(110)
+        self.overlay_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.overlay_list.setToolTip("Select curves to restyle them below "
+                                     "(none selected: all of them).")
         inner.addWidget(self.overlay_list)
+        style_row = QWidget()
+        form = QFormLayout(style_row)
+        form.setContentsMargins(0, 0, 0, 0)
+        self.curve_colour = ColorButton("#000000")
+        self.curve_width = spin(0.8, 0.1, 8, 2, 0.1, "Line width (pt).")
+        self.curve_style = QComboBox()
+        self.curve_style.addItems(list(PEN_STYLES))
+        self.curve_marker = QComboBox()
+        for text, code in (("none", ""), ("● circle", "o"), ("■ square", "s"),
+                           ("▲ triangle", "^"), ("▼ triangle", "v"),
+                           ("◆ diamond", "d")):
+            self.curve_marker.addItem(text, code)
+        self.curve_marker_size = spin(1.0, 0.2, 6, 2, 0.1, "Symbol size (mm).")
+        self.curve_joined = QCheckBox("joined by a line")
+        self.curve_joined.setChecked(True)
+        self.curve_bars = QCheckBox("± σ as error bars")
+        self.curve_bars.setToolTip(
+            "A curve whose uncertainty came in as two dotted ± σ curves gets "
+            "them as error bars at its points instead (and the dotted "
+            "curves go).")
+        marker_row = QHBoxLayout()
+        marker_row.addWidget(self.curve_marker)
+        marker_row.addWidget(self.curve_marker_size)
+        form.addRow("Colour", self.curve_colour)
+        form.addRow("Width (pt)", self.curve_width)
+        form.addRow("Style", self.curve_style)
+        form.addRow("Symbols", marker_row)
+        form.addRow("", self.curve_joined)
+        form.addRow("", self.curve_bars)
+        restyle = QPushButton("Apply to the curves")
+        restyle.clicked.connect(lambda: self.restyle_curves())
+        form.addRow("", restyle)
+        inner.addWidget(style_row)
         row = QWidget()
         box = QHBoxLayout(row)
         box.setContentsMargins(0, 0, 0, 0)
@@ -2640,6 +2750,40 @@ class FigureToolsDialog(QDialog):
             self, "Reference line",
             "This dataset does not carry a fitted E_F. Fit the Fermi level "
             "first, or type the value above.")
+
+    def restyle_curves(self, rows=None):
+        """Colour, width, dash, symbols and error bars for the selected
+        curves of the panel (all of them when none is selected)."""
+        panel = self.panel()
+        if panel is None or not panel.overlays:
+            return
+        if rows is None:
+            rows = sorted(i.row() for i in self.overlay_list.selectedIndexes())
+        rows = rows or list(range(len(panel.overlays)))
+        chosen = [panel.overlays[i] for i in rows if i < len(panel.overlays)]
+        self._remember()
+        removed = []
+        for overlay in chosen:
+            overlay.color = self.curve_colour.color()
+            overlay.width_pt = self.curve_width.value()
+            overlay.style = self.curve_style.currentText()
+            overlay.marker = self.curve_marker.currentData() or ""
+            overlay.marker_mm = self.curve_marker_size.value()
+            overlay.line = self.curve_joined.isChecked()
+            if self.curve_bars.isChecked() and not overlay.y_errors:
+                plus = next((o for o in panel.overlays
+                             if o.name == f"{overlay.name} +σ"), None)
+                minus = next((o for o in panel.overlays
+                              if o.name == f"{overlay.name} −σ"), None)
+                if plus is not None and len(plus.ys) == len(overlay.ys):
+                    overlay.y_errors = [float(p) - float(y)
+                                        for p, y in zip(plus.ys, overlay.ys)]
+                    removed += [plus] + ([minus] if minus is not None else [])
+            elif not self.curve_bars.isChecked():
+                overlay.y_errors = []
+        panel.overlays = [o for o in panel.overlays if o not in removed]
+        self._resync()
+        self.redraw()
 
     def _copy_overlays(self):
         panel = self.panel()
@@ -2751,6 +2895,7 @@ class FigureToolsDialog(QDialog):
         self.cbar_box.setChecked(panel.colorbar)
         self.cbar_label.setText(panel.colorbar_label)
         self.cbar_ends.setCurrentText(getattr(panel, "colorbar_ends", "values"))
+        self.cbar_length.setValue(100.0 * float(getattr(panel, "colorbar_length", 1.0)))
         bar = panel.scale_bar
         self.bar_box.setChecked(bar is not None)
         if bar is not None:

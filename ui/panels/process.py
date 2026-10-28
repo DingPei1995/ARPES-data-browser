@@ -30,7 +30,8 @@ from PyQt5.QtWidgets import (QSizePolicy, QWidget, QMainWindow, QVBoxLayout, QHB
                              QLabel, QPushButton, QComboBox, QCheckBox, QDialog,
                              QFormLayout, QDoubleSpinBox, QSpinBox, QLineEdit,
                              QDialogButtonBox, QApplication, QTabWidget,
-                             QGroupBox, QMessageBox, QProgressDialog, QStyle)
+                             QGroupBox, QMessageBox, QProgressDialog, QStyle,
+                             QInputDialog)
 
 from ui.common.screen import fits_screen
 
@@ -1188,8 +1189,10 @@ class StackWindow(QMainWindow):
     datasetsCreated = pyqtSignal(list)
 
     def __init__(self, values, axes, labels, source_name: str, parent=None,
-                 colormap="jet"):
+                 colormap="jet", sources=()):
         super().__init__(parent)
+        #: what the cut came from, for a figure made of the stack
+        self.sources = list(sources)
         self.values = np.asarray(values, dtype=float)
         self.axes = [np.asarray(a, dtype=float) for a in axes]
         self.labels = list(labels)
@@ -1299,7 +1302,7 @@ class StackWindow(QMainWindow):
         bbox.setContentsMargins(0, 0, 0, 0)
         to_figure = QPushButton("Send to figure composer")
         to_figure.setToolTip("One panel with these curves, ready for export.")
-        to_figure.clicked.connect(self.to_figure)
+        to_figure.clicked.connect(lambda: self.to_figure())
         bbox.addWidget(to_figure)
         form.addRow("", buttons)
 
@@ -1458,8 +1461,36 @@ class StackWindow(QMainWindow):
                           f"{positions[0]:.4g} to {positions[-1]:.4g}"
                           + getattr(self, "_shortfall", ""))
 
-    def to_figure(self):
-        from ui.panels.figure import FigureWindow
+    def to_figure(self, target=None, ask: bool = True):
+        """The stack as a panel of a figure composer: one open (asked
+        for), or a new one."""
+        from ui.panels.figure import FigureWindow, open_figure_windows
+
+        panel = self.figure_panel()
+        if panel is None:
+            return None
+        if target is None and ask:
+            windows = open_figure_windows()
+            if windows:
+                names = ["A new figure"] + [w.windowTitle() for w in windows]
+                choice, ok = QInputDialog.getItem(
+                    self, "To figure composer", "Add the stack to:", names, 0,
+                    False)
+                if not ok:
+                    return None
+                index = names.index(choice)
+                target = windows[index - 1] if index > 0 else None
+        if target is None:
+            target = FigureWindow([panel], parent=self)
+            target.show()
+            self._figure = target
+        else:
+            target.add_panels([panel])
+            target.raise_()
+        return target
+
+    def figure_panel(self):
+        """The stack as it is drawn, as a curves-only figure panel."""
         import tools.output.figure as F
         from tools.output import colormaps
 
@@ -1501,8 +1532,6 @@ class StackWindow(QMainWindow):
             x_label=self.labels[1] if edc else self.labels[0],
             y_label="Intensity (offset)", name=self.source_name, kind="stack"))
         panel.overlays = lines
-        window = FigureWindow([panel], parent=self)
-        window.show()
-        self._figure = window
-        return window
+        panel.data.sources = list(self.sources)
+        return panel
 

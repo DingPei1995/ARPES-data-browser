@@ -27,10 +27,10 @@ from __future__ import annotations
 import os
 
 import numpy as np
-from PyQt5.QtCore import QPointF, Qt, pyqtSignal
+from PyQt5.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt5.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage,
                          QPainter, QPainterPath, QPen, QPolygonF,
-                         QRadialGradient)
+                         QRadialGradient, QTransform)
 from PyQt5.QtWidgets import (QAbstractItemView, QCheckBox, QColorDialog,
                              QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
                              QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
@@ -91,6 +91,12 @@ class CrystalView(QWidget):
         self.zone_labels = True
         self.zone_axes = True
         self.font_px = 14.0
+        #: a key of the elements' colours, and the cell's lengths on its edges
+        self.show_legend = False
+        self.show_lengths = False
+        #: bonds in each atom's colour ("element") or one grey ("grey")
+        self.bond_colour = "element"
+        self.bond_width = 4.0
 
     # -- state -------------------------------------------------------------
     def set_structure(self, structure):
@@ -160,10 +166,11 @@ class CrystalView(QWidget):
                         <= (radii[i] + radii[j]) * self.bond_factor):
                     mid = 0.5 * (xyz[i] + xyz[j])
                     for end, k in ((xyz[i], i), (xyz[j], j)):
-                        colour = QColor(self.styles.get(atoms[k].element, {}).get(
-                            "colour", "#888888"))
+                        colour = QColor("#9a9a9a" if self.bond_colour == "grey"
+                                        else self.styles.get(atoms[k].element, {}).get(
+                                            "colour", "#888888"))
                         colour.setAlphaF(min(faded[i], faded[j]))
-                        items.append(("line", end, mid, colour, 4.0))
+                        items.append(("line", end, mid, colour, self.bond_width))
         for element, look in self.polyhedra.items():
             for _centre, vertices, triangles in S.coordination_polyhedra(
                     st, element, self.repeats, self.bond_factor):
@@ -231,13 +238,26 @@ class CrystalView(QWidget):
                 continue
             outline = cut_points_3d(u[:-1], v[:-1], normal, normal * plane["height"])
             centre = outline.mean(axis=0)
+            picture = plane.get("picture")
+            if picture is not None:
+                # a measured constant-energy map on the plane, cut to the zone
+                image, x_range, y_range, turn = picture
+                c, s_ = np.cos(np.deg2rad(turn)), np.sin(np.deg2rad(turn))
+                h = normal * plane["height"]
+                rect = [(x_range[0], y_range[0]), (x_range[1], y_range[0]),
+                        (x_range[1], y_range[1]), (x_range[0], y_range[1])]
+                corners3 = np.array([[c * x - s_ * y, s_ * x + c * y, 0.0]
+                                     for x, y in rect]) + h
+                items.append(("img", corners3, image, outline,
+                              float(plane.get("picture_alpha", 0.92)), -1e6))
             for k in range(len(outline)):
                 a, c = outline[k], outline[(k + 1) % len(outline)]
-                for tri in _subdivide((centre, a, c), 2):
-                    # the planes go down first: lines and points lying in
-                    # them would otherwise be cut by their triangles
-                    items.append(("tri", *tri, plane["colour"], plane["alpha"],
-                                  -1e6))
+                if picture is None:
+                    for tri in _subdivide((centre, a, c), 2):
+                        # the planes go down first: lines and points lying in
+                        # them would otherwise be cut by their triangles
+                        items.append(("tri", *tri, plane["colour"], plane["alpha"],
+                                      -1e6))
                 items.append(("line", a, c, QColor(plane["colour"]).darker(130), 1.0))
         table = {p.label: np.asarray(p.k, dtype=float) for p in points}
         if self.zone_path:
@@ -299,6 +319,8 @@ class CrystalView(QWidget):
                 # one lying in a translucent plane is not cut into dashes
                 bias = item[5] if len(item) > 5 else 0.0
                 keyed.append((depth(0.5 * (item[1] + item[2])) + bias, item))
+            elif item[0] == "img":
+                keyed.append((depth(np.mean(item[1], axis=0)) + item[5], item))
             else:
                 bias = item[6] if len(item) > 6 else 0.0
                 keyed.append((depth((item[1] + item[2] + item[3]) / 3) + bias, item))
@@ -308,6 +330,8 @@ class CrystalView(QWidget):
             if item[0] == "atom":
                 _k, c, r, style, marked = item[:5]
                 self._paint_atom(painter, screen(c), r * scale, style, marked)
+            elif item[0] == "img":
+                self._paint_picture(painter, item, screen)
             elif item[0] == "line":
                 _k, p, q, colour, w = item[:5]
                 pen = QPen(QColor(colour), w * max(1.0, scale / 60.0))
@@ -321,15 +345,82 @@ class CrystalView(QWidget):
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QBrush(fill))
                 painter.drawPolygon(QPolygonF([screen(a), screen(b), screen(c)]))
-        if texts:
-            font = painter.font()
-            font.setPixelSize(max(8, int(round(self.font_px * min(width, height) / 600))))
-            font.setItalic(False)
-            painter.setFont(font)
-            for _k, point, text, colour in texts:
-                at = screen(point)
-                painter.setPen(QColor(colour))
-                self._draw_label(painter, at, text)
+        font = painter.font()
+        font.setPixelSize(max(8, int(round(self.font_px * min(width, height) / 600))))
+        font.setItalic(False)
+        painter.setFont(font)
+        for _k, point, text, colour in texts:
+            at = screen(point)
+            painter.setPen(QColor(colour))
+            self._draw_label(painter, at, text)
+        if self.mode == "real" and self.structure is not None:
+            if self.show_lengths:
+                self._paint_lengths(painter, screen, corners)
+            if self.show_legend:
+                self._paint_legend(painter, width, height, scale)
+
+    @staticmethod
+    def _paint_picture(painter, item, screen):
+        """A picture on a plane: an affine map of its pixels onto the
+        projected rectangle, clipped to the zone's outline on that plane."""
+        _k, corners, image, outline, alpha, _bias = item
+        p = [screen(c) for c in corners]
+        w, h = image.width(), image.height()
+        du = ((p[1].x() - p[0].x()) / w, (p[1].y() - p[0].y()) / w)
+        dv = ((p[3].x() - p[0].x()) / h, (p[3].y() - p[0].y()) / h)
+        clip = QPainterPath()
+        clip.addPolygon(QPolygonF([screen(c) for c in outline]))
+        clip.closeSubpath()
+        painter.save()
+        painter.setClipPath(clip)
+        painter.setOpacity(alpha)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setTransform(QTransform(du[0], du[1], dv[0], dv[1],
+                                        p[0].x(), p[0].y()), True)
+        painter.drawImage(QRectF(0, 0, w, h), image)
+        painter.restore()
+
+    def _paint_lengths(self, painter, screen, corners):
+        """``a = 3.52 Å`` beside the cell's a edge, ``c = ...`` beside its c
+        edge (and b when it differs from a): the cell's size on the
+        picture, as a structure figure labels it."""
+        st = self.structure
+        vectors = st.vectors()
+        middle = screen(corners.mean(axis=0))
+        names = [("a", st.a), ("b", st.b), ("c", st.c)]
+        shown = [0, 2] if abs(st.a - st.b) < 1e-6 else [0, 1, 2]
+        metrics = QFontMetricsF(painter.font())
+        painter.setPen(QColor("#222222"))
+        for index in shown:
+            p, q = screen(np.zeros(3)), screen(vectors[index])
+            mid = QPointF(0.5 * (p.x() + q.x()), 0.5 * (p.y() + q.y()))
+            away = np.array([mid.x() - middle.x(), mid.y() - middle.y()])
+            away = away / (np.linalg.norm(away) or 1.0)
+            name, value = names[index]
+            text = f"{name} = {value:.3g} Å"
+            w, h = metrics.horizontalAdvance(text), metrics.height()
+            # the text's centre clear of the edge by its own half-size
+            reach = 0.9 * h + 0.5 * (abs(away[0]) * w + abs(away[1]) * h)
+            cx, cy = mid.x() + away[0] * reach, mid.y() + away[1] * reach
+            # _draw_label starts 0.35 em right of and above the point it gets
+            self._draw_label(painter, QPointF(cx - 0.5 * w - 0.35 * painter.font().pixelSize(),
+                                              cy + 0.35 * h), text)
+
+    def _paint_legend(self, painter, width, height, scale):
+        """A ball in each element's colour, and its name."""
+        elements = self.structure.elements()
+        metrics = QFontMetricsF(painter.font())
+        line = 1.7 * metrics.height()
+        radius = 0.55 * metrics.height()
+        x = 0.04 * width + radius
+        y = height - 0.04 * height - line * (len(elements) - 1) - radius
+        for element in elements:
+            style = dict(self.styles.get(element, {}), alpha=1.0)
+            self._paint_atom(painter, QPointF(x, y), radius, style, False)
+            painter.setPen(QColor("#222222"))
+            painter.drawText(QPointF(x + 1.8 * radius, y + 0.35 * metrics.height()),
+                             element)
+            y += line
 
     @staticmethod
     def _draw_label(painter, at: QPointF, text: str):
@@ -355,26 +446,57 @@ class CrystalView(QWidget):
 
     @staticmethod
     def _paint_atom(painter, centre: QPointF, radius: float, style, marked):
+        """A shaded ball: diffuse light from the upper left falling off to
+        a dark rim, a soft ambient floor, and -- with gloss -- a sharp
+        specular spot and a faint reflected rim, so a glossy ball reads as
+        glossy and a matt one as chalk. Transparency applies to all of it."""
         if radius <= 0.3:
             return
         base = QColor(style.get("colour", "#999999"))
         alpha = float(np.clip(style.get("alpha", 1.0), 0.0, 1.0))
         gloss = float(np.clip(style.get("gloss", 0.6), 0.0, 1.0))
-        focal = QPointF(centre.x() - 0.38 * radius, centre.y() - 0.38 * radius)
-        gradient = QRadialGradient(centre, radius, focal)
-        highlight = _blend(base, QColor("white"), 0.25 + 0.7 * gloss)
-        shadow = base.darker(170 + int(80 * gloss))
-        for colour in (highlight, base, shadow):
+        light = QPointF(centre.x() - 0.35 * radius, centre.y() - 0.4 * radius)
+        diffuse = QRadialGradient(light, 1.45 * radius)
+        lit = _blend(base, QColor("white"), 0.18 + 0.12 * (1 - gloss))
+        dark = base.darker(185)
+        for at, colour in ((0.0, lit), (0.45, base), (0.85, base.darker(135)),
+                           (1.0, dark)):
+            colour = QColor(colour)
             colour.setAlphaF(alpha)
-        gradient.setColorAt(0.0, highlight)
-        gradient.setColorAt(0.12 + 0.35 * (1 - gloss), base)
-        gradient.setColorAt(1.0, shadow)
-        painter.setBrush(QBrush(gradient))
+            diffuse.setColorAt(at, colour)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(diffuse))
+        painter.drawEllipse(centre, radius, radius)
+        if gloss > 0.02:
+            # light bounced back off the floor, on the lower right rim
+            rim = QRadialGradient(QPointF(centre.x() + 0.45 * radius,
+                                          centre.y() + 0.5 * radius), 0.75 * radius)
+            bounce = _blend(base, QColor("white"), 0.35)
+            bounce.setAlphaF(0.35 * gloss * alpha)
+            clear = QColor(bounce)
+            clear.setAlphaF(0.0)
+            rim.setColorAt(0.0, bounce)
+            rim.setColorAt(1.0, clear)
+            painter.setBrush(QBrush(rim))
+            painter.drawEllipse(centre, radius, radius)
+            # the specular spot: small and sharp when glossy
+            spot_r = radius * (0.5 - 0.25 * gloss)
+            spot = QRadialGradient(QPointF(centre.x() - 0.38 * radius,
+                                           centre.y() - 0.42 * radius), spot_r)
+            white = QColor(255, 255, 255)
+            white.setAlphaF(min(1.0, 0.95 * gloss) * max(alpha, 0.35))
+            none = QColor(255, 255, 255, 0)
+            spot.setColorAt(0.0, white)
+            spot.setColorAt(0.35 + 0.3 * (1 - gloss), QColor(255, 255, 255,
+                                                           int(90 * gloss * alpha)))
+            spot.setColorAt(1.0, none)
+            painter.setBrush(QBrush(spot))
+            painter.drawEllipse(spot.center(), spot_r, spot_r)
+        painter.setBrush(Qt.NoBrush)
         if marked:
             painter.setPen(QPen(QColor("#e0302a"), max(1.5, radius * 0.12)))
         else:
-            edge = QColor(0, 0, 0, int(60 * alpha))
-            painter.setPen(QPen(edge, 0.8))
+            painter.setPen(QPen(QColor(0, 0, 0, int(70 * alpha)), max(0.6, radius * 0.03)))
         painter.drawEllipse(centre, radius, radius)
 
     def render_image(self, width: int, height: int, background=None) -> QImage:
@@ -457,11 +579,15 @@ class _ColourButton(QPushButton):
 class CrystalDialog(QDialog):
     """The crystal structure viewer."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, datasets=None, colormap="blue", flip=True):
         super().__init__(parent)
         self.setWindowTitle("Crystal structure")
         self.resize(1200, 760)
         self.structure = None
+        #: k-maps whose constant-energy pictures can lie on the zone's planes
+        self.datasets = [(n, d) for n, d in (datasets or [])
+                         if getattr(d, "kind", None) == "k_map"]
+        self.colormap, self.flip = colormap, flip
         self.view = CrystalView(self)
         layout = QHBoxLayout(self)
         self.stepper = Stepper([self._step_structure(), self._step_look(),
@@ -727,7 +853,11 @@ class CrystalDialog(QDialog):
         self.bond_box = QCheckBox("Bonds (atoms closer than 1.15 x the sum of "
                                   "their covalent radii)")
         self.bond_box.setChecked(True)
-        for box in (self.cell_box, self.bond_box):
+        self.bond_grey = QCheckBox("Grey, thin bonds (not in the atoms' colours)")
+        self.legend_box = QCheckBox("Key of the elements")
+        self.lengths_box = QCheckBox("Lattice constants on the cell edges")
+        for box in (self.cell_box, self.bond_box, self.bond_grey,
+                    self.legend_box, self.lengths_box):
             box.toggled.connect(self._look_changed)
             form.addRow(box)
         self.background_combo = QComboBox()
@@ -818,6 +948,10 @@ class CrystalDialog(QDialog):
         self.view.atom_scale = self.scale_box.value()
         self.view.show_cell = self.cell_box.isChecked()
         self.view.show_bonds = self.bond_box.isChecked()
+        self.view.bond_colour = "grey" if self.bond_grey.isChecked() else "element"
+        self.view.bond_width = 2.0 if self.bond_grey.isChecked() else 4.0
+        self.view.show_legend = self.legend_box.isChecked()
+        self.view.show_lengths = self.lengths_box.isChecked()
         self.view.background = QColor(
             ("white", "black", "transparent")[self.background_combo.currentIndex()])
         if self.background_combo.currentIndex() == 2:
@@ -990,7 +1124,46 @@ class CrystalDialog(QDialog):
             colour_button.colourChanged.connect(self._zone_changed)
             row.addWidget(colour_button)
             form.addRow(row)
-            self.plane_rows.append((box, height, colour_button))
+            picture = QHBoxLayout()
+            source = QComboBox()
+            source.addItem("(colour only)")
+            source.addItems([n for n, _d in self.datasets])
+            source.setToolTip("Draw a measured constant-energy map on this "
+                              "plane, cut to the zone (select k-maps before "
+                              "opening the window).")
+            source.currentIndexChanged.connect(self._zone_changed)
+            energy = QDoubleSpinBox()
+            energy.setRange(-50.0, 50.0)
+            energy.setDecimals(3)
+            energy.setSingleStep(0.05)
+            energy.setSuffix(" eV")
+            energy.setToolTip("The map's energy (E - E_F), averaged over the "
+                              "window below.")
+            energy.valueChanged.connect(self._zone_changed)
+            picture.addWidget(QLabel("  map"))
+            picture.addWidget(source, 1)
+            picture.addWidget(energy)
+            form.addRow(picture)
+            self.plane_rows.append((box, height, colour_button, source, energy))
+        maps = QHBoxLayout()
+        self.map_azimuth = QDoubleSpinBox()
+        self.map_azimuth.setRange(-360.0, 360.0)
+        self.map_azimuth.setSuffix(" °")
+        self.map_azimuth.setToolTip("How the maps' k_x lies against the "
+                                    "zone's k_x (the sample azimuth).")
+        self.map_window = QDoubleSpinBox()
+        self.map_window.setRange(0.0, 2.0)
+        self.map_window.setDecimals(3)
+        self.map_window.setValue(0.05)
+        self.map_window.setSuffix(" eV")
+        for box in (self.map_azimuth, self.map_window):
+            box.valueChanged.connect(self._zone_changed)
+        maps.addWidget(QLabel("azimuth"))
+        maps.addWidget(self.map_azimuth)
+        maps.addWidget(QLabel("integrate"))
+        maps.addWidget(self.map_window)
+        if self.datasets:
+            form.addRow("Maps", maps)
         normal = QHBoxLayout()
         self.zone_normal_boxes = []
         for name, value in (("h", 0), ("k", 0), ("l", 1)):
@@ -1018,6 +1191,48 @@ class CrystalDialog(QDialog):
                 "step 5 exports either picture.")
         return Step("Brillouin zone", text, page, enter=self._zone_changed)
 
+    def plane_picture(self, name, energy):
+        """A k-map at ``energy`` as ``(QImage, kx range, ky range,
+        azimuth)``: coloured with the window's colour map, for a plane of
+        the zone."""
+        from tools.output import colormaps
+        from ui.panels.bands import _relative_energy
+
+        data = dict(self.datasets)[name]
+        scan = data.scan
+        axis = _relative_energy(scan.z, scan.info)
+        half = max(0.5 * self.map_window.value(),
+                   0.5 * abs(float(axis[1] - axis[0])) if axis.size > 1 else 0.0)
+        keep = np.abs(axis - energy) <= half
+        if not keep.any():
+            keep = np.abs(axis - energy) == np.min(np.abs(axis - energy))
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            plane = np.nanmean(np.asarray(scan.value, float)[:, :, keep], axis=2)
+        finite = plane[np.isfinite(plane)]
+        lo, hi = ((float(np.percentile(finite, 1)), float(np.percentile(finite, 99.5)))
+                  if finite.size else (0.0, 1.0))
+        scaled = np.clip((plane - lo) / ((hi - lo) or 1.0), 0, 1)
+        lut = np.asarray(colormaps.get_lut(self.colormap, flip=self.flip))
+        index = np.rint(np.nan_to_num(scaled) * (len(lut) - 1)).astype(int)
+        rgb = lut[index]
+        kx, ky = np.asarray(scan.x, float), np.asarray(scan.k, float)
+        if kx[0] > kx[-1]:
+            rgb, kx = rgb[::-1], kx[::-1]
+        if ky[0] > ky[-1]:
+            rgb, ky = rgb[:, ::-1], ky[::-1]
+        buffer = np.empty((ky.size, kx.size, 4), dtype=np.uint8)
+        buffer[..., 0] = rgb[..., 2].T
+        buffer[..., 1] = rgb[..., 1].T
+        buffer[..., 2] = rgb[..., 0].T
+        buffer[..., 3] = np.where(np.isfinite(plane), 255, 0).T
+        buffer = np.ascontiguousarray(buffer)
+        image = QImage(buffer.data, kx.size, ky.size, 4 * kx.size,
+                       QImage.Format_ARGB32).copy()
+        return (image, (float(kx[0]), float(kx[-1])), (float(ky[0]), float(ky[-1])),
+                self.map_azimuth.value())
+
     def _step_shown(self, index):
         self.view.mode = "zone" if index == 3 else (
             self.view.mode if index == 4 else "real")
@@ -1041,10 +1256,16 @@ class CrystalDialog(QDialog):
         except (ValueError, ZeroDivisionError, FloatingPointError):
             return
         self.view.zone_normal = tuple(normal)
-        self.view.zone_planes = [
-            {"height": height.value() * length, "colour": colour.colour,
-             "alpha": 0.45}
-            for box, height, colour in self.plane_rows if box.isChecked()]
+        self.view.zone_planes = []
+        for box, height, colour, source, energy in self.plane_rows:
+            if not box.isChecked():
+                continue
+            plane = {"height": height.value() * length, "colour": colour.colour,
+                     "alpha": 0.45}
+            if source.currentIndex() > 0 and abs(abs(normal[2]) - 1.0) < 1e-6:
+                plane["picture"] = self.plane_picture(source.currentText(),
+                                                      energy.value())
+            self.view.zone_planes.append(plane)
         self.view.zone_path = [l for l in parse_path(self.path_edit.text())
                                if l != "|"]
         self.view.zone_labels = self.zone_labels_box.isChecked()

@@ -45,7 +45,8 @@ from scipy import ndimage
 __all__ = ["BandGrid", "WannierModel", "BandPath", "sample_path", "kz_on_sphere",
            "kz_of", "bands_along_cut", "contours", "contour_lines",
            "fit_alignment", "reciprocal_of", "parse_path", "named_path",
-           "spectral_function", "Alignment", "K_PER_SQRT_EV", "KZ_FACTOR"]
+           "spectral_function", "Alignment", "K_PER_SQRT_EV", "KZ_FACTOR",
+           "node_line", "follow_band"]
 
 #: k (Å⁻¹) = K_PER_SQRT_EV * sqrt(E_kin (eV)) for a free electron
 K_PER_SQRT_EV = 0.5123167
@@ -346,6 +347,85 @@ def bands_along_cut(model, k_parallel, direction_deg: float = 0.0, *,
             out[band] = model.energies(k)[band]
         energy = out
     return energy
+
+
+def follow_band(model, k_points, start: int, band: int,
+                diabatic: bool = True) -> np.ndarray:
+    """One band's energies along ``k_points`` (N, 3), followed by its
+    character rather than its place in the energy order: from point
+    ``start`` (where it is band ``band`` counted from the bottom) each next
+    point takes the eigenvector that overlaps most with the band's
+    character at ``start`` (``diabatic``, the default: through crossings
+    and small anticrossings alike, as a band is seen in a measurement) or
+    with the previous point's (adiabatic: round an anticrossing). Either
+    way a band goes straight through a true crossing (a Dirac point),
+    where sorting the energies would bend it onto the other band. For a
+    Hamiltonian (:class:`WannierModel`); a band grid has no eigenvectors
+    and is followed by the energies' own continuity instead."""
+    k_points = np.asarray(k_points, dtype=float)
+    n = len(k_points)
+    out = np.full(n, np.nan)
+    if isinstance(model, WannierModel):
+        values, vectors = model.diagonalise(k_points)
+        values = values - model.fermi
+        for direction in (1, -1):
+            current = band
+            out[start] = values[start, current]
+            previous = vectors[start, :, current]
+            reference = previous
+            for i in range(start + direction, n if direction == 1 else -1, direction):
+                overlap = np.abs(np.conj(reference) @ vectors[i]) ** 2
+                current = int(np.argmax(overlap))
+                previous = vectors[i, :, current]
+                if not diabatic:
+                    reference = previous
+                out[i] = values[i, current]
+        return out
+    energies = model.energies(k_points)
+    for direction in (1, -1):
+        current, last, slope = band, energies[band, start], 0.0
+        out[start] = last
+        for i in range(start + direction, n if direction == 1 else -1, direction):
+            current = int(np.argmin(np.abs(energies[:, i] - (last + slope))))
+            slope, last = energies[current, i] - last, energies[current, i]
+            out[i] = last
+    return out
+
+
+def node_line(model, k_parallel, kz_values, direction_deg: float = 0.0,
+              bands=None):
+    """Where two bands touch along a cut, followed through k_z: a Dirac
+    line node. For each k_z the cut (in-plane momenta ``k_parallel`` along
+    ``direction_deg``) is searched for the smallest gap between ``bands``
+    (two band indices; default: the pair closest anywhere on the first
+    cut). Returns ``(k (n,), E (n,), gap (n,))`` -- the node's momentum,
+    energy (the two bands' mean there) and the gap left (0 for a true
+    crossing, more where it opens)."""
+    k_parallel = np.asarray(k_parallel, dtype=float)
+    out_k, out_e, out_gap = [], [], []
+    for kz in np.atleast_1d(np.asarray(kz_values, dtype=float)):
+        energies = bands_along_cut(model, k_parallel, direction_deg, kz=float(kz))
+        if bands is None:
+            gaps = np.abs(np.diff(energies, axis=0))
+            row = int(np.unravel_index(np.argmin(gaps), gaps.shape)[0])
+            bands = (row, row + 1)
+        i, j = bands
+        gap = np.abs(energies[j] - energies[i])
+        at = int(np.argmin(gap))
+        # sub-sample: the gap is |linear| near a crossing, so interpolate the
+        # signed difference to its zero where it changes sign
+        signed = energies[j] - energies[i]
+        k_at, e_at = k_parallel[at], 0.5 * (energies[i][at] + energies[j][at])
+        for lo in (at - 1, at):
+            if 0 <= lo < k_parallel.size - 1 and signed[lo] * signed[lo + 1] < 0:
+                t = signed[lo] / (signed[lo] - signed[lo + 1])
+                k_at = k_parallel[lo] + t * (k_parallel[lo + 1] - k_parallel[lo])
+                e_at = float(np.interp(k_at, k_parallel, 0.5 * (energies[i] + energies[j])))
+                break
+        out_k.append(float(k_at))
+        out_e.append(float(e_at))
+        out_gap.append(float(gap[at]))
+    return np.array(out_k), np.array(out_e), np.array(out_gap)
 
 
 # --------------------------------------------------------------------------

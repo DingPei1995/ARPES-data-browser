@@ -140,7 +140,7 @@ class AxesSpec:
 #: what a snapshot of a scene keeps: everything :func:`paint_scene` reads
 SCENE_FIELDS = ("faces", "bounds", "camera", "levels", "gamma", "colormap",
                 "flip", "show_edges", "show_axes", "axis_labels", "background",
-                "cull", "image", "styles", "axes")
+                "cull", "image", "styles", "axes", "marks", "frame_color")
 
 
 class SceneSnapshot:
@@ -156,6 +156,7 @@ class SceneSnapshot:
         self.styles = ({axis: replace(style) for axis, style in self.styles.items()}
                        if self.styles else None)
         self.axes = copy.deepcopy(self.axes)
+        self.marks = copy.deepcopy(self.marks or [])
         if self.image is not None:
             self.image = np.array(self.image, copy=True)
 
@@ -193,7 +194,8 @@ def _shade(face):
     return 0.78 + 0.22 * float(abs(np.dot(normal, light)))
 
 
-def _text_beside(painter, metrics, text, point, normal, angle: float = 0.0):
+def _text_beside(painter, metrics, text, point, normal, angle: float = 0.0,
+                 measure=None):
     """Draw ``text`` just beyond ``point`` in the direction ``normal`` (a
     unit screen vector), so it never overlaps the line it labels, turned by
     ``angle`` degrees. Returns how far it reaches along ``normal``."""
@@ -205,13 +207,44 @@ def _text_beside(painter, metrics, text, point, normal, angle: float = 0.0):
     along_y = abs(np.sin(theta)) * width + abs(np.cos(theta)) * height
     reach = abs(normal[0]) * along_x + abs(normal[1]) * along_y
     centre = np.asarray(point, dtype=float) + normal * (reach / 2.0)
+    if measure is not None:
+        # where it would be drawn, not drawn: for fitting the picture
+        measure.append(QRectF(centre[0] - along_x / 2.0, centre[1] - along_y / 2.0,
+                              along_x, along_y))
+        return reach
     painter.save()
     painter.translate(QPointF(*centre))
     painter.rotate(angle)
-    painter.drawText(QRectF(-width / 2.0, -height / 2.0, width, height),
-                     Qt.AlignCenter, text)
+    if "_" in text or "^" in text:
+        _draw_markup_centred(painter, text, width, metrics)
+    else:
+        painter.drawText(QRectF(-width / 2.0, -height / 2.0, width, height),
+                         Qt.AlignCenter, text)
     painter.restore()
     return reach
+
+
+def _draw_markup_centred(painter, text, width, metrics):
+    """``text`` with "E_F"-style sub- and superscripts, centred on the
+    painter's origin (the figure's own markup rules)."""
+    from tools.output.figure import parse_markup
+
+    base = QFont(painter.font())
+    small = QFont(base)
+    small.setPointSizeF(base.pointSizeF() * 0.7) if base.pointSizeF() > 0 else \
+        small.setPixelSize(max(1, int(base.pixelSize() * 0.7)))
+    runs = parse_markup(text)
+    total = sum(QFontMetricsF(base if kind == "base" else small).horizontalAdvance(run)
+                for run, kind in runs)
+    x = -total / 2.0
+    baseline = 0.5 * (metrics.ascent() - metrics.descent())
+    for run, kind in runs:
+        font = base if kind == "base" else small
+        painter.setFont(font)
+        shift = {"sub": 0.3, "super": -0.45}.get(kind, 0.0) * metrics.height()
+        painter.drawText(QPointF(x, baseline + shift), run)
+        x += QFontMetricsF(font).horizontalAdvance(run)
+    painter.setFont(base)
 
 
 def paint_scene(state, painter, rect, *, font=None, title_font=None,
@@ -232,17 +265,12 @@ def paint_scene(state, painter, rect, *, font=None, title_font=None,
     font = QFont(font) if font is not None else QFont()
     title_font = QFont(title_font) if title_font is not None else QFont(font)
     color = QColor(color) if color is not None else QColor("#202020")
-    furniture = 0.0
-    if getattr(state, "axes", None) is not None:
-        metrics = QFontMetricsF(font)
-        tick = float(tick_px) if tick_px else 0.45 * metrics.height()
-        furniture = (tick + 0.9 * metrics.height()
-                     + metrics.horizontalAdvance("-00.00")
-                     + QFontMetricsF(title_font).height())
-    scale, offset = _fit_for(state, width, height, furniture)
+    has_axes = getattr(state, "axes", None) is not None
+    scale, offset = _fit_for(state, width, height, 1.0 if has_axes else 0.0)
+    fit = {"scale": scale, "offset": offset}
 
     def to_pixels(screen):
-        out = np.asarray(screen, dtype=float) * scale + offset
+        out = np.asarray(screen, dtype=float) * fit["scale"] + fit["offset"]
         out[:, 1] = height - out[:, 1]
         out[:, 0] += rect.x()
         out[:, 1] += rect.y()
@@ -251,6 +279,9 @@ def paint_scene(state, painter, rect, *, font=None, title_font=None,
     def world(points):
         screen, _ = state.camera.project(np.atleast_2d(points), state.bounds)
         return to_pixels(screen)
+
+    if has_axes:
+        _fit_with_labels(state, rect, fit, world, font, title_font, tick_px)
 
     if state.image is not None:
         values = np.asarray(state.image, dtype=float)
@@ -288,12 +319,22 @@ def paint_scene(state, painter, rect, *, font=None, title_font=None,
         painter.setTransform(_face_transform(pixels, nu, nv), True)
         painter.drawImage(QRectF(0, 0, nu, nv), qimage)
         painter.restore()
-        if state.show_edges:
+        frame = getattr(state, "frame_color", "")
+        if frame:
+            # a stacked slice: its whole outline, so each layer reads as a
+            # sheet even where it holds only background
+            painter.setPen(QPen(QColor(frame), line_px))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPolygon(QPolygonF([QPointF(*p) for p in pixels]))
+        elif state.show_edges:
             painter.setPen(QPen(QColor(0, 0, 0, 0x33), line_px))
             for i, draw in enumerate(real_edges[id(face)]):
                 if draw:
                     painter.drawLine(QPointF(*pixels[i]),
                                      QPointF(*pixels[(i + 1) % 4]))
+
+    for mark in getattr(state, "marks", None) or []:
+        _paint_mark(mark, painter, world, font, line_px)
 
     if getattr(state, "axes", None) is not None:
         _paint_data_axes(state, painter, world, font, title_font, line_px,
@@ -302,13 +343,92 @@ def paint_scene(state, painter, rect, *, font=None, title_font=None,
         _paint_tripod(state, painter, rect, font)
 
 
+def _fit_with_labels(state, rect, fit, world, font, title_font, tick_px):
+    """Scale the box so that it *and its axis labels* fill ``rect``.
+
+    The labels are a fixed size in pixels while the box scales, so a
+    fixed margin for them is either wasted on a large panel or eats a
+    small one whole. Here they are measured where they fall: the picture
+    is ``scale x box + labels`` across, solved for the scale, then
+    centred."""
+    bounds = state.bounds
+    corners = np.array([[bounds[0][i], bounds[1][j], bounds[2][k]]
+                        for i in (0, 1) for j in (0, 1) for k in (0, 1)], float)
+    margin = 0.03
+    for _round in range(3):
+        rects = []
+        _paint_data_axes(state, None, world, font, title_font, 1.0, tick_px,
+                         QColor("black"), measure=rects)
+        box = world(corners)
+        lo, hi = box.min(axis=0), box.max(axis=0)
+        all_lo, all_hi = lo.copy(), hi.copy()
+        for r in rects:
+            all_lo = np.minimum(all_lo, [r.left(), r.top()])
+            all_hi = np.maximum(all_hi, [r.right(), r.bottom()])
+        span = np.maximum(hi - lo, 1e-9)
+        extra = (all_hi - all_lo) - span
+        room = np.array([rect.width(), rect.height()]) * (1 - 2 * margin) - extra
+        factor = float(np.min(np.maximum(room, 0.1 * span) / span))
+        fit["scale"] *= factor
+        # centre what is drawn (box and labels) in the rect
+        box = world(corners)
+        rects = []
+        _paint_data_axes(state, None, world, font, title_font, 1.0, tick_px,
+                         QColor("black"), measure=rects)
+        all_lo, all_hi = box.min(axis=0), box.max(axis=0)
+        for r in rects:
+            all_lo = np.minimum(all_lo, [r.left(), r.top()])
+            all_hi = np.maximum(all_hi, [r.right(), r.bottom()])
+        centre = 0.5 * (all_lo + all_hi)
+        want = np.array([rect.center().x(), rect.center().y()])
+        shift = want - centre
+        fit["offset"] = fit["offset"] + np.array([shift[0], -shift[1]])
+        if abs(factor - 1.0) < 0.01:
+            break
+
+
+def _paint_mark(mark, painter, world, font, line_px):
+    """A curve through points of the volume (the Dirac points of a stack of
+    cuts, a band followed through the layers), drawn on top, with its dots
+    and a label at its first point. ``mark`` is a dict: ``points`` (n, 3)
+    in data units, ``color``, ``width`` (x the axis line), ``dots``,
+    ``text``."""
+    points = np.asarray(mark.get("points") or [], dtype=float).reshape(-1, 3)
+    if not len(points):
+        return
+    pixels = world(points)
+    colour = QColor(mark.get("color", "#d62728"))
+    pen = QPen(colour, line_px * float(mark.get("width", 2.0)))
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    if mark.get("style") == "dashed":
+        pen.setStyle(Qt.DashLine)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    if len(pixels) > 1:
+        painter.drawPolyline(QPolygonF([QPointF(*p) for p in pixels]))
+    if mark.get("dots", True):
+        painter.setBrush(colour)
+        radius = 1.6 * pen.widthF()
+        for p in pixels:
+            painter.drawEllipse(QPointF(*p), radius, radius)
+    text = str(mark.get("text", "") or "")
+    if text:
+        painter.setFont(font)
+        painter.setPen(colour)
+        metrics = QFontMetricsF(font)
+        at = pixels[int(mark.get("text_at", 0)) % len(pixels)]
+        painter.drawText(QPointF(at[0] + 0.5 * metrics.height(),
+                                 at[1] - 0.4 * metrics.height()), text)
+
+
 def _paint_data_axes(state, painter, world, font, title_font, line_px,
-                     tick_px, color):
+                     tick_px, color, measure=None):
     """The coordinate axes, with round ticks and their values, along the
     lines :attr:`state.axes` chooses. Ticks and labels go on the side of
     each axis away from the middle of the box, where they cannot run into
     the picture they label."""
-    from tools.output.export import tick_format
+    from tools.output.export import tick_format, tick_values
 
     spec = state.axes
     metrics = QFontMetricsF(font)
@@ -316,7 +436,9 @@ def _paint_data_axes(state, painter, world, font, title_font, line_px,
     tick = float(tick_px) if tick_px else 0.45 * metrics.height()
     gap = 0.3 * metrics.height()
     centre = world([np.mean(b) for b in state.bounds])[0]
-    painter.setPen(QPen(color, line_px))
+    drawing = measure is None
+    if drawing:
+        painter.setPen(QPen(color, line_px))
     edges = spec.edges or V.auto_edges(state.camera, state.bounds)
     for d, start, end, ticks, step in V.axis_segments(
             state.bounds, edges, spec.directions, spec.shown):
@@ -330,17 +452,27 @@ def _paint_data_axes(state, painter, world, font, title_font, line_px,
         middle = (p0 + p1) / 2.0
         if np.dot(normal, middle - centre) < 0:
             normal = -normal
-        painter.setFont(font)
-        painter.drawLine(QPointF(*p0), QPointF(*p1))
+        # as many round ticks as there is room for their numbers
         fmt = tick_format(step)
+        label = max(metrics.horizontalAdvance(fmt % v) for v in ticks) if len(ticks) else 0
+        room = abs(along[0]) * label + abs(along[1]) * metrics.height()
+        target = int(np.clip(length / max(1.6 * room, 1.0), 2, 5))
+        lo_v, hi_v = sorted((start[d], end[d]))
+        ticks, step = tick_values(lo_v, hi_v, target)
+        fmt = tick_format(step)
+        if drawing:
+            painter.setFont(font)
+            painter.drawLine(QPointF(*p0), QPointF(*p1))
         reach = 0.0
         for value in ticks:
             point = start.copy()
             point[d] = value
             p = world(point)[0]
-            painter.drawLine(QPointF(*p), QPointF(*(p + normal * tick)))
+            if drawing:
+                painter.drawLine(QPointF(*p), QPointF(*(p + normal * tick)))
             reach = max(reach, _text_beside(painter, metrics, fmt % value,
-                                            p + normal * (tick + gap), normal))
+                                            p + normal * (tick + gap), normal,
+                                            measure=measure))
         # The title runs along its axis, never upside down, so a long
         # label beside an upright axis does not push out of the picture.
         angle = float(np.degrees(np.arctan2(along[1], along[0])))
@@ -348,9 +480,11 @@ def _paint_data_axes(state, painter, world, font, title_font, line_px,
             angle -= 180.0
         elif angle < -90.0:
             angle += 180.0
-        painter.setFont(title_font)
+        if drawing:
+            painter.setFont(title_font)
         _text_beside(painter, title_metrics, spec.titles[d],
-                     middle + normal * (tick + 2 * gap + reach), normal, angle)
+                     middle + normal * (tick + 2 * gap + reach), normal, angle,
+                     measure=measure)
 
 
 def _paint_tripod(state, painter, rect, font):
@@ -405,6 +539,8 @@ class SceneView(QWidget):
         self.image = None                    # a flat projected image, if any
         self.styles = None                   # {axis: FaceStyle}, or one look
         self.axes = None                     # AxesSpec, or no axes
+        self.marks = []                      # curves and labels on top
+        self.frame_color = ""                # outline every face (a stack)
         self.setMinimumSize(360, 320)
         self.setMouseTracking(True)
         self._drag = None
@@ -694,7 +830,7 @@ BALANCED_POINTS = 160
 
 #: the three views, by the name the launcher opens them with
 MODES = {"slices": "3D slices", "notch": "Notched cube",
-         "projection": "Volume projection"}
+         "projection": "Volume projection", "stack": "Stacked slices"}
 
 #: the eight corners of the box, as the signs of their coordinates
 CORNERS = (((-1, -1, -1), "− − −"), ((1, -1, -1), "+ − −"),
@@ -770,12 +906,21 @@ class VolumeWindow(QMainWindow):
             form.addWidget(self._projection_group())
             form.addWidget(self._flat_colour_group())
         else:
-            form.addWidget(self._slice_group() if mode == "slices"
-                           else self._notch_group())
+            form.addWidget({"slices": self._slice_group,
+                            "notch": self._notch_group,
+                            "stack": self._stack_group}[mode]())
             self.scene.styles = {d: FaceStyle(colormap, flip, self._auto_levels)
                                  for d in range(3)}
+            if mode == "stack":
+                # a layer is looked through where it holds only background
+                for style in self.scene.styles.values():
+                    style.fade = 0.35
+                self.scene.camera.elevation = 18.0
+                self.scene.frame_color = "#8a8a8a"
             self.scene.axes = AxesSpec(titles=tuple(self.labels))
             form.addWidget(self._colour_group())
+            if mode == "stack":
+                form.addWidget(self._marks_group())
             form.addWidget(self._axes_group())
         form.addWidget(self._camera_group())
         form.addLayout(self._output_row())
@@ -928,6 +1073,165 @@ class VolumeWindow(QMainWindow):
         hint.setWordWrap(True)
         form.addRow("", hint)
         return group
+
+    def _stack_group(self):
+        group = QGroupBox("Stack")
+        form = QFormLayout(group)
+        form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
+        self.stack_axis = QComboBox()
+        for d in range(3):
+            self.stack_axis.addItem(f"along {self.short_labels[d]}", d)
+        self.stack_axis.setCurrentIndex(2)
+        self.stack_axis.setToolTip(
+            "The axis the layers are stacked along: the energy for "
+            "constant-energy maps one above the other, k_z (or the photon "
+            "energy) for cuts one behind the other.")
+        self.stack_axis.currentIndexChanged.connect(lambda *_: (
+            self.even_positions(), self._camera_typed() if hasattr(self, "z_aspect") else None))
+        form.addRow("Layers", self.stack_axis)
+        self.stack_count = QSpinBox()
+        self.stack_count.setRange(1, 60)
+        self.stack_count.setValue(8)
+        self.stack_count.valueChanged.connect(lambda *_: self.even_positions())
+        form.addRow("How many", self.stack_count)
+        self.stack_positions = QLineEdit("")
+        self.stack_positions.setToolTip(
+            "Where each layer is, in the axis's units, separated by commas. "
+            "Filled in evenly from the number above; type your own.")
+        self.stack_positions.editingFinished.connect(self._queue)
+        form.addRow("At", self.stack_positions)
+        self.stack_width = spin(0.0, 0.0, 1e6, 0.01, 4)
+        self.stack_width.setToolTip("Each layer is the average over this width "
+                                    "round its position (0: the nearest "
+                                    "sample only).")
+        self.stack_width.valueChanged.connect(self._queue)
+        form.addRow("Integrate", self.stack_width)
+        self.stack_frame = QComboBox()
+        self.stack_frame.addItems(["grey", "black", "none"])
+        self.stack_frame.setToolTip("An outline round every layer.")
+        self.stack_frame.currentIndexChanged.connect(lambda *_: self._restyle())
+        form.addRow("Frames", self.stack_frame)
+        self.stack_spread = spin(1.0, 0.2, 10.0, 0.5, 1)
+        self.stack_spread.setToolTip(
+            "Stretch the box along the stacking axis, so the layers stand "
+            "apart and each shows whole from an oblique view.")
+        self.stack_spread.valueChanged.connect(lambda *_: self._camera_typed())
+        form.addRow("Spread", self.stack_spread)
+        hint = QLabel("<i>Fade low values (Colour) makes each layer's "
+                      "background transparent, so the layers behind show "
+                      "through.</i>")
+        hint.setWordWrap(True)
+        form.addRow("", hint)
+        self.even_positions()
+        return group
+
+    def even_positions(self):
+        """Spread the layers evenly over the stacking axis."""
+        axis = self.axes[self.stack_axis.currentData()]
+        n = self.stack_count.value()
+        lo, hi = float(axis.min()), float(axis.max())
+        if n == 1:
+            values = [0.5 * (lo + hi)]
+        else:
+            pad = 0.5 * (hi - lo) / n
+            values = np.linspace(lo + pad, hi - pad, n)
+        self.stack_positions.setText(", ".join(f"{v:.4g}" for v in values))
+        self._queue()
+
+    def set_stack(self, axis: int, positions, width: float = None):
+        """Stack along ``axis`` at ``positions`` (for scripts and tests)."""
+        self.stack_axis.blockSignals(True)
+        self.stack_axis.setCurrentIndex(int(axis))
+        self.stack_axis.blockSignals(False)
+        self.stack_positions.setText(", ".join(f"{float(v):.6g}" for v in positions))
+        if width is not None:
+            self.stack_width.setValue(float(width))
+        if hasattr(self, "z_aspect"):
+            self._camera_typed()
+        self.rebuild()
+
+    def _positions(self):
+        values = []
+        for part in self.stack_positions.text().replace(";", ",").split(","):
+            try:
+                values.append(float(part))
+            except ValueError:
+                continue
+        return values
+
+    def _marks_group(self):
+        group = QGroupBox("Mark a curve through the layers")
+        column = QVBoxLayout(group)
+        from PyQt5.QtWidgets import QTableWidget, QHeaderView
+        self.mark_table = QTableWidget(0, 3)
+        self.mark_table.setHorizontalHeaderLabels(self.short_labels)
+        self.mark_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.mark_table.setMaximumHeight(150)
+        self.mark_table.setToolTip("Points in the data's own units -- a Dirac "
+                                   "point on each layer -- joined by a curve "
+                                   "drawn over the stack.")
+        self.mark_table.itemChanged.connect(lambda *_: self._marks_changed())
+        column.addWidget(self.mark_table)
+        row = QHBoxLayout()
+        add = QPushButton("Add point")
+        add.clicked.connect(lambda: self._add_mark_row())
+        remove = QPushButton("Remove")
+        remove.clicked.connect(lambda: self._remove_mark_row())
+        row.addWidget(add)
+        row.addWidget(remove)
+        self.mark_colour = QComboBox()
+        self.mark_colour.addItems(["red", "black", "white", "blue", "green"])
+        self.mark_colour.currentIndexChanged.connect(lambda *_: self._marks_changed())
+        row.addWidget(self.mark_colour)
+        column.addLayout(row)
+        self.mark_text = QLineEdit("")
+        self.mark_text.setPlaceholderText("Label at the first point (e.g. DP)")
+        self.mark_text.editingFinished.connect(self._marks_changed)
+        column.addWidget(self.mark_text)
+        return group
+
+    def _add_mark_row(self, values=None):
+        from PyQt5.QtWidgets import QTableWidgetItem
+        row = self.mark_table.rowCount()
+        self.mark_table.blockSignals(True)
+        self.mark_table.insertRow(row)
+        if values is None:
+            values = [float(np.mean(a)) for a in self.axes]
+        for d, v in enumerate(values):
+            self.mark_table.setItem(row, d, QTableWidgetItem(f"{float(v):.6g}"))
+        self.mark_table.blockSignals(False)
+        self._marks_changed()
+
+    def _remove_mark_row(self):
+        row = self.mark_table.currentRow()
+        if row < 0:
+            row = self.mark_table.rowCount() - 1
+        if row >= 0:
+            self.mark_table.removeRow(row)
+            self._marks_changed()
+
+    def set_marks(self, points, text: str = "", colour: str = "red"):
+        """The curve through ``points`` ((n, 3), data units), labelled."""
+        self.mark_table.setRowCount(0)
+        for p in points:
+            self._add_mark_row(p)
+        self.mark_text.setText(text)
+        self.mark_colour.setCurrentText(colour)
+        self._marks_changed()
+
+    def _marks_changed(self):
+        points = []
+        for row in range(self.mark_table.rowCount()):
+            try:
+                points.append([float(self.mark_table.item(row, d).text())
+                               for d in range(3)])
+            except (AttributeError, ValueError):
+                continue
+        colour = {"red": "#d62728", "black": "#000000", "white": "#ffffff",
+                  "blue": "#1f4e9c", "green": "#2ca02c"}[self.mark_colour.currentText()]
+        self.scene.marks = ([{"points": points, "color": colour, "width": 2.0,
+                              "text": self.mark_text.text()}] if points else [])
+        self.scene.update()
 
     def _projection_group(self):
         group = QGroupBox("Projection")
@@ -1296,18 +1600,30 @@ class VolumeWindow(QMainWindow):
             self._queue()                    # the projection uses the levels
         self.scene.show_edges = self.edges.isChecked()
         self.scene.show_axes = self.tripod.isChecked()
+        if self.mode == "stack":
+            self.scene.frame_color = {"grey": "#8a8a8a", "black": "#000000",
+                                      "none": ""}[self.stack_frame.currentText()]
         self.scene.update()
 
     def _camera_typed(self, *_):
         self.scene.camera.azimuth = self.azimuth.value()
         self.scene.camera.elevation = self.elevation.value()
-        self.scene.camera.aspect = (1.0, 1.0, self.z_aspect.value())
+        self.scene.camera.aspect = self._camera_aspect()
         if self.mode == "projection":
             self._queue()               # a projection depends on the direction
         else:
             if hasattr(self, "axes_edge"):
                 self._show_auto_edges()
             self.scene.update()
+
+    def _camera_aspect(self):
+        """The box's proportions: the energy axis's from *z aspect*, and
+        in a stack the stacking axis stretched by *Spread*, so the layers
+        stand apart instead of covering one another."""
+        aspect = [1.0, 1.0, self.z_aspect.value()]
+        if self.mode == "stack" and hasattr(self, "stack_spread"):
+            aspect[self.stack_axis.currentData()] *= self.stack_spread.value()
+        return tuple(aspect)
 
     def _camera_moved(self):
         for box, value in ((self.azimuth, self.scene.camera.azimuth),
@@ -1352,6 +1668,16 @@ class VolumeWindow(QMainWindow):
                 self.note.setText(f"{len(faces)} faces built, "
                                   f"{len(V.visible(faces, self.scene.camera, bounds))}"
                                   f" facing the camera")
+            elif self.mode == "stack":
+                axis = self.stack_axis.currentData()
+                self.scene.image = None
+                self.scene.cull = False
+                faces = V.stack_faces(self.values, self.axes, axis,
+                                      self._positions(),
+                                      width=self.stack_width.value(), density=300)
+                self.scene.set_scene(faces, bounds)
+                self.note.setText(f"{len(faces)} layer(s) along "
+                                  f"{self.short_labels[axis]}")
             else:
                 self._build_projection(bounds)
         except Exception as exc:

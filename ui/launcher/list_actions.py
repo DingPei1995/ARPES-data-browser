@@ -53,6 +53,7 @@ RULES = {
     "slices3d": ("one", CUBES, "a map"),
     "slicefig": ("one", CUBES, "a map"),
     "notch3d": ("one", CUBES, "a map"),
+    "stack3d": ("one", CUBES, "a map"),
     "projection3d": ("one", CUBES, "a map"),
     "arithmetic": ("two", frozenset({"cut"}), "two cuts"),
     "combine": ("many", frozenset({"cut"}) | CUBES,

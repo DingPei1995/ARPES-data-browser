@@ -810,6 +810,107 @@ class BandsDialog(QDialog):
                           np.linspace(ky.min(), ky.max(), 161), calc_energy,
                           rotation_deg=self.direction_box.value(), **options)
 
+    def contour_points_k(self, xs, ys, energy):
+        """3-D k (in the calculation's frame) of contour points drawn on a
+        map's (k_x, k_y) at measured ``energy`` -- for their weights."""
+        c, s_ = (np.cos(np.deg2rad(-self.direction_box.value())),
+                 np.sin(np.deg2rad(-self.direction_box.value())))
+        xs, ys = np.asarray(xs, float), np.asarray(ys, float)
+        inplane = np.column_stack([c * xs - s_ * ys, s_ * xs + c * ys])
+        calc_energy = (energy - self.alignment.shift) / self.alignment.z
+        options = self._kz_options()
+        if "kz" in options:
+            return np.column_stack([inplane, np.full(len(xs), options["kz"])])
+        return B.kz_on_sphere(inplane, calc_energy, options["hv"],
+                              options["inner_potential"], options["work_function"])
+
+    def zone_overlays(self, x_range, y_range, colour="#d62728", style="dashed",
+                      width=0.6):
+        """The in-plane Brillouin zones (the calculation's lattice, turned
+        by the azimuth) over a (k_x, k_y) range, as overlays."""
+        from tools.crystal.bz2d import tile_2d, wigner_seitz_cell_2d
+        from tools.output import figure as F
+
+        if isinstance(self.model, B.BandPath):
+            return []
+        b = np.asarray(self.model.reciprocal, float)[:2, :2]
+        angle = np.deg2rad(self.direction_box.value())
+        turn = np.array([[np.cos(angle), -np.sin(angle)],
+                         [np.sin(angle), np.cos(angle)]])
+        g1, g2 = turn @ b[0], turn @ b[1]
+        cell = wigner_seitz_cell_2d(g1, g2)
+        # each edge once: neighbouring zones share their edges, and the same
+        # dashed line drawn twice, offset by its own dash, comes out solid
+        edges = {}
+        for tile in tile_2d(cell, g1, g2, x_range, y_range, margin=1):
+            for p, q in zip(tile[:-1], tile[1:]):
+                key = tuple(sorted((tuple(np.round(p, 6)), tuple(np.round(q, 6)))))
+                edges.setdefault(key, (p, q))
+        return [F.Overlay(xs=[float(p[0]), float(q[0])], ys=[float(p[1]), float(q[1])],
+                          color=colour, width_pt=width, style=style,
+                          name="Brillouin zone")
+                for p, q in edges.values()]
+
+    def contour_overlays(self, kx, ky, energy, colours=("#d62728", "#2ca02c"),
+                         width=0.8, style="solid", threshold=0.5):
+        """The calculated contours at ``energy`` as overlays: in the first
+        colour, or -- with a weight chosen in step 2 -- split where the
+        chosen orbital's weight crosses ``threshold``, the parts above it in
+        the second colour (a surface or orbital character told apart)."""
+        from tools.output import figure as F
+
+        weight = (self.weight_combo.currentText()
+                  if self.weight_combo.currentIndex() > 0 else None)
+        out = []
+        for band, xs, ys in self.map_contours(kx, ky, energy):
+            xs, ys = np.asarray(xs, float), np.asarray(ys, float)
+            if weight is None:
+                pieces = [(0, np.arange(xs.size))]
+            else:
+                w = self.model.weights_at(self.contour_points_k(xs, ys, energy),
+                                          weight)[band]
+                high = (w >= threshold).astype(int)
+                cuts = np.flatnonzero(np.diff(high)) + 1
+                pieces = []
+                for run in np.split(np.arange(xs.size), cuts):
+                    if run.size:
+                        # one point into the next run, so the pieces join
+                        end = min(run[-1] + 2, xs.size)
+                        pieces.append((int(high[run[0]]), np.arange(run[0], end)))
+            for which, idx in pieces:
+                if idx.size < 2:
+                    continue
+                out.append(F.Overlay(xs=list(map(float, xs[idx])),
+                                     ys=list(map(float, ys[idx])),
+                                     color=colours[which], width_pt=width,
+                                     style=style,
+                                     name=f"band {band + 1}"
+                                          + (f" ({weight})" if which else "")))
+        return out
+
+    def panel_contours(self, data=None, energy=None, *, zone=True,
+                       colours=("#d62728", "#2ca02c")):
+        """The calculated contours alone at ``energy``, over the compared
+        map's (k_x, k_y) range, with the zones dashed: the calculation's
+        half of a constant-energy comparison."""
+        from ui.viewers.curves import curve_panel
+
+        data = data or self._compare_data()
+        kx, ky, _plane, energy = self.map_plane(data, energy)
+        panel = curve_panel([float(kx.min()), float(kx.max())], [],
+                            x_label="k_x (Å⁻¹)", y_label="k_y (Å⁻¹)",
+                            name=f"calculation at {energy:+.2f} eV")
+        panel.data.x = np.array([float(kx.min()), float(kx.max())])
+        panel.data.y = np.array([float(ky.min()), float(ky.max())])
+        panel.x_range = (float(kx.min()), float(kx.max()))
+        panel.y_range = (float(ky.min()), float(ky.max()))
+        if zone:
+            panel.overlays += self.zone_overlays(panel.x_range, panel.y_range,
+                                                 colour="#d62728")
+        panel.overlays += self.contour_overlays(kx, ky, energy, colours)
+        panel.data.sources = self.provenance([])
+        return panel
+
     def draw_compare(self):
         view = self.compare_view
         for item in self._compare_items:
@@ -901,6 +1002,18 @@ class BandsDialog(QDialog):
             box.setChecked(True)
             g.addWidget(box)
             self.panel_boxes[key] = box
+        series = QHBoxLayout()
+        self.series_box = QCheckBox("Constant-energy series at")
+        self.series_box.setToolTip(
+            "For a compared map: at each energy, the measured map with the "
+            "zones dashed (top row) and the calculated contours alone "
+            "(bottom row) -- coloured by the weight chosen in step 2.")
+        self.series_energies = QLineEdit("0, -0.3, -0.6, -0.9")
+        self.series_energies.setToolTip("Energies (eV, E - E_F), separated "
+                                        "by commas.")
+        series.addWidget(self.series_box)
+        series.addWidget(self.series_energies, 1)
+        g.addLayout(series)
         compose = QPushButton("To figure composer...")
         compose.clicked.connect(lambda: self.to_figure_composer())
         g.addWidget(compose)
@@ -1001,7 +1114,7 @@ class BandsDialog(QDialog):
         return panel
 
     def panel_compare(self, data=None, colormap=None, colour="#ff2020",
-                      energy=None):
+                      energy=None, *, contours=True, zone=False):
         """The compared cut (calculation over it) or map (contours)."""
         from tools.output import figure as F
         from ui.panels.figure import panel_from_arrays
@@ -1030,11 +1143,13 @@ class BandsDialog(QDialog):
                                   f"{name} at {energy:+.2f} eV",
                                   colormap=colormap or self.colormap,
                                   sources=self.provenance([data]))
-        for band, xs, ys in self.map_contours(kx, ky, energy):
-            panel.overlays.append(F.Overlay(xs=list(map(float, xs)),
-                                            ys=list(map(float, ys)),
-                                            color=colour, width_pt=0.8,
-                                            name=f"band {band + 1}"))
+        if zone:
+            panel.overlays += self.zone_overlays(
+                (float(kx.min()), float(kx.max())),
+                (float(ky.min()), float(ky.max())), colour=colour)
+        if contours:
+            panel.overlays += self.contour_overlays(kx, ky, energy,
+                                                    (colour, "#2ca02c"))
         return panel
 
     def provenance(self, datasets) -> list:
@@ -1066,7 +1181,36 @@ class BandsDialog(QDialog):
                 out.append(maker())
             except ValueError as exc:
                 problems.append(str(exc))
+        if self.series_box.isChecked():
+            try:
+                out += self.series_panels()
+            except ValueError as exc:
+                problems.append(str(exc))
         return out, problems
+
+    def series_energies_list(self):
+        values = []
+        for part in self.series_energies.text().replace(";", ",").split(","):
+            try:
+                values.append(float(part))
+            except ValueError:
+                continue
+        return values
+
+    def series_panels(self, data=None, energies=None):
+        """The measured maps at each energy (zones dashed), then the
+        calculated contours alone at the same energies: a 2-row series."""
+        data = data or self._compare_data()
+        if data is None or data.kind != "k_map":
+            raise ValueError("a constant-energy series needs a k-map chosen in "
+                             "step 3")
+        energies = self.series_energies_list() if energies is None else energies
+        measured = [self.panel_compare(data, energy=e, contours=False, zone=True)
+                    for e in energies]
+        calculated = [self.panel_contours(data, energy=e) for e in energies]
+        for panel, e in zip(measured, energies):
+            panel.title = "E_F" if abs(e) < 1e-9 else f"E - E_F = {e:g} eV"
+        return measured + calculated
 
     def to_figure_composer(self, target=None, ask=True):
         from ui.panels.figure import FigureWindow, open_figure_windows

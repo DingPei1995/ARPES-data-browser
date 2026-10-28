@@ -151,3 +151,65 @@ def test_band_points_trace_a_measured_band():
     ks, es = C.band_points(values, k, e)
     assert ks.size > 50
     assert np.abs(es - (-0.8 + 0.7 * ks ** 2)).max() < 0.02
+
+
+def test_the_node_line_follows_one_crossing_through_kz():
+    """Two uncoupled bands with opposite in-plane slopes and different k_z
+    terms: the crossing's energy follows the difference."""
+    table = {}
+
+    def add(R, i, j, v):
+        table.setdefault(R, np.zeros((2, 2), complex))[i, j] += v
+
+    for o, (e0, t, kz) in enumerate(((-0.25, -0.10, -0.06), (-1.10, 0.15, -0.08))):
+        add((0, 0, 0), o, o, e0 + 6 * t)
+        for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (1, 1, 0), (-1, -1, 0)):
+            add(R, o, o, -t)
+        add((0, 0, 1), o, o, kz / 2)
+        add((0, 0, -1), o, o, kz / 2)
+    model = B.WannierModel(LATTICE, np.array(list(table), float),
+                           np.array(list(table.values())))
+    kz = np.linspace(0, np.pi / CC, 5)
+    k, e, gap = B.node_line(model, np.linspace(0.2, 0.8, 601), kz, 90.0)
+    assert np.all(gap < 0.01)
+    # E = -0.25 - 0.1 h - 0.06 c with h = (0.85 + 0.02 c) / 0.25, c = cos(kz c)
+    c = np.cos(kz * CC)
+    assert np.allclose(e, -0.25 - 0.1 * (0.85 + 0.02 * c) / 0.25 - 0.06 * c, atol=0.005)
+
+
+def test_two_fitted_branches_cross_at_the_dirac_point():
+    from tools.spectra import dispersion as DISP
+
+    rng = np.random.default_rng(3)
+    k = np.linspace(0.3, 0.7, 30)
+    up = DISP.fit_dispersion(k, 1.5 * (k - 0.5) - 0.6 + rng.normal(0, 0.003, k.size),
+                             energy_error=np.full(k.size, 0.003), order=1)
+    down = DISP.fit_dispersion(k, -1.2 * (k - 0.5) - 0.6 + rng.normal(0, 0.003, k.size),
+                               energy_error=np.full(k.size, 0.003), order=1)
+    ck, ce, sk, se = DISP.line_crossing(up, down)
+    assert ck == pytest.approx(0.5, abs=3 * sk + 1e-3)
+    assert ce == pytest.approx(-0.6, abs=3 * se + 1e-3)
+    assert 0 < se < 0.005
+
+
+def test_a_collapsed_peak_error_does_not_break_the_fit():
+    from tools.spectra import dispersion as DISP
+
+    k = np.linspace(0, 1, 10)
+    errors = np.full(10, 0.01)
+    errors[3] = 1e-13
+    fit = DISP.fit_dispersion(k, 0.5 * k - 0.2, k_error=errors, order=1)
+    assert fit.covariance is not None and np.all(np.isfinite(fit.errors))
+
+
+def test_a_stack_of_slices_averages_its_window():
+    from tools.processing import volume as V
+
+    x = np.linspace(-1, 1, 21)
+    y = np.linspace(-1, 1, 11)
+    e = np.linspace(-1, 0, 51)
+    cube = np.broadcast_to(e[None, None, :], (21, 11, 51)).copy()
+    faces = V.stack_faces(cube, (x, y, e), 2, [-0.5, -0.2], width=0.1)
+    assert [f.position for f in faces] == [-0.5, -0.2]
+    assert np.allclose(np.nanmean(faces[0].image), -0.5, atol=1e-6)
+    assert faces[0].outward == 0 and faces[0].axis == 2

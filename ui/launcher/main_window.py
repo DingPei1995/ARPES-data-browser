@@ -471,6 +471,12 @@ TOOLS = {
     "notch3d": ("Notched cube...",
              "The cube with one corner cut away: a constant-energy map and "
              "two dispersions in one picture."),
+    "stack3d": ("Stacked slices...",
+             "Parallel slices of the cube stacked in 3-D -- constant-energy "
+             "maps one above another up the energy axis, or cuts one behind "
+             "another along k_z -- each layer's background transparent, "
+             "with a curve marked through the layers (a Dirac point "
+             "followed). For figures of how a band evolves."),
     "projection3d": ("Volume projection...",
              "The whole volume projected along the view: maximum intensity, "
              "sum, alpha composite, or a shaded isosurface."),
@@ -552,7 +558,7 @@ TOOL_SECTIONS = (
                                        "symmetry", "ridge")),
         ("2D only \u2014 cuts", ("stack", "mdcfit", "edcfit", "arithmetic")),
         ("3D only \u2014 maps", ("slicefig", "slices3d", "notch3d",
-                                  "projection3d")),
+                                  "projection3d", "stack3d")),
     )),
     # What is worked out rather than measured: the crystal itself, band
     # models fitted to the data, and calculated band structures.

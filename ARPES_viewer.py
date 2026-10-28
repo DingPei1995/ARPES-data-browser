@@ -602,6 +602,7 @@ def run_list_action(name):
         "corelevel": open_core_level_check,
         "slices3d": lambda: open_volume_view("slices"),
         "notch3d": lambda: open_volume_view("notch"),
+        "stack3d": lambda: open_volume_view("stack"),
         "projection3d": lambda: open_volume_view("projection"),
         "arithmetic": open_cut_arithmetic,
         "combine": combine_selected,
@@ -1779,10 +1780,12 @@ def open_stack_plot():
             "take a slice of it first, or convert it to a cut.")
         return None
     scan = data.scan
+    from ui.panels.figure import _dataset_sources
     try:
         window = StackWindow(scan.value, (scan.x, scan.y),
                              (scan.labels.get("x", "x"), scan.labels.get("y", "y")),
-                             label_for(key), win, default_colormap)
+                             label_for(key), win, default_colormap,
+                             sources=_dataset_sources(data))
     finally:
         data.close()                     # the window holds a copy
     window.datasetsCreated.connect(_list_computed)
@@ -2077,7 +2080,20 @@ def open_crystal_structure():
     """The crystal in real space (ui.panels.crystal)."""
     from ui.panels.crystal import CrystalDialog
 
-    return _show_tool(CrystalDialog(win))
+    # Selected k-maps can lie on the Brillouin zone's planes; anything else
+    # selected is simply not used (the crystal needs no dataset).
+    datasets = []
+    for key in selected_keys():
+        try:
+            data = load_dataset(key)
+        except Exception:                                    # noqa: BLE001
+            continue
+        if data.kind == "k_map":
+            datasets.append((label_for(key), data))
+        else:
+            data.close()
+    return _show_tool(CrystalDialog(win, datasets, default_colormap,
+                                    default_flip), datasets)
 
 
 def combine_selected(ask=None, dialog_hook=None):

@@ -229,9 +229,11 @@ CALC_SHIFT = -0.05
 ORBITALS = ("Ti-dz2", "Se-pxy", "Ti-dxy", "Se-pz")
 #: (onsite at Gamma, t (eV, per unit of h), k_z amplitude) of each orbital:
 #: E = e0 + t h(k) + kz_amp cos(k_z c), h = 6 - f(k) as in _hexagonal
-_ORBITAL_BANDS = ((-0.75, 0.120, 0.10), (-0.25, -0.100, -0.06),
-                  (0.25 - 0.15 * 9.0, 0.150, 0.0), (-1.20, 0.012, 0.03))
-_MIXING = 0.06               # orbital 0 <-> 1, eV, on site
+#: orbitals 1 and 2 are not mixed, so their bands cross: a line of Dirac
+#: points through the zone, whose energy follows orbital 2's k_z term
+_ORBITAL_BANDS = ((-0.75, 0.120, 0.04), (-0.25, -0.100, -0.06),
+                  (0.25 - 0.15 * 9.0, 0.150, -0.08), (-1.20, 0.012, 0.03))
+_MIXING = 0.03               # orbital 0 <-> 1, eV, on site
 
 
 def lattice_vectors():
@@ -356,12 +358,14 @@ def bulk_hv_scan(rng):
                          0, None))
     k = np.stack([0 * kpar, kpar, kz], axis=-1)
     flux = (1.0 + 1.5 * np.exp(-((hv - 65) / 25) ** 2))[:, None, None]
-    cube = _counts(_bulk_spectral(model, k, e, "LH") * flux, 110.0, rng)
+    # LV: both branches of the line node bright (in LH one is faint)
+    cube = _counts(_bulk_spectral(model, k, e, "LV") * flux, 110.0, rng)
     return {"kind": "kz_map", "axes": (hv, slit, e), "value": cube,
             "labels": {"x": "Photon energy (eV)", "k": "Angle, slit (deg)",
                        "z": "E - E_F (eV)"},
             "info": _info(**{"axis0.role": "photon_energy",
-                             "photon_energy_eV": float(hv.mean())})}
+                             "photon_energy_eV": float(hv.mean()),
+                             "cassiopee.polarisation": "LV"})}
 
 
 #: X-ray lines (keV) of an EDS spectrum of the crystal, and their heights
@@ -422,6 +426,49 @@ Se1 Se 0.33333 0.66667 0.255
 """
 
 
+#: A layered tetragonal crystal of the ZrSiS type (P4/nmm, origin choice
+#: 2), for the structure figure: square Si nets between Hf-S slabs, which
+#: cleave between the S layers.
+TETRAGONAL_CIF = """data_demo_HfSiS_type
+_chemical_name_common 'demo HfSiS-type crystal'
+_cell_length_a 3.52
+_cell_length_b 3.52
+_cell_length_c 8.00
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_symmetry_space_group_name_H-M 'P 4/n m m'
+_space_group_IT_number 129
+loop_
+_symmetry_equiv_pos_as_xyz
+'x, y, z'
+'-x+1/2, -y+1/2, z'
+'-y+1/2, x, z'
+'y, -x+1/2, z'
+'-x, y+1/2, -z'
+'x+1/2, -y, -z'
+'y+1/2, x+1/2, -z'
+'-y, -x, -z'
+'-x, -y, -z'
+'x+1/2, y+1/2, -z'
+'y+1/2, -x, -z'
+'-y, x+1/2, -z'
+'x, -y+1/2, z'
+'-x+1/2, y, z'
+'-y+1/2, -x+1/2, z'
+'y, x, z'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Hf1 Hf 0.25 0.25 0.255
+Si1 Si 0.75 0.25 0.0
+S1 S 0.25 0.25 0.62
+"""
+
+
 def write_calculation(folder: str) -> "list[str]":
     """The "calculation" of the crystal, as a theory group would send it:
     a Wannier90 Hamiltonian (``demo_calc_hr.dat`` + ``demo_calc.win``) and
@@ -438,7 +485,10 @@ def write_calculation(folder: str) -> "list[str]":
     cif = os.path.join(folder, "demo_crystal.cif")
     with open(cif, "w", encoding="utf-8") as handle:
         handle.write(CIF.format(a=LATTICE_A, c=LATTICE_C))
-    return [hr, os.path.join(folder, "demo_calc.win"), bxsf, cif]
+    tetragonal = os.path.join(folder, "demo_tetragonal_crystal.cif")
+    with open(tetragonal, "w", encoding="utf-8") as handle:
+        handle.write(TETRAGONAL_CIF)
+    return [hr, os.path.join(folder, "demo_calc.win"), bxsf, cif, tetragonal]
 
 
 def write_all(folder: str) -> "list[str]":

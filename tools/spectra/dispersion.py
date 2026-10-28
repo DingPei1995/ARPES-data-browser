@@ -170,6 +170,7 @@ def fit_dispersion(k, energy, *, k_error=None, energy_error=None,
 
     sigma = (energy_error[good] if energy_error is not None
              else np.ones(kf.shape))
+    sigma = np.maximum(sigma, 0.1 * float(np.median(sigma)))   # see below
     coefficients = None
     for _ in range(max(1, int(iterations))):
         scaled = design / sigma[:, None]
@@ -183,6 +184,10 @@ def fit_dispersion(k, energy, *, k_error=None, energy_error=None,
         sigma = np.hypot(base, extra)
         sigma = np.where(sigma > 0, sigma, np.nanmedian(sigma[sigma > 0])
                          if np.any(sigma > 0) else 1.0)
+        # a peak fit that collapsed reports an error of ~1e-13: one such
+        # point would take the whole weight (and make the normal matrix
+        # singular), so no point counts for more than ten typical ones
+        sigma = np.maximum(sigma, 0.1 * float(np.median(sigma)))
 
     model = design @ coefficients
     dof = max(int(kf.size - coefficients.size), 1)
@@ -196,6 +201,37 @@ def fit_dispersion(k, energy, *, k_error=None, energy_error=None,
         errors = np.full(coefficients.size, np.nan)
     return Dispersion(coefficients, errors, int(order), kf, ef, sigma, model,
                       chi2, "x" if k_error is not None else "y", covariance)
+
+
+def line_crossing(first: Dispersion, second: Dispersion):
+    """Where two straight branches meet -- the Dirac point of a cone fitted
+    as its two linear sides: ``(k, E, k_error, E_error)``.
+
+    The errors propagate each line's coefficient covariance (the two fits
+    are independent); a pair that is parallel within its errors has no
+    crossing and gives NaN.
+    """
+    if first.order != 1 or second.order != 1:
+        raise ValueError("the crossing is of two straight lines (order 1)")
+    a1, b1 = (float(v) for v in first.coefficients)
+    a2, b2 = (float(v) for v in second.coefficients)
+    if abs(a1 - a2) < 1e-12:
+        return (float("nan"),) * 4
+    k = (b2 - b1) / (a1 - a2)
+    energy = a1 * k + b1
+    # derivatives of (k, E) with respect to (a1, b1, a2, b2)
+    dk = np.array([-k, -1.0, k, 1.0]) / (a1 - a2)
+    dE = np.array([k, 1.0, 0.0, 0.0]) + a1 * dk
+    covariance = np.zeros((4, 4))
+    for offset, fit in ((0, first), (2, second)):
+        if fit.covariance is not None:
+            covariance[offset:offset + 2, offset:offset + 2] = fit.covariance
+        else:
+            covariance[offset:offset + 2, offset:offset + 2] = np.diag(
+                np.asarray(fit.errors, float) ** 2)
+    k_error = float(np.sqrt(max(dk @ covariance @ dk, 0.0)))
+    e_error = float(np.sqrt(max(dE @ covariance @ dE, 0.0)))
+    return float(k), float(energy), k_error, e_error
 
 
 @dataclass

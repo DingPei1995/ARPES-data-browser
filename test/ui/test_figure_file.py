@@ -221,3 +221,39 @@ def test_the_bands_window_fits_and_names_its_sources(app, tmp_path):
     assert panel.data.sources[1]["companions"][0].endswith("c.win")
     spectrum = dialog.build_spectrum()
     assert spectrum.kind == "cut" and spectrum.scan.value.shape == (k.size, e.size)
+
+
+def test_the_stacked_slices_view_draws_layers_and_a_mark(app):
+    from ui.panels.volume import VolumeWindow
+
+    rng = np.random.default_rng(1)
+    axes = (np.linspace(-1, 1, 30), np.linspace(-1, 1, 30), np.linspace(-1, 0, 40))
+    window = VolumeWindow(rng.random((30, 30, 40)), axes, ("k_x", "k_y", "E - E_F"),
+                          "m", mode="stack")
+    window.set_stack(2, [-0.8, -0.5, -0.2], width=0.05)
+    assert len(window.scene.faces) == 3
+    window.set_marks([[0, 0.5, -0.5], [0, 0.4, -0.2]], "DP")
+    assert window.scene.marks[0]["text"] == "DP"
+    image = window.scene.grab().toImage()
+    assert not image.isNull()
+    panel = window.figure_panel()
+    assert panel.data.kind == "scene3d" and panel.data.scene.marks
+    window.close()
+
+
+def test_points_with_error_bars_are_drawn(app):
+    from ui.panels.figure import FigureWindow
+    from ui.viewers.curves import curve_panel
+
+    panel = curve_panel([0, 1, 2], [("c", np.array([0.0, 1.0, 0.5]), "#000000")],
+                        x_label="x", y_label="y", name="p")
+    panel.overlays.append(nf.Overlay(xs=[0.5, 1.5], ys=[0.2, 0.8], color="#ff0000",
+                                     marker="o", line=False, y_errors=[0.1, 0.2]))
+    window = FigureWindow([panel], "f")
+    image = window.painter.to_image()
+    assert not image.isNull()
+    tools = window._tools
+    tools.overlay_list.setCurrentRow(0)
+    tools.curve_marker.setCurrentIndex(2)        # squares
+    tools.restyle_curves([0])
+    assert panel.overlays[0].marker == "s"

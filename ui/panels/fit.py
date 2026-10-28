@@ -1517,10 +1517,37 @@ class DispersionWindow(QMainWindow):
                 f"<b>Stable out to a window of {widest:.4g}"
                 f"{' eV' if velocity else ' Å⁻¹'}</b>: "
                 f"{value:.4g} ± {error:.2g} {unit}{extra}")
+        if velocity:
+            lines += self._crossings()
         lines.append(f"<i>Weighted by the error on "
                      f"{'k' if k_error is not None else 'E'}, which is the "
                      f"axis the fit actually measured.</i>")
         self.summary.setText("<br>".join(lines))
+
+    def _crossings(self):
+        """Where this band's line meets each other band's: the Dirac point
+        of a cone fitted as its two straight sides."""
+        out = []
+        this = self.band_choice.currentIndex()
+        on_k = self.series.error_axis() == "x"
+        for other in range(len(self.series.names)):
+            if other == this:
+                continue
+            k, energy, error = self.series.band(other)
+            if k.size < 3:
+                continue
+            try:
+                line = DISP.fit_dispersion(
+                    k, energy, k_error=error if on_k else None,
+                    energy_error=None if on_k else error, order=1)
+                ck, ce, sk, se = DISP.line_crossing(self.fit, line)
+            except (ValueError, np.linalg.LinAlgError):
+                continue
+            if np.isfinite(ck):
+                out.append(f"Crosses {self.series.names[other]} at k = {ck:.4g} "
+                           f"± {sk:.2g} Å⁻¹, E = {ce:.4g} ± {se:.2g} eV "
+                           f"(a Dirac point, if they are its two sides)")
+        return out
 
     def export_band(self):
         index = self.band_choice.currentIndex()
