@@ -54,6 +54,19 @@ pip install PyQt5 pyqtgraph numpy h5py scipy
 python ARPES_viewer.py
 ```
 
+**Mac 用户无需打开终端：** 双击程序文件夹中的 **`ARPES viewer.app`** 即可启动
+（可以拖到 Dock 里常驻）。它会自动找到装有上述依赖包的 Python——与终端里
+`python3` 相同的那个，包括 conda 环境——并记住它。如果没有任何 Python 装了这些
+包，对话框会给出 `pip install` 命令（已复制到剪贴板，粘贴到终端运行一次即可），
+或让你手动选择一个 Python。
+
+- 如果 macOS 提示 app *来自身份不明的开发者、无法打开*（程序是以 ZIP 下载的）：
+  打开 **系统设置 → 隐私与安全性**，点 **仍要打开**（旧版 macOS：右键 app →
+  **打开**）。只需第一次。
+- 把 app 复制到程序文件夹以外（例如"应用程序"）时，第一次会询问程序文件夹的位置。
+- 如果程序因错误退出，对话框会显示 `~/.arpes_viewer/launcher.log` 的最后几行；
+  报告 bug 时请附上该文件。
+
 支持读取的数据：
 
 | 线站 / 来源 | 文件 |

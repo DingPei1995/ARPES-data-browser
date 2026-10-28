@@ -64,6 +64,23 @@ Puis, depuis le dossier `ARPES_viewer` :
 python ARPES_viewer.py
 ```
 
+**Sur Mac, pas besoin du Terminal :** double-cliquez **`ARPES viewer.app`**
+dans le dossier du programme (glissez-la dans le Dock pour l'y garder). Elle
+trouve le Python qui a les paquets ci-dessus -- le même que `python3` dans le
+Terminal, environnements conda compris -- et le retient. Si aucun ne les a,
+une fenêtre donne la commande `pip install` (déjà copiée dans le
+presse-papiers : collez-la une fois dans le Terminal), ou permet de choisir
+un Python.
+
+- Si macOS dit que l'app *provient d'un développeur non identifié* (le
+  programme a été téléchargé en ZIP) : **Réglages Système → Confidentialité
+  et sécurité → Ouvrir quand même** (macOS plus ancien : clic droit sur
+  l'app → **Ouvrir**). Seulement la première fois.
+- Une copie de l'app placée hors du dossier du programme (dans Applications,
+  par exemple) demande une fois où il se trouve.
+- Si le programme s'arrête sur une erreur, la fenêtre montre la fin de
+  `~/.arpes_viewer/launcher.log` ; joignez ce fichier à un rapport de bogue.
+
 Le programme lit :
 
 | Ligne de lumière / source | Fichiers |
