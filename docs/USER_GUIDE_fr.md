@@ -9,9 +9,11 @@ principale. Signaler un bogue, poser une question, obtenir la dernière version 
 <https://github.com/DingPei1995/ARPES-data-browser> (merci d'indiquer le numéro
 de version en signalant un bogue).
 
-Ce guide présente les principales fonctions du programme, captures d'écran à
-l'appui, dans l'ordre où on les utilise d'habitude : charger les données, les
-visualiser, les convertir en impulsion, les analyser et préparer des figures.
+Ce guide présente les fonctions du programme, captures d'écran à l'appui,
+dans l'ordre du panneau d'outils : les premiers pas (installation,
+chargement, fenêtre principale et fenêtres de visualisation), puis les
+onglets **Basic**, **Advanced** et **Calculation**, puis les figures — pour
+finir par deux figures construites pas à pas dans le composeur de figures.
 Le contexte technique de chaque étape (formules, résultats des tests, choix
 de conception) se trouve dans le [README](../README.md) et le
 [CHANGELOG](../CHANGELOG.md), en anglais.
@@ -28,26 +30,59 @@ le programme, c'est-à-dire en anglais.
 
 ## Sommaire
 
-1. [Installation et lancement](#1-installation-et-lancement)
-2. [Essayer avec des données de démonstration](#2-essayer-avec-des-données-de-démonstration)
-3. [La fenêtre principale](#3-la-fenêtre-principale)
-4. [Charger des données](#4-charger-des-données)
-5. [Ce que les fenêtres de visualisation ont en commun](#5-ce-que-les-fenêtres-de-visualisation-ont-en-commun)
-6. [Les cartes : le contour et ses deux coupes](#6-les-cartes--le-contour-et-ses-deux-coupes)
-7. [Les coupes : du spectre brut aux paramètres de bande](#7-les-coupes--du-spectre-brut-aux-paramètres-de-bande)
-8. [D'angles en impulsion pour une carte, et la zone de Brillouin](#8-dangles-en-impulsion-pour-une-carte-et-la-zone-de-brillouin)
-9. [Coupes arbitraires et correction de la surface de Fermi](#9-coupes-arbitraires-et-correction-de-la-surface-de-fermi)
-10. [Traitement : lissage, dérivées, courbure](#10-traitement--lissage-dérivées-courbure)
-11. [Empilements de courbes et vues 3D](#11-empilements-de-courbes-et-vues-3d)
-12. [Arithmétique de coupes : dichroïsme et division par une référence](#12-arithmétique-de-coupes--dichroïsme-et-division-par-une-référence)
-13. [Balayages en énergie de photon (kz)](#13-balayages-en-énergie-de-photon-kz)
-14. [Supprimer la grille du détecteur](#14-supprimer-la-grille-du-détecteur)
-15. [Courbes : EDC, MDC et données résolues en spin](#15-courbes--edc-mdc-et-données-résolues-en-spin)
-16. [Balayages résolus spatialement (nano-ARPES)](#16-balayages-résolus-spatialement-nano-arpes)
-17. [Figures et exportation](#17-figures-et-exportation)
-18. [Sauvegarde automatique, mémoire et récupération](#18-sauvegarde-automatique-mémoire-et-récupération)
-19. [Conseils et dépannage](#19-conseils-et-dépannage)
-20. [Nouveau dans 1.2.0 : outils repris des programmes MATLAB](#20-nouveau-dans-120--outils-repris-des-programmes-matlab)
+**[Partie I — Premiers pas](#partie-i--premiers-pas)**
+
+1. [Installation et lancement](#1-installation-et-lancement)  
+2. [Essayer avec des données de démonstration](#2-essayer-avec-des-données-de-démonstration)  
+3. [La fenêtre principale](#3-la-fenêtre-principale)  
+4. [Charger des données](#4-charger-des-données)  
+5. [Ce que les fenêtres de visualisation ont en commun](#5-ce-que-les-fenêtres-de-visualisation-ont-en-commun)  
+6. [Les cartes : le contour et ses deux coupes](#6-les-cartes--le-contour-et-ses-deux-coupes)  
+7. [Coupes arbitraires et correction de la surface de Fermi](#7-coupes-arbitraires-et-correction-de-la-surface-de-fermi)
+
+**[Partie II — L'onglet Basic](#partie-ii--longlet-basic)**
+
+8. [Ajustement du front de Fermi](#8-ajustement-du-front-de-fermi)  
+9. [Supprimer la grille du détecteur et corrections du détecteur](#9-supprimer-la-grille-du-détecteur-et-corrections-du-détecteur)  
+10. [Soustraction du fond](#10-soustraction-du-fond)  
+11. [Conversion en k d'une coupe](#11-conversion-en-k-dune-coupe)  
+12. [Vérification des niveaux de cœur](#12-vérification-des-niveaux-de-cœur)  
+13. [Conversion en k d'une carte](#13-conversion-en-k-dune-carte)  
+14. [Balayages en énergie de photon (kz)](#14-balayages-en-énergie-de-photon-kz)  
+15. [Zone de Brillouin](#15-zone-de-brillouin)
+
+**[Partie III — L'onglet Advanced](#partie-iii--longlet-advanced)**
+
+16. [Lissage, dérivées, courbure et symétrisation](#16-lissage-dérivées-courbure-et-symétrisation)  
+17. [Détection de crêtes](#17-détection-de-crêtes)  
+18. [Empilements de courbes](#18-empilements-de-courbes)  
+19. [Ajustement MDC et ajustement EDC](#19-ajustement-mdc-et-ajustement-edc)  
+20. [Arithmétique de coupes : dichroïsme et division par une référence](#20-arithmétique-de-coupes--dichroïsme-et-division-par-une-référence)  
+21. [Figure en série de tranches](#21-figure-en-série-de-tranches)  
+22. [Les vues 3D](#22-les-vues-3d)  
+23. [Courbes : EDC, MDC et données résolues en spin](#23-courbes--edc-mdc-et-données-résolues-en-spin)  
+24. [Balayages résolus spatialement (nano-ARPES)](#24-balayages-résolus-spatialement-nano-arpes)
+
+**[Partie IV — L'onglet Calculation](#partie-iv--longlet-calculation)**
+
+25. [Structure cristalline](#25-structure-cristalline)  
+26. [Ajustement de liaisons fortes](#26-ajustement-de-liaisons-fortes)  
+27. [Bandes calculées](#27-bandes-calculées)
+
+**[Partie V — Figures et sorties](#partie-v--figures-et-sorties)**
+
+28. [Le composeur de figures](#28-le-composeur-de-figures)  
+29. [Exporter un panneau et enregistrer des données](#29-exporter-un-panneau-et-enregistrer-des-données)  
+30. [Exemple complet : deux figures dans le composeur](#30-exemple-complet--deux-figures-dans-le-composeur)
+
+**[Partie VI — Entretien](#partie-vi--entretien)**
+
+31. [Sauvegarde automatique, mémoire et récupération](#31-sauvegarde-automatique-mémoire-et-récupération)  
+32. [Conseils et dépannage](#32-conseils-et-dépannage)  
+
+---
+
+# Partie I — Premiers pas
 
 ---
 
@@ -94,25 +129,49 @@ Le programme lit :
 ## 2. Essayer avec des données de démonstration
 
 ```bash
-python devtools/demo_data.py            # écrit ./demo_data/*.nxs
+python devtools/demo_data.py            # écrit ./demo_data/
 ```
 
-Six fichiers de données synthétiques sont écrits : une carte de surface de
-Fermi, une paire de coupes en polarisation LH et LV, un balayage en énergie
-de photon, une EDC résolue en spin, un petit balayage en espace réel et une
-carte sur laquelle est imprimée une grille de détecteur. Ils proviennent
-d'une structure de bandes modèle (une poche d'électrons hexagonale et une
-bande de trous en Γ, des poches de trous en K) avec la coupure de Fermi, la
-résolution de l'analyseur et un bruit de Poisson, et s'ouvrent exactement
-comme des données mesurées.
+Ce script écrit des données synthétiques qui s'ouvrent exactement comme des
+données mesurées :
 
-Pour refaire toutes les captures de ce guide après avoir modifié une fenêtre :
+- le jeu d'origine — une carte de surface de Fermi, une paire de coupes en
+  polarisation LH et LV, un balayage en énergie de photon, une EDC résolue en
+  spin, un petit balayage spatial et une carte où est imprimée la grille du
+  détecteur — issu d'une structure de bandes simple (une poche d'électrons
+  hexagonale et une bande de trous en Γ, des poches de trous en K) ;
+- **un cristal lamellaire en trois dimensions** (`demo_bulk_bands.nxs`) : des
+  cartes aux énergies de photon du plan Γ (59,3 eV) et du haut de la zone
+  (77 eV), des coupes selon Γ-M (LH et LV) et Γ-K, et un balayage en énergie
+  de photon selon Γ-M couvrant une période entière de k_z. Deux de ses bandes
+  se croisent le long d'une ligne qui traverse la zone, dont l'énergie varie
+  avec k_z ;
+- **un calcul de ce cristal**, tel qu'un groupe de théorie l'enverrait : un
+  hamiltonien Wannier90 (`demo_calc_hr.dat` avec `demo_calc.win`) et les
+  mêmes bandes sur une grille (`demo_calc.bxsf`). C'est le cristal avant
+  renormalisation — ses bandes 1/0,8 fois plus larges et 50 meV plus haut —
+  ce que l'ajustement aux données retrouve ([§27](#27-bandes-calculées)) ;
+- deux structures cristallines en fichiers CIF (`demo_crystal.cif`, un cristal
+  hexagonal lamellaire 1T ; `demo_tetragonal_crystal.cif`, un cristal de type
+  ZrSiS) et un spectre EDS (`demo_eds.nxs`).
+
+Toutes ont une coupure de Fermi, la résolution de l'analyseur et un bruit de
+Poisson.
+
+Pour refaire toutes les captures d'écran de ce guide après avoir modifié une
+fenêtre :
 
 ```bash
 python devtools/guide_screenshots.py    # écrit docs/images/*.png
 ```
 
----
+Les deux figures d'exemple du
+[§30](#30-exemple-complet--deux-figures-dans-le-composeur) sont reconstruites,
+à partir des données de démonstration et avec les fenêtres du programme, par
+
+```bash
+python devtools/figure_tests.py docs/images [dossier des fichiers .afig]
+```
 
 ## 3. La fenêtre principale
 
@@ -134,10 +193,10 @@ Elle a trois parties :
   de Brillouin et les corrections du détecteur. **Advanced** contient le
   reste : composeur de figures, lissage et filtres qui affinent les bandes,
   symétrisation, détection de crêtes, empilements de courbes, ajustements MDC
-  et EDC, arithmétique de coupes, figure en série de tranches et les trois
+  et EDC, arithmétique de coupes, figure en série de tranches et les quatre
   vues 3D. **Calculation** contient ce qui est calculé plutôt que mesuré : la
-  structure cristalline et l'ajustement de liaisons fortes (voir
-  [§20](#20-nouveau-dans-120--outils-repris-des-programmes-matlab)). Dans chaque onglet, les outils sont groupés
+  structure cristalline, l'ajustement de liaisons fortes et les bandes
+  calculées (voir [Partie IV](#partie-iv--longlet-calculation)). Dans chaque onglet, les outils sont groupés
   selon les données qu'ils acceptent (*2D & 3D — cuts, maps*, *2D only —
   cuts*, *3D only — maps* …).
 - **La liste** (à droite), avec ses boutons.
@@ -310,7 +369,7 @@ laquelle :
 
 Une série en énergie de photon de coupes en angle devient une `kz map`, que
 *Align Fermi levels (kz map)* et *Convert to momentum (kz, k∥)* acceptent
-(voir [§13](#13-balayages-en-énergie-de-photon-kz)) ; tout autre axe donne une
+(voir [§14](#14-balayages-en-énergie-de-photon-kz)) ; tout autre axe donne une
 `map` dont le premier axe est marqué comme n'étant pas un angle, si bien
 qu'aucune conversion en k n'est proposée.
 
@@ -349,7 +408,35 @@ Traitement des axes :
   map)* sur le résultat plutôt que sur les morceaux (les ajustements par
   énergie de photon des morceaux ne sont pas repris).
 
----
+### Additionner des mesures répétées
+
+Pour une coupe ou une carte fine prise en plusieurs balayages courts, afin de
+repérer un échantillon qui vieillit. Sélectionnez les balayages (au moins
+deux, d'un même type) → **Sum repeated scans...** :
+
+1. **Est-ce bien la même mesure ?** La grille et les conditions enregistrées
+   de chaque balayage (énergie de photon, polarisation, angles, position,
+   température, énergie de passage, mode de lentille) ; en orange ce qui
+   diffère du premier.
+2. **L'échantillon a-t-il changé ?** Cliquez sur **Compare the scans**.
+   Chaque balayage est comparé à la somme des autres : le *χ² / point* est à
+   peu près le même pour des balayages qui ne diffèrent que par le bruit de
+   comptage et augmente quand le spectre change ; ceux qui ressortent sont
+   marqués **changed**. Le décalage en énergie de l'EDC de chacun et son taux
+   de comptage sont donnés ; cliquez une ligne pour voir son EDC face aux
+   autres.
+3. **Additionner.** Cochez les balayages à garder (les *changed* sont
+   décochés au départ), choisissez de corriger ou non les décalages, **Sum**
+   ou **Mean**, puis **Sum to list**.
+
+### Fenêtres pas à pas
+
+Les outils qui demandent plusieurs décisions s'ouvrent en **étapes numérotées**
+(additionner des mesures répétées, corrections du détecteur, ajustement de
+liaisons fortes, structure cristalline, bandes calculées) : le titre indique
+*Step 2 of 4: …*, un encadré bleu dit à quoi sert l'étape et quoi faire,
+**Next →** reste grisé (avec la raison à côté) tant que l'étape n'est pas
+terminée, et **← Back** ou la liste des étapes à gauche permet de revenir.
 
 ## 4. Charger des données
 
@@ -402,8 +489,6 @@ comme une coupe.
 | `spem_4d`, `spem_1d` | x (× y) × angle × E | balayages en espace réel |
 | `edc`, `mdc`, `spin_edc` | E (ou k) × canaux | courbes, avec canaux σ facultatifs |
 
----
-
 ## 5. Ce que les fenêtres de visualisation ont en commun
 
 Chaque jeu de données s'ouvre dans sa propre fenêtre : on peut placer côte à
@@ -433,16 +518,16 @@ côte une carte, ses coupes et un autre fichier.
   Entrée pour l'y placer exactement.
 - **EDC → list** / **MDC → list** ajoutent la courbe affichée à la liste
   principale comme jeu de données à part entière (voir
-  [§15](#15-courbes--edc-mdc-et-données-résolues-en-spin)).
+  [§23](#23-courbes--edc-mdc-et-données-résolues-en-spin)).
 - **Clic droit sur l'image → Export** enregistre ce que montre le panneau —
   données (`.nxs`), image, ou axes vectoriels (`.eps`) ; voir
-  [§17](#17-figures-et-exportation).
+  [§28](#28-le-composeur-de-figures).
 - **Functions → Slice → Save slice to the main list / Freeze slice in a new
   window** conserve une copie de la tranche affichée. La fenêtre figée (et
   *Open this position in a new window* sur une carte spatiale) s'ouvre avec le
   min/max et le gamma du panneau, pour une comparaison directe. Elle a ses
   propres **Plot tools**, et un bouton **Figure composer...** pour en faire
-  une figure ([§17](#17-figures-et-exportation)).
+  une figure ([§28](#28-le-composeur-de-figures)).
 
 Le menu **Functions** ne contient plus que ce qui agit sur la fenêtre
 elle-même — les outils qui prennent un jeu de données sont dans le panneau
@@ -459,9 +544,43 @@ Une entrée qui s'applique mais ne peut pas encore être lancée est grisée, et
 son infobulle en donne la raison.
 
 **Case Brillouin zone.** Une carte k ou une carte kz convertie sur laquelle
-une zone a été tracée ([§8.2](#82-zone-de-brillouin)) la garde : sa fenêtre a
+une zone a été tracée ([§15](#15-zone-de-brillouin)) la garde : sa fenêtre a
 une case **Brillouin zone** sur la ligne du haut pour l'afficher ou la
 masquer.
+
+### Plot tools : lignes de repère et textes sur le graphique
+
+**Plot tools**, sur la ligne du haut de chaque fenêtre de visualisation
+(coupes, cartes, balayages spatiaux, courbes, tranches figées), ouvre une
+petite fenêtre qui dessine **sur le graphique que vous avez sous les yeux** :
+
+![Lignes de repère sur une coupe](images/plot_tools_viewer.png)
+
+| ![Plot tools](images/plot_tools.png) | |
+|---|---|
+
+- **Type** : *Vertical line*, *Horizontal line*, *Line at an angle* (passant
+  par un point ; l'angle est dans les unités du graphique, la pente vaut donc
+  tan(angle) unités y par unité x), ou *Text label*.
+- **Position** (x, y), **Angle**, une **Label** facultative (affichée sur la
+  ligne, p. ex. `E_F`, `Γ`), une **Colour** (neuf couleurs en un clic, ou
+  **More...**), **Width**, **Style** (plein, tirets, pointillés, tiret-point)
+  et **Text size**.
+- **Add** la dessine à la position saisie (**Centre of view** la remplit) ;
+  **Place by clicking** en dessine une là où vous cliquez sur le graphique.
+- **Faites glisser** une ligne sur le graphique pour la déplacer ; la fenêtre
+  suit. Sélectionnez un repère dans la liste pour le **modifier** — chaque
+  changement s'affiche aussitôt — ou **Remove** pour le supprimer ; **New
+  guide** arrête la modification ; **Remove all** vide le graphique.
+- Avec deux panneaux (un balayage spatial), **Draw on** choisit lequel.
+- Les repères restent quand la tranche se déplace (une ligne E_F reste à E_F
+  quand on parcourt une carte) et quand la fenêtre Plot tools est fermée.
+  **Export → Image** du panneau les dessine aussi (*Include the Plot tools
+  guides*).
+
+Les *Plot tools* servent à regarder les données. Pour faire une figure
+d'article, utilisez le **composeur de figures** et ses **Figure tools**
+([§28](#28-le-composeur-de-figures)).
 
 ## 6. Les cartes : le contour et ses deux coupes
 
@@ -491,16 +610,55 @@ On peut aussi ouvrir directement une coupe d'une carte depuis la liste (clic
 droit → **Open slit cut** / **Open scan-axis cut**) ; le contour reste alors
 caché jusqu'à ce qu'on le demande (*Functions → Show the map*).
 
+## 7. Coupes arbitraires et correction de la surface de Fermi
+
+### 7.1 Coupe arbitraire
+
+*Functions → Arbitrary cut...* sur n'importe quel contour : cliquez jusqu'à
+six points (ou saisissez-les) ; la coupe les parcourt dans l'ordre — ici
+Γ → M → K → Γ sur la carte k. **One dataset per segment** crée un jeu de
+données par segment.
+
+| Chemin sur le contour | Points |
+|---|---|
+| ![Chemin de la coupe arbitraire](images/arbitrary_cut_path.png) | ![Fenêtre de la coupe arbitraire](images/arbitrary_cut_dialog.png) |
+
+Le résultat est une coupe en fonction de la distance le long du chemin ; les
+coins du chemin sont marqués par des tirets verts, pour qu'un coude à cet
+endroit ne soit pas pris pour de la physique.
+
+![La coupe le long de Γ–M–K–Γ](images/arbitrary_cut_result.png)
+
+### 7.2 Correction de la surface de Fermi (FS)
+
+*Functions → Straighten bands (FS correction)...* sur une coupe (ou sur la coupe selon la fente
+d'une carte) redresse une structure qui devrait être plate — en général le
+front de Fermi, courbé en fonction de l'angle de l'analyseur. Cliquez le long
+de la structure : un polynôme (d'ordre 2 par défaut) est ajusté et chaque
+colonne d'angle est décalée en énergie. **From a reference (Au)...** prend
+plutôt la courbe sur un spectre d'or présent dans la liste. Sur la coupe
+selon la fente d'une carte, le même décalage est appliqué à tout le cube.
+
+![Correction FS](images/fs_correction_dialog.png)
+
+# Partie II — L'onglet Basic
+
+L'onglet **Basic** contient ce par quoi passe presque tout jeu de données,
+groupé selon les données que prend chaque outil : *2D & 3D* — ajustement du
+front de Fermi, suppression de la grille du détecteur, corrections du
+détecteur ; *2D only* — soustraction du fond, conversion en k d'une coupe,
+vérification des niveaux de cœur ; *3D only* — conversion en k d'une carte,
+alignement et conversion d'un balayage en énergie de photon, zone de
+Brillouin.
+
 ---
 
-## 7. Les coupes : du spectre brut aux paramètres de bande
+## 8. Ajustement du front de Fermi
 
 L'ordre habituel pour une coupe est : **ajustement du front de Fermi → décaler
 l'axe en énergie → conversion en impulsion → ajustement MDC/EDC**. Chaque
 étape est un bouton du panneau d'outils : sélectionnez la coupe dans la
 liste et appuyez dessus.
-
-### 7.1 Ajustement du front de Fermi
 
 Panneau → Basic → **Fermi edge fit...** ajuste un front de Fermi (Fermi–Dirac
 × densité d'états linéaire, convoluée par une résolution gaussienne) sur
@@ -540,7 +698,58 @@ these fits** ajoute la carte corrigée à la liste.
 
 ![Ajustement de Fermi sur une carte, un E_F par coupe](images/fermi_map_cuts.png)
 
-### 7.2 Conversion en k d'une coupe
+## 9. Supprimer la grille du détecteur et corrections du détecteur
+
+### 9.1 Supprimer la grille du détecteur
+
+Les motifs du MCP (hexagonal) et de la grille (carré) s'impriment sur chaque
+image. **À faire en premier** : seules les données encore sur les pixels du
+détecteur peuvent être dégrillées ; le bouton refuse donc tout ce qui a déjà
+été converti, corrigé ou lissé, et dit pourquoi.
+
+Sélectionnez une carte (ou une carte kz) ou une coupe et appuyez sur panneau
+→ Basic → **Remove detector grid...**. Pour une carte, aucune référence n'est
+nécessaire — la grille reste sur les mêmes pixels dans chaque tranche, alors
+que la photoémission se déplace. **Find and remove the grid** :
+
+![Dégrillage](images/degrid_dialog.png)
+
+- **Before / After** pour une tranche choisie, sur une même échelle de
+  couleurs (cochez **Show −∂²I/∂E²** pour rendre toute grille évidente).
+- **La grille trouvée**, ses **régions dans l'espace réciproque** (en rouge),
+  et le **contraste et le décalage** ajustés pour chaque tranche.
+- La puissance restant dans les régions de la grille (1 = plus de grille).
+- **Also list the grid pattern** conserve un jeu de données `[grid]`, qu'une
+  coupe prise plus tard avec le même mode de lentille et la même énergie de
+  passage retrouvera et utilisera.
+
+### 9.2 Corrections du détecteur
+
+Sur une coupe, une carte ou une carte kz telle que mesurée :
+
+1. **Trapèze** -- cochez *Correct a trapezoidal image* et placez les quatre
+   coins jaunes sur ceux de la zone éclairée ; l'image de droite la montre
+   rendue rectangulaire, le nombre de coups de chaque ligne conservé.
+2. **Zones défectueuses** -- **Add a region** et déplacez-la sur un point
+   mort ou chaud, ou **Find bad pixels** ; remplissage *smooth* (pour un
+   point) ou *linear along* un axe (pour une bande).
+3. **Appliquer** -- **Apply to list**. Faites ensuite la suppression de la
+   grille, le niveau de Fermi et la conversion en k sur le résultat.
+
+## 10. Soustraction du fond
+
+Panneau → Basic → **Background subtraction...** (coupes) retire l'intensité
+qui n'appartient pas aux bandes : un fond inélastique de **Shirley** ou de
+**Tougaard**, un plancher commun à tous les angles (un percentile de chaque
+ligne d'énergie), un **polynôme** lisse — ou divise par la **coupure de
+Fermi** (Fermi–Dirac à la température et la résolution enregistrées dans le
+fichier, à partir de l'E_F enregistré ou, à défaut, de la chute la plus
+raide de l'EDC intégrée en angle). La fenêtre est celle des fenêtres de
+traitement de l'onglet Advanced — source et résultat côte à côte, aperçu en
+direct, **Apply** ajoute le résultat à la liste — décrite au
+[§16](#16-lissage-dérivées-courbure-et-symétrisation).
+
+## 11. Conversion en k d'une coupe
 
 Panneau → Basic → **k conversion (cut)...** convertit l'axe angulaire en k∥
 (Å⁻¹). Une **ligne verticale** est tracée sur la coupe : faites-la glisser
@@ -565,57 +774,7 @@ coupe a été mesurée.
 
 ![La coupe en impulsion](images/cut_in_k.png)
 
-### 7.3 Ajustement MDC et ajustement EDC
-
-Deux outils de l'onglet Advanced ajustent des pics ligne par ligne :
-
-- **MDC fit (k-cut only)...** ajuste les courbes de distribution en impulsion
-  et en déduit la bande à partir des centres ajustés : vitesse de Fermi,
-  masse effective, self-énergie. N'accepte qu'une coupe dont l'axe est déjà
-  en Å⁻¹ — une vitesse en eV·deg n'aurait aucun sens — et son bouton est grisé
-  sinon.
-- **EDC fit...** ajuste les courbes de distribution en énergie, sur
-  n'importe quelle coupe, éventuellement avec la coupure de Fermi dans le
-  modèle. v_F et m\* de la bande ajustée demandent une coupe en impulsion.
-
-![Panneau d'ajustement MDC](images/mdc_fit_panel.png)
-
-**Guided fit (step by step)**, en haut du panneau, guide tout l'ajustement
-pas à pas à côté des réglages, en disant à quoi sert chaque étape et en
-encadrant la partie du panneau qu'elle utilise : ce que fait un ajustement
-MDC (EDC), la forme de pic, l'intervalle (*Start here* / *End here* à la
-ligne bleue), les bandes, les points de départ (le guide place la ligne en
-cinq endroits de l'intervalle — cliquez à chaque fois le pic de la bande sur
-la courbe), une ligne d'essai, la série et le résultat. *Next* attend que
-l'étape ait ce qu'il faut à l'ajustement.
-
-Les images et les réglages se partagent la fenêtre avec une poignée entre
-eux : les réglages restent visibles ; la molette sur une image fait défiler
-la fenêtre quand elle est trop courte (Ctrl + molette zoome l'image).
-
-À la main :
-
-1. Onglet **Bands** : **Add band** pour chaque branche ; sélectionnez une
-   bande, appuyez sur **Place a seed** et cliquez sur le pic, sur la courbe (à
-   droite). Quatre ou cinq points de départ le long d'une bande suffisent ;
-   **Line at** change la ligne examinée.
-2. **Try this line** montre l'ajustement de la ligne courante (en tirets :
-   l'estimation initiale).
-3. Onglet **Fit settings** : forme de pic (lorentzienne, gaussienne, Voigt),
-   fond, pas, puis **Fit the series**. Les positions ajustées sont tracées
-   sur l'image, avec une taille proportionnelle à l'amplitude.
-4. **Dispersion...** ajuste la bande : **v_F** (droite), **m\*** (parabole) —
-   et vérifie jusqu'où l'ajustement reste stable. **Self-energy...** donne
-   Re Σ et Im Σ.
-
-![Fenêtre de dispersion](images/dispersion_window.png)
-
-**Save table...** écrit toutes les lignes ajustées ; **Band to list** ajoute
-une bande à la liste principale.
-
----
-
-### 7.4 Vérification des niveaux de cœur
+## 12. Vérification des niveaux de cœur
 
 Un balayage large des niveaux de cœur est lui aussi listé comme une coupe.
 Sélectionnez-le et appuyez sur panneau → Basic → **Core-level check...** pour
@@ -673,9 +832,7 @@ Si tous les pics sont décalés de la même quantité, les notes le disent et
 restent fixes en énergie de liaison, les raies Auger et la lumière d'ordre
 supérieur se déplacent.
 
-## 8. D'angles en impulsion pour une carte, et la zone de Brillouin
-
-### 8.1 Conversion en k d'une carte
+## 13. Conversion en k d'une carte
 
 Sélectionnez une carte en angle et appuyez sur panneau → Basic → **k
 conversion (map)...**. La carte s'ouvre sur un contour nu — sans coupes ni
@@ -705,7 +862,63 @@ résultat est une nouvelle ligne `k-map` dans la liste.
 
 ![La carte convertie en k](images/k_map_contour.png)
 
-### 8.2 Zone de Brillouin
+## 14. Balayages en énergie de photon (kz)
+
+Un balayage en énergie de photon est listé comme `kz map` ; son contour est
+l'énergie de photon en fonction de l'angle, à une énergie donnée.
+
+![Une carte kz](images/kz_map_contour.png)
+
+### 14.1 Aligner les niveaux de Fermi d'une carte kz
+
+Rien dans les fichiers n'indique où se trouve réellement le niveau de Fermi
+de chaque spectre. Panneau → Basic → **Align Fermi levels (kz)...** le mesure
+sur les spectres eux-mêmes ; la coupe selon la fente de la carte kz s'ouvre
+avec lui, et les deux se ferment ensemble.
+
+1. La coupe selon la fente s'ouvre avec un cadre. Faites glisser le cadre sur
+   un front de Fermi — l'intervalle d'angle fixe les canaux sommés,
+   l'intervalle d'énergie la fenêtre d'ajustement.
+
+   ![Le cadre sur la coupe selon la fente](images/kz_processing_cut.png)
+
+2. **Fit and assemble** : le même cadre (en indices du détecteur) est utilisé
+   pour chaque spectre ; chacun est décalé pour placer son propre front à
+   zéro ; le cube est rogné à l'intervalle couvert par tous ; et, par défaut,
+   chaque spectre est **normalisé par son intensité totale**, ce qui élimine
+   les variations du flux de photons.
+
+![Aligner les niveaux de Fermi (kz map)](images/kz_processing_dialog.png)
+
+E_F en fonction de l'énergie de photon est tracé. Une courbe régulière
+signifie des ajustements fiables ; les points dont l'ajustement n'est pas
+crédible sont signalés et remplacés par interpolation de leurs voisins.
+
+### 14.2 Convertir une carte kz en impulsion
+
+Panneau → Basic → **kz conversion...** convertit le balayage en (k_z, k∥). Il
+part de la dernière conversion d'un balayage de même taille.
+
+![kz → impulsion](images/kz_conversion_dialog.png)
+
+- Le **potentiel interne V0** est l'inconnue : l'aperçu reconvertit une
+  tranche en énergie à chaque modification, en quelques millisecondes.
+- Avec le **réseau** (groupe d'espace, a, b, c), la **normale à la surface**
+  et la direction dans le plan, les limites de zone sont tracées sur
+  l'aperçu.
+- **Scan V0** convertit pour une série de valeurs de V0 et indique où la
+  période en k_z correspond au réseau — et avec quelle précision cela fixe V0.
+- **Measure a k_z period...** : cliquez deux points correspondant à la même
+  structure, distants d'une zone ; les plans du réseau réciproque compatibles
+  sont listés.
+- Le bandeau jaune avertit quand le front de Fermi est encore courbé en
+  fonction de l'angle de l'analyseur — corrigez-le d'abord (Straighten bands (FS correction) sur
+  la coupe selon la fente).
+- **Convert the whole cube** ajoute une `kz map (k)` à la liste.
+
+![La carte kz convertie](images/kz_map_in_k.png)
+
+## 15. Zone de Brillouin
 
 Sélectionnez une carte k (ou une carte kz convertie) et appuyez sur panneau
 → Basic → **Brillouin zone...**. Comme la conversion de carte, il ouvre un
@@ -748,42 +961,19 @@ l'image dans Illustrator.
 
 ![Exportation avec la zone](images/export_dialog_bz.png)
 
----
+# Partie III — L'onglet Advanced
 
-## 9. Coupes arbitraires et correction de la surface de Fermi
-
-### 9.1 Coupe arbitraire
-
-*Functions → Arbitrary cut...* sur n'importe quel contour : cliquez jusqu'à
-six points (ou saisissez-les) ; la coupe les parcourt dans l'ordre — ici
-Γ → M → K → Γ sur la carte k. **One dataset per segment** crée un jeu de
-données par segment.
-
-| Chemin sur le contour | Points |
-|---|---|
-| ![Chemin de la coupe arbitraire](images/arbitrary_cut_path.png) | ![Fenêtre de la coupe arbitraire](images/arbitrary_cut_dialog.png) |
-
-Le résultat est une coupe en fonction de la distance le long du chemin ; les
-coins du chemin sont marqués par des tirets verts, pour qu'un coude à cet
-endroit ne soit pas pris pour de la physique.
-
-![La coupe le long de Γ–M–K–Γ](images/arbitrary_cut_result.png)
-
-### 9.2 Correction de la surface de Fermi (FS)
-
-*Functions → Straighten bands (FS correction)...* sur une coupe (ou sur la coupe selon la fente
-d'une carte) redresse une structure qui devrait être plate — en général le
-front de Fermi, courbé en fonction de l'angle de l'analyseur. Cliquez le long
-de la structure : un polynôme (d'ordre 2 par défaut) est ajusté et chaque
-colonne d'angle est décalée en énergie. **From a reference (Au)...** prend
-plutôt la courbe sur un spectre d'or présent dans la liste. Sur la coupe
-selon la fente d'une carte, le même décalage est appliqué à tout le cube.
-
-![Correction FS](images/fs_correction_dialog.png)
+L'onglet **Advanced** contient l'analyse qui suit : le composeur de figures
+(*1D & 2D*, voir [§28](#28-le-composeur-de-figures)) ; le lissage, les filtres
+qui affinent les bandes, la symétrisation et la détection de crêtes
+(*2D & 3D*) ; les empilements de courbes, les ajustements MDC et EDC et
+l'arithmétique de coupes (*2D only*) ; la figure en série de tranches et les
+quatre vues 3D (*3D only*). Les courbes et les balayages spatiaux s'examinent
+dans leurs propres fenêtres.
 
 ---
 
-## 10. Traitement : lissage, dérivées, courbure
+## 16. Lissage, dérivées, courbure et symétrisation
 
 Chaque filtre a sa propre fenêtre, ouverte depuis le panneau d'outils avec
 une ou plusieurs coupes (ou cartes) sélectionnées :
@@ -859,9 +1049,21 @@ son maximum) :
 
 ![Auto-normalisation](images/data_operations.png)
 
----
+## 17. Détection de crêtes
 
-## 11. Empilements de courbes et vues 3D
+Panneau → Advanced → **Ridge detection...** (coupes ou cartes) suit les
+bandes comme des crêtes de l'intensité, chaque point à une fraction de pixel
+près : plus net qu'une dérivée seconde, et sans fausses lignes doubles.
+
+- **Smoothing** selon chaque axe, dans son unité — à peu près la largeur de
+  la bande.
+- **Threshold** : l'augmenter jusqu'à ce qu'il ne reste que les bandes (points
+  jaunes sur la source).
+- **Result to list** — l'image des crêtes (une carte plan par plan, sur les
+  plans choisis) ; **Save ridge points...** — un CSV que l'ajustement de
+  liaisons fortes ([§26](#26-ajustement-de-liaisons-fortes)) sait lire.
+
+## 18. Empilements de courbes
 
 **Stack plot (EDC / MDC)...** (panneau → Advanced, une coupe sélectionnée) :
 une cascade d'EDC ou de MDC, avec le nombre de courbes, le regroupement, la
@@ -870,7 +1072,108 @@ figure composer** en fait un panneau de figure.
 
 ![Empilement de courbes](images/stack_plot.png)
 
-Trois outils de l'onglet Advanced montrent une carte en 3D, chacun dans sa
+## 19. Ajustement MDC et ajustement EDC
+
+Deux outils de l'onglet Advanced ajustent des pics ligne par ligne :
+
+- **MDC fit (k-cut only)...** ajuste les courbes de distribution en impulsion
+  et en déduit la bande à partir des centres ajustés : vitesse de Fermi,
+  masse effective, self-énergie. N'accepte qu'une coupe dont l'axe est déjà
+  en Å⁻¹ — une vitesse en eV·deg n'aurait aucun sens — et son bouton est grisé
+  sinon.
+- **EDC fit...** ajuste les courbes de distribution en énergie, sur
+  n'importe quelle coupe, éventuellement avec la coupure de Fermi dans le
+  modèle. v_F et m\* de la bande ajustée demandent une coupe en impulsion.
+
+![Panneau d'ajustement MDC](images/mdc_fit_panel.png)
+
+**Guided fit (step by step)**, en haut du panneau, guide tout l'ajustement
+pas à pas à côté des réglages, en disant à quoi sert chaque étape et en
+encadrant la partie du panneau qu'elle utilise : ce que fait un ajustement
+MDC (EDC), la forme de pic, l'intervalle (*Start here* / *End here* à la
+ligne bleue), les bandes, les points de départ (le guide place la ligne en
+cinq endroits de l'intervalle — cliquez à chaque fois le pic de la bande sur
+la courbe), une ligne d'essai, la série et le résultat. *Next* attend que
+l'étape ait ce qu'il faut à l'ajustement.
+
+Les images et les réglages se partagent la fenêtre avec une poignée entre
+eux : les réglages restent visibles ; la molette sur une image fait défiler
+la fenêtre quand elle est trop courte (Ctrl + molette zoome l'image).
+
+À la main :
+
+1. Onglet **Bands** : **Add band** pour chaque branche ; sélectionnez une
+   bande, appuyez sur **Place a seed** et cliquez sur le pic, sur la courbe (à
+   droite). Quatre ou cinq points de départ le long d'une bande suffisent ;
+   **Line at** change la ligne examinée.
+2. **Try this line** montre l'ajustement de la ligne courante (en tirets :
+   l'estimation initiale).
+3. Onglet **Fit settings** : forme de pic (lorentzienne, gaussienne, Voigt),
+   fond, pas, puis **Fit the series**. Les positions ajustées sont tracées
+   sur l'image, avec une taille proportionnelle à l'amplitude.
+4. **Dispersion...** ajuste la bande : **v_F** (droite), **m\*** (parabole) —
+   et vérifie jusqu'où l'ajustement reste stable. **Self-energy...** donne
+   Re Σ et Im Σ.
+
+![Fenêtre de dispersion](images/dispersion_window.png)
+
+**Save table...** écrit toutes les lignes ajustées ; **Band to list** ajoute
+une bande à la liste principale.
+
+**Là où deux branches droites se croisent.** Dans la fenêtre
+**Dispersion...**, avec *v_F* (une droite) choisi, chaque autre bande ajustée
+l'est de la même façon et le point où les deux droites se rencontrent est
+donné avec son incertitude (propagée des deux ajustements) : le point de
+Dirac d'un cône ajusté par ses deux flancs, ou tout croisement de deux
+bandes. Un point ajusté dont l'erreur s'est effondrée (un pic ajusté à
+largeur nulle) ne prend plus tout le poids de l'ajustement de la
+dispersion : aucun point ne compte plus que dix points typiques.
+
+## 20. Arithmétique de coupes : dichroïsme et division par une référence
+
+Deux coupes en donnent une troisième : dichroïsme linéaire (LH − LV),
+dichroïsme circulaire, division par une référence d'or, ou simples
+différences, rapports et sommes. Sélectionnez deux coupes dans la liste et
+appuyez sur panneau → Advanced → **Cut arithmetic (two cuts)...** (la
+première sélectionnée est A ; la fenêtre permet de les échanger). Le bouton
+reste grisé tant qu'exactement deux coupes ne sont pas sélectionnées.
+
+![Arithmétique de coupes](images/cut_arithmetic.png)
+
+- **Le tableau du haut** compare ce que les deux mesures ont enregistré
+  (polarisation, énergie de photon, angles, position de l'échantillon,
+  température, énergie de passage, mode de lentille). Les lignes en orange
+  diffèrent au-delà d'une tolérance — une carte de dichroïsme entre deux
+  points de l'échantillon est une carte de *cette* différence-là.
+- Préréglages **Purpose** : *Linear dichroism* (A − B, B mis à la même
+  intensité totale), *Circular dichroism* ((A − B)/(A + B)), *Divide by a
+  reference*, *Custom*. Un avertissement apparaît si les polarisations
+  semblent inversées (**Swap A ↔ B**).
+- **Scale B to A** par l'intensité totale ou celle d'une région ; **Hide
+  where A+B below** masque le fond.
+- A et B sont tracés sur une seule échelle de couleurs ; le résultat sur une
+  échelle rouge-blanc-bleu symétrique autour de zéro. Avec des comptages
+  bruts des deux côtés, l'incertitude de Poisson est propagée et résumée sous
+  le graphique.
+- **Result to list**, **Uncertainty to list**, **All three as a figure**.
+
+## 21. Figure en série de tranches
+
+Sélectionnez une carte → panneau → Advanced → **Slice series figure...**
+dispose une page de tranches 2D planes du cube en une figure pour un
+article — contours à énergie constante à une série d'énergies, ou coupes à
+une série d'angles ou d'impulsions — régulièrement espacées ou à des valeurs
+choisies, avec intégration, une échelle de couleurs commune et des
+étiquettes seulement sur les bords extérieurs. (À ne pas confondre avec
+**3D slices**, qui trace trois plans dans une vue 3D.)
+
+| Réglages | Résultat |
+|---|---|
+| ![Réglages de la série de tranches](images/slice_figure_dialog.png) | ![Figure en série de tranches](images/slice_figure.png) |
+
+## 22. Les vues 3D
+
+Quatre outils de l'onglet Advanced montrent une carte en 3D, chacun dans sa
 propre fenêtre — faites glisser l'image pour la faire tourner :
 
 - **3D slices...** — les trois plans orthogonaux du cube, chacun placé où
@@ -879,6 +1182,7 @@ propre fenêtre — faites glisser l'image pour la faire tourner :
   constante et deux dispersions dans une seule image.
 - **Volume projection...** — tout le volume projeté selon la direction de
   vue : intensité maximale, somme, composition alpha, ou isosurface ombrée.
+- **Stacked slices...** — des tranches parallèles empilées en 3D (ci-dessous).
 
 | 3D slices | Notched cube |
 |---|---|
@@ -909,122 +1213,36 @@ propre fenêtre — faites glisser l'image pour la faire tourner :
   tout panneau (PNG, TIFF, JPEG à la taille et à la résolution choisies).
   **To figure composer...** ajoute la vue comme panneau d'une figure.
 
----
+### Tranches empilées
 
-## 12. Arithmétique de coupes : dichroïsme et division par une référence
+**Stacked slices...** (panneau → Advanced → 3D only) dessine des tranches
+parallèles du cube empilées en 3D : des cartes à énergie constante les unes
+au-dessus des autres le long de l'axe d'énergie, ou des coupes les unes
+derrière les autres selon k_z (ou l'énergie de photon) — l'image habituelle
+de l'évolution d'une bande.
 
-Deux coupes en donnent une troisième : dichroïsme linéaire (LH − LV),
-dichroïsme circulaire, division par une référence d'or, ou simples
-différences, rapports et sommes. Sélectionnez deux coupes dans la liste et
-appuyez sur panneau → Advanced → **Cut arithmetic (two cuts)...** (la
-première sélectionnée est A ; la fenêtre permet de les échanger). Le bouton
-reste grisé tant qu'exactement deux coupes ne sont pas sélectionnées.
+![Tranches empilées](images/stacked_slices.png)
 
-![Arithmétique de coupes](images/cut_arithmetic.png)
+- **Layers** — l'axe d'empilement ; **How many** les répartit régulièrement,
+  ou tapez les positions dans **At** (séparées par des virgules, dans les
+  unités de l'axe) ; **Integrate** moyenne chaque tranche sur cette largeur.
+- **Frames** — un contour autour de chaque tranche (gris, noir ou aucun).
+- **Spread** étire la boîte selon l'axe d'empilement, pour que les tranches
+  vues en oblique se séparent au lieu de se couvrir : pour quelques coupes
+  empilées selon k_z, *Spread* 3 avec un azimut d'environ 40° montre chaque
+  coupe presque entière.
+- **Fade low values** (*Colour*) part ici de 35 % : le fond de chaque tranche
+  est transparent, on voit donc les tranches de derrière.
+- **Mark a curve through the layers** — des points dans les unités des
+  données (un par tranche, par exemple le croisement de deux bandes), reliés
+  par une courbe rouge, noire, bleue… tracée par-dessus l'empilement, avec
+  une étiquette facultative au premier point.
+- Les axes de toutes les vues 3D ajustent désormais l'image *et* ses
+  étiquettes à la fenêtre ou au panneau de figure (sans marge fixe),
+  espacent leurs graduations selon la place de chaque axe, et écrivent
+  indices et exposants dans les titres d'axe (`E - E_F`, `k_x`).
 
-- **Le tableau du haut** compare ce que les deux mesures ont enregistré
-  (polarisation, énergie de photon, angles, position de l'échantillon,
-  température, énergie de passage, mode de lentille). Les lignes en orange
-  diffèrent au-delà d'une tolérance — une carte de dichroïsme entre deux
-  points de l'échantillon est une carte de *cette* différence-là.
-- Préréglages **Purpose** : *Linear dichroism* (A − B, B mis à la même
-  intensité totale), *Circular dichroism* ((A − B)/(A + B)), *Divide by a
-  reference*, *Custom*. Un avertissement apparaît si les polarisations
-  semblent inversées (**Swap A ↔ B**).
-- **Scale B to A** par l'intensité totale ou celle d'une région ; **Hide
-  where A+B below** masque le fond.
-- A et B sont tracés sur une seule échelle de couleurs ; le résultat sur une
-  échelle rouge-blanc-bleu symétrique autour de zéro. Avec des comptages
-  bruts des deux côtés, l'incertitude de Poisson est propagée et résumée sous
-  le graphique.
-- **Result to list**, **Uncertainty to list**, **All three as a figure**.
-
----
-
-## 13. Balayages en énergie de photon (kz)
-
-Un balayage en énergie de photon est listé comme `kz map` ; son contour est
-l'énergie de photon en fonction de l'angle, à une énergie donnée.
-
-![Une carte kz](images/kz_map_contour.png)
-
-### 13.1 Aligner les niveaux de Fermi d'une carte kz
-
-Rien dans les fichiers n'indique où se trouve réellement le niveau de Fermi
-de chaque spectre. Panneau → Basic → **Align Fermi levels (kz)...** le mesure
-sur les spectres eux-mêmes ; la coupe selon la fente de la carte kz s'ouvre
-avec lui, et les deux se ferment ensemble.
-
-1. La coupe selon la fente s'ouvre avec un cadre. Faites glisser le cadre sur
-   un front de Fermi — l'intervalle d'angle fixe les canaux sommés,
-   l'intervalle d'énergie la fenêtre d'ajustement.
-
-   ![Le cadre sur la coupe selon la fente](images/kz_processing_cut.png)
-
-2. **Fit and assemble** : le même cadre (en indices du détecteur) est utilisé
-   pour chaque spectre ; chacun est décalé pour placer son propre front à
-   zéro ; le cube est rogné à l'intervalle couvert par tous ; et, par défaut,
-   chaque spectre est **normalisé par son intensité totale**, ce qui élimine
-   les variations du flux de photons.
-
-![Aligner les niveaux de Fermi (kz map)](images/kz_processing_dialog.png)
-
-E_F en fonction de l'énergie de photon est tracé. Une courbe régulière
-signifie des ajustements fiables ; les points dont l'ajustement n'est pas
-crédible sont signalés et remplacés par interpolation de leurs voisins.
-
-### 13.2 Convertir une carte kz en impulsion
-
-Panneau → Basic → **kz conversion...** convertit le balayage en (k_z, k∥). Il
-part de la dernière conversion d'un balayage de même taille.
-
-![kz → impulsion](images/kz_conversion_dialog.png)
-
-- Le **potentiel interne V0** est l'inconnue : l'aperçu reconvertit une
-  tranche en énergie à chaque modification, en quelques millisecondes.
-- Avec le **réseau** (groupe d'espace, a, b, c), la **normale à la surface**
-  et la direction dans le plan, les limites de zone sont tracées sur
-  l'aperçu.
-- **Scan V0** convertit pour une série de valeurs de V0 et indique où la
-  période en k_z correspond au réseau — et avec quelle précision cela fixe V0.
-- **Measure a k_z period...** : cliquez deux points correspondant à la même
-  structure, distants d'une zone ; les plans du réseau réciproque compatibles
-  sont listés.
-- Le bandeau jaune avertit quand le front de Fermi est encore courbé en
-  fonction de l'angle de l'analyseur — corrigez-le d'abord (Straighten bands (FS correction) sur
-  la coupe selon la fente).
-- **Convert the whole cube** ajoute une `kz map (k)` à la liste.
-
-![La carte kz convertie](images/kz_map_in_k.png)
-
----
-
-## 14. Supprimer la grille du détecteur
-
-Les motifs du MCP (hexagonal) et de la grille (carré) s'impriment sur chaque
-image. **À faire en premier** : seules les données encore sur les pixels du
-détecteur peuvent être dégrillées ; le bouton refuse donc tout ce qui a déjà
-été converti, corrigé ou lissé, et dit pourquoi.
-
-Sélectionnez une carte (ou une carte kz) ou une coupe et appuyez sur panneau
-→ Basic → **Remove detector grid...**. Pour une carte, aucune référence n'est
-nécessaire — la grille reste sur les mêmes pixels dans chaque tranche, alors
-que la photoémission se déplace. **Find and remove the grid** :
-
-![Dégrillage](images/degrid_dialog.png)
-
-- **Before / After** pour une tranche choisie, sur une même échelle de
-  couleurs (cochez **Show −∂²I/∂E²** pour rendre toute grille évidente).
-- **La grille trouvée**, ses **régions dans l'espace réciproque** (en rouge),
-  et le **contraste et le décalage** ajustés pour chaque tranche.
-- La puissance restant dans les régions de la grille (1 = plus de grille).
-- **Also list the grid pattern** conserve un jeu de données `[grid]`, qu'une
-  coupe prise plus tard avec le même mode de lentille et la même énergie de
-  passage retrouvera et utilisera.
-
----
-
-## 15. Courbes : EDC, MDC et données résolues en spin
+## 23. Courbes : EDC, MDC et données résolues en spin
 
 **EDC → list** / **MDC → list** sous n'importe quelle image, ou un fichier
 résolu en spin, donnent un jeu de données de courbes, qui s'ouvre dans la
@@ -1039,7 +1257,7 @@ propose **Crop**, **Bin**, **Normalise**, **Subtract a background**
 (constant, linéaire, Shirley), **Shift the axis** et **Add counting errors
 (√N)** ; chacune crée un nouveau jeu de données et propage correctement σ.
 
-### 15.1 Ajustement de courbes
+### 23.1 Ajustement de courbes
 
 *Functions → Curve fit...* : **Peaks on a background** (pics lorentziens,
 gaussiens ou de Voigt, placés par clic ou par **Find peaks** ; fond nul /
@@ -1054,7 +1272,7 @@ résidu est affiché en unités de σ.
 composantes ; **Copy results** copie un tableau séparé par des tabulations.
 Un ajustement du front de Fermi permet **List a copy with E_F = 0**.
 
-### 15.2 Analyse de spin
+### 23.2 Analyse de spin
 
 Une EDC de spin s'ouvre avec une courbe par canal de spin :
 
@@ -1077,9 +1295,7 @@ Une EDC de spin s'ouvre avec une courbe par canal de spin :
   leurs erreurs.
 - **P to list**, **I↑ / I↓ to list**, **As a figure** (ouvre le composeur de figures).
 
----
-
-## 16. Balayages résolus spatialement (nano-ARPES)
+## 24. Balayages résolus spatialement (nano-ARPES)
 
 Un balayage en espace réel ouvre la **carte spatiale** (à gauche, l'intensité
 totale en chaque position) avec le **spectre E-k au curseur** (à droite).
@@ -1094,11 +1310,166 @@ droit sur un panneau donne les deux intégrations :
 
 ![Balayage spatial](images/spatial_scan.png)
 
+# Partie IV — L'onglet Calculation
+
+L'onglet **Calculation** contient ce qui est calculé plutôt que mesuré : le
+cristal dans l'espace réel et sa zone de Brillouin, des modèles de bandes
+ajustés aux données, et des structures de bandes calculées par d'autres. Ses
+fenêtres s'ouvrent en étapes numérotées.
+
+![L'onglet Calculation du panneau d'outils](images/main_window_calculation.png)
+
 ---
 
-## 17. Figures et exportation
+## 25. Structure cristalline
 
-### 17.1 Composeur de figures
+Panneau → Calculation → **Crystal structure...** (rien à sélectionner ; des
+k-maps sélectionnées peuvent être dessinées sur les plans de la zone de
+Brillouin). Cinq étapes :
+
+![La structure cristalline](images/crystal_structure.png)
+
+1. **La structure** — la saisir (maille, groupe d'espace pour son mode de
+   réseau, atomes), reprendre le dernier cristal de l'outil zone de
+   Brillouin, ou **Read a CIF file** (ses opérations de symétrie sont
+   appliquées, son groupe d'espace lu).
+2. **L'aspect**
+   - nombre de mailles selon a, b, c, taille globale des atomes, arêtes de
+     la maille et liaisons (aux couleurs des atomes, ou *grey, thin*) ;
+   - pour chaque élément sa **couleur**, sa **taille**, sa **transparence**
+     et son **brillant** (0 % : une boule mate, 100 % : une boule brillante
+     au reflet net) ;
+   - **Polyhedra around** un élément : ses polyèdres de coordination (ses
+     voisins liés pour sommets), avec leur propre couleur et transparence —
+     les octaèdres TiSe₆, les tétraèdres CuS₄ ;
+   - **Key of the elements** (une boule et son nom pour chacun), **Lattice
+     constants on the cell edges** (`a = 3.52 Å`, `c = 8 Å`).
+
+   Faites glisser l'image pour la tourner, molette pour zoomer ; *View
+   along* a, b, c ou la normale au plan.
+3. **Plan de clivage** — cochez *Draw a plane*, donnez (hkl), faites-le
+   glisser, ou double-cliquez une **couche atomique** de la liste pour l'y
+   placer ; *Hide the atoms above* montre la terminaison ; les atomes du plan
+   sont cerclés de rouge.
+4. **Zone de Brillouin** — la zone du cristal, ses points de haute symétrie
+   nommés et un **chemin** qui les relie (en rouge, p. ex.
+   `Γ-M-K-Γ-A-L-H-A` ou un seul segment, `K-H`), les axes k_x, k_y, k_z en
+   flèches, et jusqu'à deux **plans** normaux à (hkl) — par défaut par Γ et
+   au sommet de la zone, chacun de sa couleur.
+   - **map** sur un plan : la carte à énergie constante d'une k-map
+     sélectionnée à l'énergie donnée (moyennée sur *integrate*), dessinée
+     sur ce plan et découpée à la zone — la surface de Fermi mesurée dans la
+     zone où elle a été mesurée. *azimuth* tourne les cartes par rapport au
+     k_x de la zone.
+   - **Label on the left** : les points nommés ici (`L, M`) sont étiquetés à
+     leur équivalent par symétrie le plus à gauche quand l'image tourne, à
+     l'écart du chemin et des axes.
+
+   ![La zone avec des cartes mesurées sur ses plans](images/crystal_zone.png)
+5. **Export** — le cristal ou la zone : **Save picture...** (PNG à toute
+   taille, redessiné à cette taille) ou **To figure composer...**. Une image
+   issue d'un CIF a ce CIF pour source, et le dossier de données de la figure
+   le conserve ([§28](#28-le-composeur-de-figures)).
+
+## 26. Ajustement de liaisons fortes
+
+Avec une k-map sélectionnée (ou rien, pour lire des points dans un fichier) :
+
+1. **Le réseau** -- une couche 2D (a, b, γ) ou un cristal 3D, ou **Take the
+   crystal from the Brillouin-zone tool** ; l'azimut de a par rapport à kx ;
+   le nombre de couches de voisins.
+2. **Points de bande** -- placez-vous à une énergie et cliquez sur **Trace
+   this energy** (détection de crêtes), ou cochez *Click* et cliquez sur la
+   bande, ou **Read points from a file**. Deux ou trois énergies valent mieux
+   qu'une : un seul contour fixe la forme de la bande, pas son échelle
+   d'énergie.
+3. **Ajuster** -- les intégrales de saut avec leurs erreurs et l'écart
+   quadratique moyen ; le contour du modèle est tracé en rouge sur le plan de
+   l'étape 2. Avec une seule énergie, fixez t1 ; *Refine the azimuth* si
+   l'orientation n'est connue qu'approximativement. Une note orange signifie
+   que les points ne distinguent pas les couches : prenez-en moins.
+4. **Utiliser le modèle** -- **Model to list** (sa fonction spectrale, comme
+   une carte à côté des données), **Save parameters...**, **Copy results**.
+
+## 27. Bandes calculées
+
+Panneau → Calculation → **Calculated bands...** met un calcul de structure
+de bandes à côté de la mesure. Sélectionnez ce avec quoi le comparer —
+k-maps, cartes kz en impulsion et coupes en impulsion — ou rien, pour
+regarder le calcul seul. Quatre étapes.
+
+**1. Le calcul.** **Open calculation...** lit, quel que soit le programme
+qui l'a écrit :
+
+| Fichier | Écrit par | Contenu |
+|---|---|---|
+| `.bxsf` (grille de bandes XCrySDen) | Wien2k, Quantum ESPRESSO, VASP, Wannier90 | les bandes partout dans la zone, interpolées |
+| `_hr.dat` (+ `.win` à côté) | Wannier90, tout modèle de liaisons fortes | un hamiltonien, diagonalisé exactement en chaque k ; poids orbitaux |
+| `_band.dat` (+ `labelinfo`) | Wannier90 | bandes le long d'un chemin |
+| `.spaghetti_ene` (+ `.klist_band`) | Wien2k | bandes le long d'un chemin |
+| `EIGENVAL` (+ `POSCAR`, `PROCAR`) | VASP | bandes le long d'un chemin ou sur une grille ; poids atomiques et orbitaux |
+
+Un calcul « partout » se coupe n'importe où : le long de toute coupe
+mesurée, sur le k_z qu'atteint une énergie de photon, à toute énergie en
+contours. Un calcul « le long d'un chemin » ne se trace que le long de ce
+chemin. *Set E_F myself* remplace le niveau de Fermi du fichier ; *bxsf k
+units* sert pour une grille écrite sans 2π. Le **groupe d'espace** nomme les
+points de la zone ; il est deviné d'après la forme de la maille — indiquez
+celui du cristal (ou prenez-le dans l'outil zone de Brillouin).
+
+**2. Le long d'un chemin.** Le calcul par les points de haute symétrie
+(`Γ-M-K-Γ-A-L-H-A` ; `G` pour Γ, `|` pour un saut), par-dessus la **mesure
+le long du même chemin**, assemblée à partir des cartes sélectionnées :
+chaque segment dans le plan pris dans la carte mesurée sur son plan k_z
+(Γ-M-K-Γ dans la carte du plan Γ, A-L-H-A dans celle du haut de la zone),
+Γ-A dans une carte kz. Le k_z de chaque carte vient de son énergie de photon
+et du potentiel interne V0 ; corrigez-le dans le tableau si besoin, décochez
+une carte pour l'écarter, et donnez l'azimut de l'axe a du cristal sur la
+carte. Là où une carte n'atteint pas un point, son équivalent par symétrie
+est utilisé. **Weight** trace des bandes épaisses : l'épaisseur est le poids
+de l'orbitale choisie.
+
+![Le long du chemin](images/bands_path.png)
+
+**3. Comparer.** Une mesure à la fois, avec le calcul tracé là où elle a
+réellement été prise : une **coupe** reçoit les bandes selon sa direction —
+sur un plan k_z fixe, ou sur la surface courbe qu'atteint son énergie de
+photon (k_z varie le long de la coupe et avec l'énergie) ; une **carte**
+reçoit les contours calculés à l'énergie choisie. **Fit to the cut's bands**
+suit les bandes mesurées (détection de crêtes) et trouve **Z** — la
+renormalisation de la largeur de bande, E mesurée = Z × E calculée +
+décalage — et le **décalage**, chaque point associé à la bande la plus
+proche, de façon robuste. Z et le décalage s'appliquent à chaque étape et à
+chaque sortie. Sur la coupe de démonstration il trouve Z = 0,798 et un
+décalage de −49,8 meV, les valeurs avec lesquelles la démonstration a été
+faite (0,8 et −50 meV).
+
+![Comparer avec une coupe](images/bands_compare.png)
+
+**4. Sorties.**
+
+- **To figure composer...** crée les panneaux cochés : la mesure le long du
+  chemin avec le calcul par-dessus, le calcul seul (les noms des points sur
+  son axe), la coupe ou la carte comparée avec son calcul, et — avec
+  **Constant-energy series at** — pour une k-map comparée, les cartes
+  mesurées à chaque énergie avec les zones en pointillés (rangée du haut) et
+  les contours calculés seuls (rangée du bas), colorés selon le poids choisi
+  à l'étape 2 (en vert là où il dépasse la moitié).
+- **Calculation to list** fait du calcul un spectre (des lorentziennes de la
+  largeur choisie), le long de la coupe comparée ou du chemin, qui s'ouvre
+  donc dans les fenêtres de visualisation à côté des données ou s'en
+  soustrait.
+
+![Sorties](images/bands_output.png)
+
+# Partie V — Figures et sorties
+
+Comment une figure est assemblée, enregistrée avec ses données et exportée —
+et, pour finir, deux figures construites pas à pas.
+
+---
+
+## 28. Le composeur de figures
 
 Panneau → Advanced → **Figure composer...** **sans rien sélectionner** ouvre
 une page vierge, comme une figure d'article : quatre panneaux vides (a),
@@ -1140,21 +1511,77 @@ vue 3D a son propre bouton **To figure composer**).
   **Plot tools** d'une fenêtre, qui dessinent des guides sur le graphique
   affiché.
 
-### 17.2 Figure en série de tranches
+### Disposer les panneaux
 
-Sélectionnez une carte → panneau → Advanced → **Slice series figure...**
-dispose une page de tranches 2D planes du cube en une figure pour un
-article — contours à énergie constante à une série d'énergies, ou coupes à
-une série d'angles ou d'impulsions — régulièrement espacées ou à des valeurs
-choisies, avec intégration, une échelle de couleurs commune et des
-étiquettes seulement sur les bords extérieurs. (À ne pas confondre avec
-**3D slices**, qui trace trois plans dans une vue 3D.)
+Cliquez un panneau, puis **Ctrl+clic** (ou Maj+clic) sur les autres pour en
+sélectionner plusieurs. Les boutons **Arrange** à gauche alors :
 
-| Réglages | Résultat |
+| Bouton | Effet |
 |---|---|
-| ![Réglages de la série de tranches](images/slice_figure_dialog.png) | ![Figure en série de tranches](images/slice_figure.png) |
+| ⇤ Left, Right ⇥, ⤒ Top, Bottom ⤓ | alignent leurs bords gauche / droit / haut / bas (sur le plus extérieur) |
+| ↔ Centres, ↕ Centres | mettent leurs centres sur une même verticale / horizontale (celle du premier panneau sélectionné) |
+| Space ↔, Space ↕ | espaces égaux entre eux, de gauche à droite / de haut en bas (trois ou plus) |
+| = Width, = Height | la largeur / hauteur du premier panneau sélectionné pour tous |
 
-### 17.3 Exporter un panneau
+![Plusieurs panneaux sélectionnés, et les boutons Arrange](images/composer_arrange.png)
+
+### Lettres et barres de couleur
+
+- **Letters in line** (onglet *Text*, activé par défaut) : les lettres des
+  panneaux côte à côte sont à la même hauteur, celles des panneaux l'un
+  au-dessus de l'autre au même bord gauche, quels que soient les titres ou
+  les axes de chacun. **Nudge (mm)** déplace la lettre d'un panneau (pour
+  dégager un long titre d'axe, par exemple) ; **Re-letter** les renomme (a),
+  (b)… dans l'ordre de lecture.
+- **Colour bar** (onglet *Colour*) : **Ends** écrit les valeurs, les mots
+  *High* / *Low*, ou rien ; **Length (%)** de la hauteur ou de la largeur du
+  panneau ; **Position** *right* (debout à côté du panneau) ou *below*
+  (couchée dessous, centrée). La barre d'une vue 3D est dimensionnée sur le
+  cube tel qu'il est dessiné, non sur tout le cadre qui l'entoure.
+
+![Les réglages de la barre de couleur](images/composer_colour_bar.png)
+
+### Courbes : lignes, symboles et barres d'erreur
+
+Onglet *Overlays*, **Curves drawn on the panel** : sélectionnez des courbes
+dans la liste (ou aucune, pour toutes), puis réglez leur **couleur**, leur
+**épaisseur**, leur **style** (plein, tirets, pointillés…), leurs
+**symboles** (cercle, carré, triangles, losange, avec une taille) et si elles
+sont **reliées par une ligne** ; **± σ as error bars** change les deux courbes
+pointillées ±σ d'une courbe en barres d'erreur à ses points. **Apply to the
+curves**. Une courbe avec des trous (NaN) est tracée en morceaux.
+
+### Enregistrer une figure pour la modifier plus tard, avec ses données
+
+**Save** / **Save as...** écrivent la figure dans le format propre au
+programme, `fig1.afig` : la page, ses dessins et chaque panneau avec ses
+données et ses réglages — rouvrez-la avec **Open...** (ou choisissez-la dans
+**Load data...** de la fenêtre principale) et reprenez la modification là où
+vous l'aviez laissée. Une vue 3D est conservée comme l'image qu'elle montre.
+
+À côté, **`data for fig1/`** reçoit un dossier par panneau (`a`, `b`, …) :
+
+```
+data for fig1/
+  a/  processed/  ce que montre le panneau : l'image en coupe .nxs (qui se
+                  rouvre dans la fenêtre de visualisation), ses lignes
+                  (bandes calculées, contours, courbes) en lines.csv, une
+                  image en .png
+      original/   ce dont il a été fait : le premier fichier de mesure (un
+                  plan converti en k, symétrisé, découpé remonte au fichier
+                  d'où il a d'abord été lu), le calcul avec les fichiers lus
+                  avec lui (.win, POSCAR...), le fichier image ou le CIF
+      sources.txt quelle entrée du fichier, et les traitements entre les deux
+  b/  ...
+```
+
+Le fichier d'origine est copié même quand le panneau montre un résultat
+calculé à partir de lui bien des étapes plus tard : chaque jeu de données se
+souvient du fichier dont il est parti. Une figure rouverte dont les fichiers
+d'origine ont été déplacés réutilise les copies de son propre dossier de
+données précédent.
+
+## 29. Exporter un panneau et enregistrer des données
 
 Clic droit sur n'importe quelle image → **Export** → **Data (.nxs, Igor)...**,
 **Image...** ou **Axes only (.eps)...**. L'exportation reprend toujours
@@ -1167,7 +1594,7 @@ ou sans les axes, avec les guides des Plot tools s'il y en a, et avec la zone
 de Brillouin si le jeu de données en a une) ; ou le cadre, les graduations et
 les étiquettes en PostScript vectoriel, pour y placer l'image dans
 Illustrator (avec, au choix, la zone de Brillouin tracée dans le cadre — voir
-[§8.2](#82-zone-de-brillouin)).
+[§15](#15-zone-de-brillouin)).
 
 ![Exportation](images/export_dialog.png)
 
@@ -1177,9 +1604,120 @@ sélectionnées vont dans un même fichier -- ou, selon le type de fichier
 choisi, pour Igor Pro : un `.itx` qui les contient tous, ou un `.ibw` par jeu
 de données. Un fichier Igor est une copie ; les lignes restent inchangées.
 
+## 30. Exemple complet : deux figures dans le composeur
+
+Les deux figures ci-dessous ont été faites à partir des données de
+démonstration ([§2](#2-essayer-avec-des-données-de-démonstration)) avec les
+fenêtres du programme, puis assemblées dans le composeur de figures.
+`devtools/figure_tests.py` exécute exactement ces étapes : c'est aussi un
+script à lire en parallèle de cette section.
+
+### Figure 1 : contours à énergie constante
+
+![Figure d'exemple 1](images/example_figure_1.png)
+
+**(a) Le cube entaillé.** Convertissez la carte du plan Γ en impulsion
+([§13](#13-conversion-en-k-dune-carte)) ; sélectionnez la k-map → Advanced →
+**Notched cube...**. *Change sampling...* : k_x, k_y dans ±1,25 Å⁻¹ et E
+jusqu'à E_F ; placez l'entaille en k_x = k_y = 0 jusqu'à l'énergie la plus
+basse, coin **+ − +** ; palette *blue*, inversée ; azimut −52°, élévation
+24°. **To figure composer...** : une nouvelle figure. Dans le composeur,
+onglet *Colour* : **Colour bar** activée, Ends *high-low*, Position *below*,
+Length 60 %.
+
+**(b) Contours mesurés et calculés.** Sélectionnez la k-map du plan Γ →
+Calculation → **Calculated bands...** ; ouvrez `demo_calc_hr.dat` ; à
+l'étape 2 choisissez le **Weight** `Se-pxy` ; à l'étape 3 choisissez la
+k-map, *Integrate* 0,050 eV, puis une coupe pour **Fit to the cut's bands**
+(Z et le décalage s'appliquent aussi aux contours) ; à l'étape 4 cochez
+**Constant-energy series at** `0, -0.3, -0.6, -0.9`, décochez le reste,
+**To figure composer...** → la figure de (a). Huit panneaux arrivent : les
+cartes mesurées avec les zones en pointillés, et les contours calculés
+seuls, en rouge là où le poids est inférieur à la moitié et en vert au-delà.
+Dans chacun, réglez la palette (*blue*, inversée), les plages ±1,2 et
+supprimez les titres de la rangée du bas (onglet *Text*) ; ajoutez les
+notes (i)…(viii) et Γ, M, K avec l'outil **Text**.
+
+**(c) Contours empilés.** Sélectionnez la k-map → Advanced → **Stacked
+slices...** ; *Layers* selon E − E_F en `0, -0.15, -0.3, -0.45, -0.6, -0.75,
+-0.9`, *Integrate* 0,04, *Fade low values* 45 %, aspect z 2,2, azimut −45°,
+élévation 14°. **To figure composer...** → la même figure.
+
+**Disposition.** Faites glisser les panneaux à peu près en place (les 2 × 4
+contours en deux rangées, (a) à gauche, (c) à droite), puis sélectionnez
+(a), la rangée du haut de (b) et (c) et appuyez sur **⤒ Top** ;
+sélectionnez une rangée de contours et **Space ↔**, et **= Height** pour
+chaque rangée. Les lettres s'alignent d'elles-mêmes ; **Nudge** a déplacé
+celle de (b) de 6 mm vers la gauche, à l'écart de son titre k_y. Seuls (a),
+(b) et (c) portent une lettre : videz la case *Letter* des autres. **Save
+as...** `example_figure_1.afig` (son dossier de données est écrit à côté),
+et **PNG** / **PDF** pour l'article.
+
+![Sélection de panneaux et alignement avec les boutons Arrange](images/composer_arrange.png)
+
+### Figure 2 : un croisement de bandes suivi selon k_z
+
+![Figure d'exemple 2](images/example_figure_2.png)
+
+**(a) La structure cristalline.** Calculation → **Crystal structure...** →
+*Read a CIF file* `demo_tetragonal_crystal.cif`. Étape 2 : Hf bleu-vert, Si
+bleu foncé, S jaune, brillant 85 % chacun, taille des atomes 0,52 ; *Grey,
+thin bonds* ; *Lattice constants on the cell edges* (sans légende des
+éléments). Étape 3 : *Draw a plane* (001) au milieu de la maille, entre les
+couches de S, en gris. Tournez-la à l'azimut −68°, élévation 14°. Étape 5 :
+**To figure composer...** → une nouvelle figure.
+
+**(b) La zone avec les cartes mesurées.** Sélectionnez les k-maps des plans
+Γ et A, puis Calculation → **Crystal structure...** → *Read a CIF file*
+`demo_crystal.cif`. Étape 4 : *Path* `K-H` (la ligne où les deux bandes se
+croisent, en rouge) ; *Plane through Γ* → map *Γ-plane map* à −0,65 eV ;
+*Plane at the zone top* → map *A-plane map* à −0,55 eV ; *Label on the
+left* `L, M`. Étape 5 : *Picture of* **The Brillouin zone** → **To figure
+composer...** → la figure de (a).
+
+**(c) Les coupes empilées selon k_z.** Convertissez le balayage en énergie
+de photon en impulsion ([§14](#14-balayages-en-énergie-de-photon-kz)),
+sélectionnez-le → Advanced → **Stacked slices...** : *Layers* selon k_z aux
+quatre k_z des coupes (8,0, 8,3, 8,6 et 9,0 π/c), *Fade* 30 %, **Spread** 3,
+azimut 40°, élévation 12°. Dans **Mark a curve through the layers**, ajoutez
+le croisement sur chaque coupe (k_z, k_∥, E) — tiré de (d) — en rouge.
+**To figure composer...**.
+
+**(d) Les coupes, leurs MDC et le croisement en fonction de k_z.**
+
+- (i)–(iv) : dans la fenêtre de la carte k_z, **Functions → Slice → Save
+  slice to the main list** à chaque k_z ; ouvrez chaque coupe dans le
+  composeur (**Add panel...**). Les guides en tirets le long des deux bandes
+  qui se croisent sont le calcul (Calculated bands, étape 3, sur le plan
+  k_z = …), décalé par le Z et le décalage ajustés : à l'étape 4, **To figure
+  composer...** avec seulement *The compared cut* coché donne la coupe avec
+  eux ; réglez leur style sur *dashed* dans l'onglet *Overlays*. Tracez le
+  cadre en tirets avec l'outil **Box**.
+- (v) : sélectionnez la première coupe → Advanced → **Stack plot (EDC /
+  MDC)...** → MDC, 40 courbes de 3 lignes chacune, sur les énergies du
+  cadre ; **Send to figure composer** → cette figure. Les guides à travers
+  les MDC sont les mêmes bandes calculées, à l'énergie de chaque MDC.
+- (vi) : l'énergie du croisement à chaque k_z — tirée de **MDC fit** sur
+  chaque coupe et de **Dispersion...**, où *Crosses band … at k = …,
+  E = … ± …* la donne avec son erreur — en points avec barres d'erreur
+  (*Overlays* : symboles *circle*, non reliés, **± σ as error bars**), et le
+  croisement calculé en fonction de k_z en ligne rouge.
+
+**Disposition.** (a), (b), (c) sur la première rangée : sélectionnez les
+trois, **⤒ Top** et **= Height** ; les six panneaux de (d) sur la deuxième
+rangée, **⤒ Top** et **= Height**. Lettres : (a), (b), (c), (d) seulement.
+**Save as...** `example_figure_2.afig`.
+
+Chaque panneau de l'une ou l'autre figure peut être modifié ensuite —
+ouvrez le `.afig`, sélectionnez le panneau et utilisez les outils de
+figure ; le dossier de données conserve à la fois les données telles
+qu'affichées et la mesure dont elles proviennent.
+
+# Partie VI — Entretien
+
 ---
 
-## 18. Sauvegarde automatique, mémoire et récupération
+## 31. Sauvegarde automatique, mémoire et récupération
 
 - **Sauvegarde automatique.** Chaque jeu de données calculé (une carte k, une
   coupe traitée, un résultat d'ajustement…) est écrit, sans compression, dans
@@ -1215,7 +1753,7 @@ de données. Un fichier Igor est une copie ; les lignes restent inchangées.
   file...**, **Close anyway** (les copies automatiques sont supprimées) ou
   **Cancel** (rien ne se passe).
 
-## 19. Conseils et dépannage
+## 32. Conseils et dépannage
 
 - **Un bouton d'outil grisé** — survolez-le : l'infobulle dit pourquoi (par
   ex. l'ajustement MDC exige une coupe déjà en Å⁻¹, l'arithmétique de coupes
@@ -1246,93 +1784,3 @@ de données. Un fichier Igor est une copie ; les lignes restent inchangées.
 - **La machine utilise la mémoire d'échange** — surveillez la barre Memory
   (ambre au-delà d'un tiers de la RAM, rouge au-delà de la moitié) ; utilisez
   **Free RAM** ou **Close all**.
-
----
-
-## 20. Nouveau dans 1.2.0 : outils repris des programmes MATLAB
-
-Cinq outils repris des programmes MATLAB du laboratoire, améliorés là où
-l'original pouvait l'être. Ceux qui demandent plusieurs décisions s'ouvrent
-en **étapes numérotées** : le titre indique *Step 2 of 4 : …*, un cadre bleu
-dit à quoi sert l'étape et quoi faire, **Next →** reste grisé (la raison est
-écrite à côté) tant que l'étape n'est pas faite, et **← Back** ou la liste
-des étapes à gauche permet de revenir.
-
-### 20.1 Additionner des mesures répétées (cadre Datasets)
-
-Pour une coupe ou une carte fine prise en plusieurs balayages courts, afin de
-repérer un échantillon qui vieillit. Sélectionnez les balayages (au moins
-deux, d'un même type) → **Sum repeated scans...** :
-
-1. **Est-ce bien la même mesure ?** La grille et les conditions enregistrées
-   de chaque balayage (énergie de photon, polarisation, angles, position,
-   température, énergie de passage, mode de lentille) ; en orange ce qui
-   diffère du premier.
-2. **L'échantillon a-t-il changé ?** Cliquez sur **Compare the scans**.
-   Chaque balayage est comparé à la somme des autres : le *χ² / point* est à
-   peu près le même pour des balayages qui ne diffèrent que par le bruit de
-   comptage et augmente quand le spectre change ; ceux qui ressortent sont
-   marqués **changed**. Le décalage en énergie de l'EDC de chacun et son taux
-   de comptage sont donnés ; cliquez une ligne pour voir son EDC face aux
-   autres.
-3. **Additionner.** Cochez les balayages à garder (les *changed* sont
-   décochés au départ), choisissez de corriger ou non les décalages, **Sum**
-   ou **Mean**, puis **Sum to list**.
-
-### 20.2 Détection de crêtes (Advanced)
-
-Suit les bandes comme des crêtes de l'intensité, chaque point au sous-pixel
-près. Réglez le **lissage** selon chaque axe (dans son unité, environ la
-largeur de la bande), montez le **seuil** jusqu'à ne garder que les bandes
-(points jaunes sur la source), puis **Result to list** (l'image des crêtes ;
-une carte plan par plan) ou **Save ridge points...** (un CSV que
-l'ajustement de liaisons fortes lit tel quel).
-
-### 20.3 Corrections du détecteur (Basic, sous Remove detector grid)
-
-Sur une coupe, une carte ou une carte kz telle que mesurée :
-
-1. **Trapèze** -- cochez *Correct a trapezoidal image* et placez les quatre
-   coins jaunes sur ceux de la zone éclairée ; l'image de droite la montre
-   rendue rectangulaire, le nombre de coups de chaque ligne conservé.
-2. **Zones défectueuses** -- **Add a region** et déplacez-la sur un point
-   mort ou chaud, ou **Find bad pixels** ; remplissage *smooth* (pour un
-   point) ou *linear along* un axe (pour une bande).
-3. **Appliquer** -- **Apply to list**. Faites ensuite la suppression de la
-   grille, le niveau de Fermi et la conversion en k sur le résultat.
-
-### 20.4 Ajustement de liaisons fortes (Calculation)
-
-Avec une k-map sélectionnée (ou rien, pour lire des points dans un fichier) :
-
-1. **Le réseau** -- une couche 2D (a, b, γ) ou un cristal 3D, ou **Take the
-   crystal from the Brillouin-zone tool** ; l'azimut de a par rapport à kx ;
-   le nombre de couches de voisins.
-2. **Points de bande** -- placez-vous à une énergie et cliquez sur **Trace
-   this energy** (détection de crêtes), ou cochez *Click* et cliquez sur la
-   bande, ou **Read points from a file**. Deux ou trois énergies valent mieux
-   qu'une : un seul contour fixe la forme de la bande, pas son échelle
-   d'énergie.
-3. **Ajuster** -- les intégrales de saut avec leurs erreurs et l'écart
-   quadratique moyen ; le contour du modèle est tracé en rouge sur le plan de
-   l'étape 2. Avec une seule énergie, fixez t1 ; *Refine the azimuth* si
-   l'orientation n'est connue qu'approximativement. Une note orange signifie
-   que les points ne distinguent pas les couches : prenez-en moins.
-4. **Utiliser le modèle** -- **Model to list** (sa fonction spectrale, comme
-   une carte à côté des données), **Save parameters...**, **Copy results**.
-
-### 20.5 Structure cristalline (Calculation)
-
-1. **La structure** -- saisie à la main (maille, groupe d'espace pour son
-   centrage, atomes), le dernier cristal de l'outil zone de Brillouin, ou
-   **Read a CIF file** (sa symétrie est appliquée).
-2. **L'apparence** -- nombre de mailles selon a, b, c, taille des atomes,
-   arêtes de la maille et liaisons, et pour chaque élément couleur, taille,
-   transparence et brillance. Faites glisser l'image pour la tourner, la
-   molette pour zoomer ; *View along* a, b, c ou la normale au plan.
-3. **Plan de clivage** -- cochez *Draw a plane*, donnez (hkl), faites-le
-   glisser, ou double-cliquez une **couche atomique** de la liste pour l'y
-   placer ; *Hide the atoms above* montre la terminaison ; les atomes du plan
-   sont cerclés de rouge.
-4. **Exporter** -- **Save picture...** (PNG à toute taille) ou **To figure
-   composer...**.
