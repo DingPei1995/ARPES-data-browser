@@ -2,7 +2,7 @@
 
 *[English version](USER_GUIDE_en.md) · [中文版](USER_GUIDE_zh.md)*
 
-*Dernière mise à jour : 28 octobre 2026 — pour ARPES viewer v1.2.0*
+*Dernière mise à jour : 28 octobre 2026 — pour ARPES viewer v1.1.1*
 
 La version et sa date figurent dans la barre de titre et en bas de la fenêtre
 principale. Signaler un bogue, poser une question, obtenir la dernière version :
@@ -151,12 +151,12 @@ entrée qui ne convient pas à la sélection est grisée, et son infobulle en
 donne la raison.
 
 **Le cadre Datasets** (panneau d'outils, entre les outils et Memory) contient
-le reste de ce qui se fait aux lignes : **Experiment info**, **Auto Exp.
-log...** (voir [le journal d'expérience](#le-journal-dexpérience-auto-exp-log)),
+le reste de ce qui se fait aux lignes : **Experiment info**, **Log format...**
+et **Auto Exp. log** côte à côte (voir [le journal d'expérience](#le-journal-dexpérience)),
 **Rename...**, **Save datasets...**, **Remove from list** et **Session
 log...**. Ses boutons se grisent comme les outils.
 
-### Où se trouvent les choses maintenant (v1.2.0)
+### Où se trouvent les choses maintenant (v1.1.1)
 
 Pour qui a utilisé une version antérieure : les outils ont quitté le menu
 contextuel et les menus *Functions* des fenêtres pour le panneau d'outils ;
@@ -189,20 +189,29 @@ dans une fenêtre à part, avec un champ de filtre et **Export metadata
 
 ![Informations sur le jeu de données](images/information_window.png)
 
-### Le journal d'expérience (Auto Exp. log)
+### Le journal d'expérience
 
-**Datasets → Auto Exp. log...** écrit le journal du temps de faisceau -- un
-fichier CSV, une ligne par mesure -- à partir des métadonnées des fichiers
-eux-mêmes.
+Deux boutons côte à côte dans le cadre **Datasets** écrivent le journal du
+temps de faisceau -- un fichier CSV, une ligne par mesure -- à partir des
+métadonnées des fichiers : **Log format...** (à gauche) le prépare une fois,
+**Auto Exp. log** (à droite) y ajoute les jeux sélectionnés d'un clic.
 
-![La fenêtre Auto Exp. log](images/exp_log_dialog.png)
+![La fenêtre Log format](images/exp_log_dialog.png)
+
+**Log format...**
 
 1. **Log file.** Choisissez le dossier et tapez le nom du fichier. Si un
-   journal de ce nom existe déjà, les nouvelles lignes sont écrites **après
-   sa dernière ligne** et rien au-dessus n'est modifié ; sinon il est créé,
-   avec les colonnes pour en-tête. (Si les colonnes ont changé depuis, une
-   ligne marquée `# columns` avec les nouveaux titres vient d'abord.)
-2. **Columns.** *Fields of:* choisit un jeu de données de la liste -- du
+   journal de ce nom existe déjà, la fenêtre montre **son propre format**,
+   à ajuster.
+2. **Format.** *Separator* et *Decimal mark* sont par défaut ceux d'Excel
+   sur cet ordinateur. Excel découpe un CSV au séparateur de liste du
+   système -- un **point-virgule** partout où la virgule est le séparateur
+   décimal (réglages français, allemands, italiens...) -- et un fichier
+   séparé par des virgules s'y ouvre avec tout dans la première colonne.
+   Laissez-les sur *auto*, sauf si le journal est destiné à un ordinateur
+   réglé autrement. *Ranges as:* écrit un intervalle `start/stop/step` ou
+   `start:step:stop`.
+3. **Columns.** *Fields of:* choisit un jeu de données de la liste -- du
    type que vous consignez le plus -- et **Read fields** liste tout ce qu'il
    contient, avec sa valeur : nom du fichier, type, heure de début et
    intervalles balayés tirés des données, puis chaque champ de métadonnées
@@ -210,10 +219,9 @@ eux-mêmes.
    tableau de droite, double-cliquez un titre pour le renommer, et rangez
    les colonnes dans l'ordre voulu avec **Top / Up / Down / Bottom**. **Add
    empty column** ajoute une colonne à remplir à la main (commentaires).
-   *Ranges as:* écrit un intervalle `start/stop/step` ou `start:step:stop`.
-   Les colonnes sont retenues pour la session suivante ; **Save columns
-   as...** / **Load columns...** en gardent un jeu par ligne de lumière.
-3. **If scanned.** Ce qu'écrit une colonne de position ou d'angle dépend de
+   **Save format as...** / **Load format...** en gardent un par ligne de
+   lumière.
+4. **If scanned.** Ce qu'écrit une colonne de position ou d'angle dépend de
    la mesure :
    - une **coupe** : l'échantillon n'a pas bougé -- la valeur du moteur ;
    - un balayage **SPEM** : l'axe de platine balayé, `start/stop/step`
@@ -226,19 +234,24 @@ eux-mêmes.
 
    *auto* (par défaut) reconnaît le moteur balayé à son nom, et une position
    qui a bougé à ses valeurs. Toute autre mesure reçoit la valeur du champ.
-4. **Record.** *The selected rows* ou *Every dataset in the list*, puis
-   **Write records**. *Skip datasets already in the log* omet les fichiers
-   dont le nom figure déjà dans la colonne des noms. **Keep recording**
-   écrit la ligne de chaque fichier ajouté ensuite à la liste, même fenêtre
-   fermée : pendant le temps de faisceau, ajoutez chaque fichier mesuré et
-   le journal se tient à jour.
+5. **Save format.** Si le journal contient déjà des lignes et que son format
+   a changé, il est **réécrit sous le nouvel en-tête** : chaque ligne suit
+   ses colonnes (renommées ou déplacées), les nouvelles colonnes restent
+   vides pour les anciennes lignes, et les colonnes retirées sont nommées
+   d'abord, car leur contenu disparaît. L'en-tête reste la seule première
+   ligne.
+
+*Skip datasets already in the log* omet les fichiers dont le nom figure déjà
+dans la colonne des noms. **Keep recording** consigne chaque fichier ajouté
+ensuite à la liste, jusqu'à la fermeture du programme : pendant le temps de
+faisceau, ajoutez chaque fichier mesuré et le journal se tient à jour.
+
+**Auto Exp. log** ajoute les lignes sélectionnées après la dernière ligne du
+journal, sans rien ouvrir ; la barre d'état dit combien. La toute première
+fois, il ouvre d'abord *Log format...*.
 
 Si le journal est ouvert dans Excel, Windows refuse de l'écrire : fermez-le
-dans Excel et recommencez.
-
-**Clear list** demande confirmation, et propose d'enregistrer ce qui a été
-calculé pendant la session sans avoir encore été sauvegardé. Les fichiers sur
-le disque ne sont jamais supprimés.
+dans Excel et cliquez à nouveau.
 
 ### Combiner des jeux de données : empiler et raccorder
 

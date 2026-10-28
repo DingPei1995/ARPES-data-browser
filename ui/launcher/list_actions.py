@@ -83,8 +83,9 @@ RULES = {
     "save": ("any", None, "datasets"),
     "remove": ("any", "all", "datasets"),
     "log": ("none", "all", ""),
-    # Logs the selection, or the whole list with nothing selected.
-    "explog": ("none", "all", ""),
+    # Setting the log up needs no selection; logging logs the selection.
+    "explogformat": ("none", "all", ""),
+    "explog": ("any", None, "datasets"),
 }
 
 

@@ -82,7 +82,7 @@ viewer_windows = []                 # open viewer windows, kept alive here
 data_ops_dialog = None              # the Data operations dialog, while open
 process_dialog = None               # the Process dialog (2D or 3D), while open
 info_window = None                  # the Experiment info window, once asked for
-exp_log_dialog = None               # the Auto Exp. log window, once asked for
+exp_log_keep_recording = False      # log each file added to the list (Exp. log format)
 default_colormap = DEFAULT_COLORMAP   # what a newly opened window starts with
 default_flip = False
 
@@ -256,8 +256,8 @@ def _add_scanned(scanned, options=None):
 
     ui.statusbar.showMessage(
         f"Added {added} dataset(s); {len(loaded_items)} in the list")
-    if new_keys and exp_log_dialog is not None and exp_log_dialog.auto_record():
-        exp_log_dialog.record(new_keys, quiet=True)
+    if new_keys and exp_log_keep_recording:
+        record_exp_log(new_keys, quiet=True)
 
 
 def listed_names():
@@ -616,7 +616,8 @@ def run_list_action(name):
         "kzalign": open_kz_alignment,
         "save": save_selected,
         "log": show_operations_log,
-        "explog": open_exp_log,
+        "explogformat": open_exp_log_format,
+        "explog": record_exp_log,
         "remove": remove_selected,
     }
     handler = handlers.get(name)
@@ -2324,22 +2325,44 @@ def _log_load(key):
     return load_dataset(key), loaded_items.get(key, {})
 
 
-def open_exp_log():
-    """Datasets -> Auto Exp. log: the window that writes the experiment
-    log from the listed datasets' metadata. One window for the session, so
-    its folder, file name and "keep recording" survive closing it."""
-    global exp_log_dialog
-    from ui.panels.explog import ExpLogDialog
-    if exp_log_dialog is None:
-        exp_log_dialog = ExpLogDialog(
-            win, entries=_log_entries, load=_log_load, selected=selected_keys,
-            folder=ui.FilePathLE.displayText() or os.path.expanduser("~"),
-            status=ui.statusbar.showMessage)
-    exp_log_dialog.refresh()
-    exp_log_dialog.show()
-    exp_log_dialog.raise_()
-    exp_log_dialog.activateWindow()
-    return exp_log_dialog
+def open_exp_log_format():
+    """Datasets -> Exp. log format...: set the experiment log up -- where it
+    is, its separator and its columns. Returns True when a format was
+    saved."""
+    global exp_log_keep_recording
+    from ui.panels.explog import ExpLogFormatDialog
+    dialog = ExpLogFormatDialog(
+        win, entries=_log_entries, load=_log_load, selected=selected_keys,
+        folder=ui.FilePathLE.displayText() or os.path.expanduser("~"),
+        keep_recording=exp_log_keep_recording)
+    global last_exp_log_dialog
+    last_exp_log_dialog = dialog                  # for the tests
+    if dialog.exec_() != QDialog.Accepted:
+        return False
+    exp_log_keep_recording = dialog.auto_box.isChecked()
+    ui.statusbar.showMessage(
+        f"Experiment log format saved for {dialog.settings.path()}"
+        + (" -- recording each file added to the list"
+           if exp_log_keep_recording else ""))
+    return True
+
+
+#: The last Exp. log format window, kept for the tests.
+last_exp_log_dialog = None
+
+
+def record_exp_log(keys=None, quiet: bool = False):
+    """Datasets -> Auto Exp. log: add the selected datasets' records to the
+    experiment log, in its saved format, without asking. The first time,
+    when no log has been set up, the format window opens first."""
+    from tools.output import explog
+    from ui.panels.explog import record_datasets
+    if not explog.load_settings().configured:
+        if quiet or not open_exp_log_format():
+            return 0
+    return record_datasets(selected_keys() if keys is None else keys,
+                           _log_load, parent=win, quiet=quiet,
+                           status=ui.statusbar.showMessage)
 
 
 def unsaved_datasets():

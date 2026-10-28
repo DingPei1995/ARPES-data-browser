@@ -10,25 +10,38 @@ file is the record of how it got that way.
 
 ---
 
-## 1.2.0 — 2026-10-28
+## 1.1.1 — 2026-10-28
 
-The experiment log, and a Datasets box for what is done to the rows.
+The experiment log, and a Datasets box for what is done to the rows. (A
+small change, so only the last number moves.)
 
-- **Auto Exp. log.** A new window (tool panel → Datasets → **Auto Exp.
-  log...**) writes the beamtime's log as a CSV, one row per measurement,
-  from the files' own metadata -- the job the hand-kept logs
-  (`DLS_20230508.xlsx`, the ANTARES template) did. The columns are chosen
-  by ticking the fields of a reference dataset from the main list (its
-  metadata and motors, plus fields worked out from the data: file name,
-  data type, start time, the scanned axes, the energy window, the points),
-  renamed and put in any order; an empty column takes notes by hand. They
-  are remembered between sessions and can be saved per beamline
-  (`tools/output/explog.py`, `ui/panels/explog.py`).
-  - An existing log is continued after its last record: blank rows a
-    spreadsheet left at the end are dropped, nothing above is touched, and
-    when the columns changed a `# columns` header row comes first. A new
-    log gets a byte-order mark so that Excel reads hν and Δ. Datasets
-    already in the log (by file name) are skipped.
+- **The experiment log**, two buttons side by side in the tool panel's
+  Datasets box (`tools/output/explog.py`, `ui/panels/explog.py`):
+  - **Log format...** sets the log up, once: folder, file name, separator,
+    decimal mark and columns. The columns are chosen by ticking the fields
+    of a reference dataset from the main list (its metadata and motors,
+    plus fields worked out from the data: file name, data type, start
+    time, the scanned axes, the energy window, the points), renamed and put
+    in any order; an empty column takes notes by hand. The settings are
+    remembered between sessions; a format can be saved per beamline.
+  - **Auto Exp. log** adds the selected datasets to the log in that format,
+    after its last record, with no window (the first click asks for the
+    format). Files already in the log are skipped. *Keep recording* logs
+    every file added to the list from then on.
+  - **The format belongs to the log.** Pointing *Log format* at an existing
+    log shows that log's own format, to adjust; saving a changed format
+    rewrites the log under the new header, each record moved with its
+    columns (followed through renames and moves), after saying which
+    columns' contents would go. The header is only ever the first row.
+  - **Excel opens it in columns.** Excel splits a CSV at the computer's
+    list separator, which is `;` wherever the decimal mark is a comma --
+    so a comma-separated log opened with everything in the first column on
+    such a Windows. The separator and decimal mark are now by default
+    Excel's on this computer (read from the Windows settings; from the
+    decimal mark on macOS and Linux), numbers are written with that decimal
+    mark (and so are not turned into dates), and an existing log keeps its
+    own separator wherever it is continued. Logs start with a byte-order
+    mark so that Excel reads hν and Δ.
   - What a position column says follows the measurement: a cut's fixed
     position; a SPEM scan's stage as `start/stop/step`; a manipulator
     map's angle as `start/stop/step`, and a sample position corrected
@@ -36,21 +49,22 @@ The experiment log, and a Datasets box for what is done to the rows.
     Each column has an *If scanned* rule (auto, never, SPEM X / Y, map
     angle, kz photon energy); auto recognises the scanned motor by name,
     and a moving position by its values.
-  - *Keep recording* logs every file added to the list from then on,
-    window closed or not.
 - **Diamond maps keep the positions that followed the scan.** A motor that
   moved along a scanned dimension without being its axis -- the sample
   position I05 corrects as the manipulator turns -- is now listed among the
   dataset's motors as `<name> range`, so the log can say where the sample
   was (`Layout.followers`).
 - **The tool panel has a Datasets box**, between the tools and the Memory
-  box: **Experiment info**, **Auto Exp. log...**, **Rename...**, **Save
-  datasets...**, **Remove from list**, **Session log...** -- the right-click
-  menu's entries other than the three ways of opening a row, which are all
-  that menu holds now. They grey out with the selection like the tools.
+  box: **Experiment info**, **Log format...** | **Auto Exp. log**,
+  **Rename...**, **Save datasets...**, **Remove from list**, **Session
+  log...** -- the right-click menu's entries other than the three ways of
+  opening a row, which are all that menu holds now. They grey out with the
+  selection like the tools.
 - **Show information is Experiment info**, and its window is titled so.
 - **Combining is the Combine... button under the list only**; the
   right-click entry for it is gone.
+- **Terms of use** in the README: non-commercial use only; new readers are
+  for public large-scale facilities, not individual laboratories.
 
 ## 1.1.0 — 2026-10-27
 

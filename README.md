@@ -1,11 +1,19 @@
 # ARPES viewer
 
-**Version 1.2.0** (last modified 28 October 2026) — see
+**Version 1.1.1** (last modified 28 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
 (<https://github.com/DingPei1995/ARPES-data-browser>). Please quote it when
 reporting a bug.
+
+> **Terms of use.** This program is for **non-commercial use only**
+> (academic research and teaching); any commercial use is not permitted.
+> New and updated loaders cover data from **public large-scale facilities**
+> (synchrotrons and similar user facilities) only -- formats of individual
+> laboratories' own set-ups are not supported. For collaborations, or
+> questions about the details, contact
+> [ding.pei@synchrotron-soleil.fr](mailto:ding.pei@synchrotron-soleil.fr).
 
 A Python/PyQt5 program for ARPES data: browse the measurements in a folder,
 open them in their own windows, convert to momentum, cut, fit, process, and
@@ -353,7 +361,8 @@ read its metadata, **double-click** to open it in its own window.
 Right-click a row (or a selection) for the three ways of opening it:
 **Open**, **Open slit cut** and **Open scan-axis cut** (a map's cut in a
 window of its own, without its contour on screen). Everything else done to
-the rows -- **Experiment info**, **Auto Exp. log...**, **Rename...**,
+the rows -- **Experiment info**, **Log format...** / **Auto Exp. log**,
+**Rename...**,
 **Save datasets...**, **Remove from list**, **Session log...** -- is the
 *Datasets* box of the tool panel, between the tools and the Memory box;
 combining datasets is the **Combine...** button under the list.
@@ -384,7 +393,8 @@ not fit and why -- at once, as the pointer moves.
 | entry | rows | kinds |
 |---|---|---|
 | Open, Experiment info, Rename | one | any |
-| Auto Exp. log | none (whole list) or any | any |
+| Log format | none needed | -- |
+| Auto Exp. log | one or more | any |
 | Open slit cut / deflector cut | one or more | maps (angle, kz, k) |
 | Open in figure composer | one or more | cuts, EDC / MDC / spin EDC |
 | Combine datasets | two or more | cuts, or maps of one kind |
@@ -1008,25 +1018,44 @@ for it -- image, data, or both.
 
 ## The experiment log
 
-**Datasets → Auto Exp. log...** writes the beamtime's log -- one CSV row
-per measurement, like `DLS_20230508.xlsx` or the ANTARES template -- from
-the files' own metadata instead of by hand.
+Two buttons side by side in the tool panel's *Datasets* box write the
+beamtime's log -- one CSV row per measurement, like the hand-kept DLS and
+ANTARES logs -- from the files' own metadata.
 
-- **Log file.** A folder and a file name. A log that is already there is
-  continued after its last record (empty rows a spreadsheet left at the end
-  are dropped); nothing above is touched. A new log starts with the columns
-  as its header, and a byte-order mark so Excel reads hν and Δ correctly.
-  If the columns changed since the log was started, a header row marked
-  `# columns` is written before the new records.
-- **Columns.** Pick a dataset of the main list as the reference: its fields
-  are listed with their values -- the file name, data type, start time and
-  the scanned ranges worked out from the data, then every metadata field
-  and motor position the file has. Tick a field to add it as a column;
-  rename the columns, and put them in any order (Top / Up / Down / Bottom).
-  *Add empty column* gives a column to fill in by hand (comments). Ranges
-  are written as `start/stop/step` or `start:step:stop`. The columns are
-  remembered (`~/.arpes_viewer/explog_template.json`), and *Save columns
-  as...* / *Load columns...* keep one set per beamline.
+- **Log format...** sets the log up, once:
+  - **Log file** -- a folder and a file name. Pointed at a log that already
+    exists, the window shows *that log's* format, to adjust.
+  - **Format** -- the separator and the decimal mark. By default they are
+    Excel's on this computer: Excel splits a CSV at the system's list
+    separator, `;` wherever the decimal mark is a comma (much of Europe), so
+    a comma file opens there with every row in the first column. On
+    Windows they are read from the system settings; on macOS (Excel for
+    Mac, Numbers) and Linux (LibreOffice) from the decimal mark. Numbers
+    are written with the decimal mark, so a spreadsheet reads them as
+    numbers rather than text or dates. Ranges are written as
+    `start/stop/step` or `start:step:stop`.
+  - **Columns** -- pick a dataset of the main list as the reference: its
+    fields are listed with their values -- the file name, data type, start
+    time and the scanned ranges worked out from the data, then every
+    metadata field and motor position the file has. Tick a field to add it
+    as a column; rename the columns, and put them in any order (Top / Up /
+    Down / Bottom). *Add empty column* gives a column to fill in by hand
+    (comments). *Save format as...* / *Load format...* keep one per
+    beamline.
+  - **Save format** keeps it (`~/.arpes_viewer/explog_settings.json`). If
+    the log already holds records and its format changed, the log is
+    rewritten under the new header, every record moved with its columns
+    (followed through renames and moves); columns taken out of the format
+    are named first, since what they hold goes. The header is only ever
+    the first row.
+- **Auto Exp. log** -- one click: the selected datasets are added to the log
+  in its format, after its last record (blank rows a spreadsheet left at
+  the end are dropped), skipping files already in its file-name column. The
+  first click, before any format was saved, opens *Log format...*. *Keep
+  recording* (in the format window) logs every file added to the list from
+  then on, until the program closes: add each file as it is measured and
+  the log keeps itself. A log continued on another computer keeps its own
+  separator.
 - **What a position column says** depends on the measurement, through each
   column's *If scanned* rule:
   - a cut: the sample stood still -- the motor's value;
@@ -1039,11 +1068,9 @@ the files' own metadata instead of by hand.
     range` among the motors); a value stored per point is summarised the
     same way;
   - a kz map: the photon energy range (*kz map: photon energy*).
-- **Record** the selected rows or the whole list, skipping files already in
-  the log's file-name column. *Keep recording* writes the record of every
-  file added to the list from then on (Load data / Quick add), with the
-  window closed too -- add each file as it is measured and the log keeps
-  itself.
+
+New logs start with a byte-order mark, so that Excel reads hν and Δ. A log
+open in Excel cannot be written on Windows: close it there first.
 
 The work is in `tools/output/explog.py` (Qt-free), the window in
 `ui/panels/explog.py`.
@@ -1091,6 +1118,10 @@ thread-safe. A job that finishes within 400 ms never shows a dialog.
 ---
 
 ## Adding a beamline
+
+Readers are added for public large-scale facilities only (see *Terms of
+use* at the top); for one of those, or to collaborate, contact
+[ding.pei@synchrotron-soleil.fr](mailto:ding.pei@synchrotron-soleil.fr).
 
 Copy `loader/beamlines/soleil.py` (HDF5) or `loader/beamlines/cassiopee.py`
 (text), implement four things, and add the module's name to
@@ -1192,7 +1223,7 @@ subpackages group modules by what they are for.
 | `spectra/corelevel.py`, `spectra/corelevel_table.py` | The core-level check: the integrated EDC, the energy reference, peak finding, assignment against Table 1-1 and typical chemical states, contaminants, higher-order light, the rigid-shift test. The table is generated. |
 | `output/figure.py`, `output/export.py` | What a publication figure *is*, and what leaves the program. |
 | `output/colormaps.py` | Generated colormap tables. |
-| `output/explog.py` | The experiment log: its columns, each dataset's row (scanned ranges included), and continuing a CSV log after its last record. |
+| `output/explog.py` | The experiment log: its format, each dataset's row (scanned ranges included), continuing a CSV log after its last record, and reformatting it in place. |
 | `runtime/memory.py`, `runtime/system.py` | Memory use, and the stand-ins for the lab's `tools_packages`. |
 | **`ui/`** | |
 | `launcher/main_window.py` | The launcher window's layout. |
@@ -1207,7 +1238,7 @@ subpackages group modules by what they are for.
 | `panels/kzmap.py`, `panels/kzconv.py` | The Align Fermi levels (kz map) window, and the kz-to-momentum window: V0, the zone lines, the period tool. |
 | `panels/stackcuts.py`, `panels/cutops.py` | The Combine datasets window (stack or join), and the cut arithmetic window. |
 | `panels/corelevel.py`, `panels/degrid.py` | The core-level check (elements, energy reference, results window), and the Remove detector grid window. |
-| `panels/explog.py` | The Auto Exp. log window. |
+| `panels/explog.py` | The experiment log's format window, and logging the selection in that format. |
 | `common/jobs.py` | Running one long operation at a time off the GUI thread. |
 | `common/gcguard.py` | Cyclic garbage collection from the event loop only, never inside a Qt call (prevents random crashes on opening and closing windows). |
 | `common/notify.py` | The message boxes. |

@@ -2,7 +2,7 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-*Last updated: 28 October 2026 — for ARPES viewer v1.2.0*
+*Last updated: 28 October 2026 — for ARPES viewer v1.1.1*
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
@@ -138,12 +138,12 @@ makes new rows — the originals are never changed.
 not fit the selection is greyed, with the reason in its tooltip.
 
 **The Datasets box** (tool panel, between the tools and Memory) holds the
-rest of what is done to the rows: **Experiment info**, **Auto Exp. log...**
-(see [the experiment log](#the-experiment-log-auto-exp-log)),
+rest of what is done to the rows: **Experiment info**, **Log format...** and
+**Auto Exp. log** side by side (see [the experiment log](#the-experiment-log)),
 **Rename...**, **Save datasets...**, **Remove from list** and **Session
 log...**. Its buttons grey out like the tools.
 
-### Where things are now (v1.2.0)
+### Where things are now (v1.1.1)
 
 If you used an earlier version: the tools moved out of the right-click menu
 and the viewers' *Functions* menus into the tool panel, so each has one way
@@ -175,30 +175,37 @@ of its own, with a filter box and **Export metadata (.csv)**:
 
 ![Dataset information](images/information_window.png)
 
-### The experiment log (Auto Exp. log)
+### The experiment log
 
-**Datasets → Auto Exp. log...** writes the beamtime's log -- a CSV file, one
-row per measurement -- from the files' own metadata.
+Two buttons side by side in the **Datasets** box write the beamtime's log --
+a CSV file, one row per measurement -- from the files' own metadata:
+**Log format...** (left) sets it up once, **Auto Exp. log** (right) adds the
+selected datasets to it with one click.
 
-![The Auto Exp. log window](images/exp_log_dialog.png)
+![The Log format window](images/exp_log_dialog.png)
+
+**Log format...**
 
 1. **Log file.** Choose the folder and type the file name. If a log of that
-   name is already there, the new records are written **after its last
-   record** and nothing above is changed; otherwise it is created, with the
-   columns as its header. (If the columns changed since, a row marked
-   `# columns` with the new headings comes first.)
-2. **Columns.** *Fields of:* picks a dataset of the main list -- choose one
+   name already exists, the window shows **that log's own format**, ready
+   to adjust.
+2. **Format.** *Separator* and *Decimal mark* are by default what Excel
+   uses on this computer. Excel splits a CSV at the system's list
+   separator -- a **semicolon** wherever the decimal mark is a comma (French,
+   German, Italian... settings) -- so a comma-separated file opens there
+   with everything in the first column. Leave them on *auto* unless the log
+   is for a computer set up differently. *Ranges as:* writes a range
+   `start/stop/step` or `start:step:stop`.
+3. **Columns.** *Fields of:* picks a dataset of the main list -- choose one
    of the kind you log most -- and **Read fields** lists everything it has,
    with its value: the file name, data type, start time and scanned ranges
    worked out from the data, then every metadata field and motor. **Tick**
    a field to add it as a column. In the table on the right, double-click a
    heading to rename it (`hν/Δ`, `Polar/Δ`, `Epass`...), and use **Top /
    Up / Down / Bottom** to put the columns in any order. **Add empty
-   column** gives one to fill in by hand (comments). *Ranges as:* writes a
-   range `start/stop/step` or `start:step:stop`. The columns are remembered
-   for the next session; **Save columns as...** / **Load columns...** keep
-   one set per beamline.
-3. **If scanned.** What a position or angle column says depends on the
+   column** gives one to fill in by hand (comments). **Save format as...** /
+   **Load format...** keep one format per beamline.
+4. **If scanned.** What a position or angle column says depends on the
    measurement:
    - a **cut**: the sample stood still -- the motor's value;
    - a **SPEM** scan: the scanned stage axis as `start/stop/step`
@@ -212,18 +219,23 @@ row per measurement -- from the files' own metadata.
    *auto* (the default) recognises the scanned motor by name, and a
    position that moved by its values. Any other measurement gets the
    field's own value.
-4. **Record.** *The selected rows* or *Every dataset in the list*, then
-   **Write records**. *Skip datasets already in the log* leaves out files
-   whose name is already in the log's file-name column. **Keep recording**
-   writes the record of every file you add to the list from then on, even
-   with the window closed: during a beamtime, add each file as it is
-   measured and the log keeps itself.
+5. **Save format.** If the log already holds records and you changed its
+   format, it is **rewritten under the new header**: each record moves with
+   its columns (renamed or moved columns are followed), new columns are
+   empty for the old records, and columns you took out are named first,
+   since what they hold goes. The header stays the only first row.
+
+*Skip datasets already in the log* leaves out files whose name is already in
+the log's file-name column. **Keep recording** logs every file you add to the
+list from then on, until the program is closed: during a beamtime, add each
+file as it is measured and the log keeps itself.
+
+**Auto Exp. log** adds the selected rows to the log, after its last record,
+without opening anything; the status bar says how many were added. The very
+first time, it opens *Log format...* first.
 
 If the log is open in Excel, Windows will not let it be written: close it
-there and write again.
-
-**Clear list** asks first, and offers to save anything computed in this
-session that has not been saved yet. Files on disk are never deleted.
+there and click again.
 
 ### Combining datasets: stacking and joining
 
