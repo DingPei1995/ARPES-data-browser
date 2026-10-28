@@ -11,7 +11,11 @@ reporting a bug.
 > (academic research and teaching); any commercial use is not permitted.
 > New and updated loaders cover data from **public large-scale facilities**
 > (synchrotrons and similar user facilities) only -- formats of individual
-> laboratories' own set-ups are not supported. For collaborations, or
+> laboratories' own set-ups are not supported. If you use this program for
+> a paper on ARPES experiments, please cite this repository in its
+> references (<https://github.com/DingPei1995/ARPES-data-browser>). A paper
+> related to AI that uses this program or its code **must** first be
+> discussed with the author by e-mail. For collaborations, or
 > questions about the details, contact
 > [ding.pei@synchrotron-soleil.fr](mailto:ding.pei@synchrotron-soleil.fr).
 
