@@ -73,8 +73,9 @@ small change, so only the last number moves.)
   `/usr/bin/python3` stub is skipped without the developer tools, so it
   never pops up their installer. A copy moved elsewhere asks once for the
   program's folder; an error exit shows the end of
-  `~/.arpes_viewer/launcher.log`. The icon is drawn by
-  `devtools/make_mac_icon.py`.
+  `~/.arpes_viewer/launcher.log`. The icon is the author's own drawing of
+  a hemispherical analyser (`devtools/icon_drawing.png`), set on a macOS
+  tile by `devtools/make_mac_icon.py`.
 - **Terms of use** in the README: non-commercial use only; new readers are
   for public large-scale facilities, not individual laboratories.
 
