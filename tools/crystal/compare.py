@@ -240,6 +240,12 @@ def band_points(values, k_axis, energy, *, sigma_k: float = None,
         return np.zeros(0), np.zeros(0)
     lo, hi = energy_window
     keep = (points[:, 1] >= lo) & (points[:, 1] <= hi)
+    # the smoothing makes a ridge of the image's own edge: drop what lies
+    # within two widths of it
+    for column, axis, sigma in ((0, k_axis, sigma_k), (1, energy, sigma_e)):
+        edge = 2.0 * abs(sigma)
+        keep &= ((points[:, column] >= np.min(axis) + edge)
+                 & (points[:, column] <= np.max(axis) - edge))
     return points[keep, 0], points[keep, 1]
 
 

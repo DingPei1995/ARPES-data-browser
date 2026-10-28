@@ -971,9 +971,11 @@ class BandsDialog(QDialog):
         if measured is None:
             raise ValueError("no map covers the path: select k-maps (and a "
                              "k_z map) and tick them in step 2")
+        used = [d for n, d in self._maps() if n in {src.name for src in self._sources()}]
         panel = panel_from_arrays(measured, distance, energy, "",
                                   "E - E_F (eV)", "measured along the path",
-                                  colormap=colormap or self.colormap)
+                                  colormap=colormap or self.colormap,
+                                  sources=self.provenance(used))
         window = (self.e_lo.value(), self.e_hi.value())
         panel.y_range = window
         panel.overlays = self._overlays(distance, energies, ticks, window,
@@ -991,6 +993,7 @@ class BandsDialog(QDialog):
                             name="calculation")
         panel.data.y = np.array(window, dtype=float)
         panel.data.x = np.array([float(distance[0]), float(distance[-1])])
+        panel.data.sources = self.provenance([])
         panel.y_range = window
         panel.overlays = self._overlays(distance, energies, ticks, window,
                                         "#000000", weights)
@@ -1008,7 +1011,8 @@ class BandsDialog(QDialog):
         if data.kind == "cut":
             k, e_axis, values = self.cut_arrays(data)
             panel = panel_from_arrays(values, k, e_axis, "k (Å⁻¹)", "E - E_F (eV)",
-                                      name, colormap=colormap or self.colormap)
+                                      name, colormap=colormap or self.colormap,
+                                      sources=self.provenance([data]))
             window = (float(e_axis.min()), float(e_axis.max()))
             for band, row in enumerate(self.cut_bands(k)):
                 ys = np.where((row > window[0]) & (row < window[1]), row, np.nan)
@@ -1024,13 +1028,30 @@ class BandsDialog(QDialog):
         kx, ky, plane, energy = self.map_plane(data, energy)
         panel = panel_from_arrays(plane, kx, ky, "k_x (Å⁻¹)", "k_y (Å⁻¹)",
                                   f"{name} at {energy:+.2f} eV",
-                                  colormap=colormap or self.colormap)
+                                  colormap=colormap or self.colormap,
+                                  sources=self.provenance([data]))
         for band, xs, ys in self.map_contours(kx, ky, energy):
             panel.overlays.append(F.Overlay(xs=list(map(float, xs)),
                                             ys=list(map(float, ys)),
                                             color=colour, width_pt=0.8,
                                             name=f"band {band + 1}"))
         return panel
+
+    def provenance(self, datasets) -> list:
+        """What a panel was made from: the measurements' original files,
+        and the calculation's."""
+        from tools.output.figfile import source_record
+        from ui.panels.figure import _dataset_sources
+
+        out = []
+        for data in datasets:
+            out.extend(_dataset_sources(data))
+        if self.model_path:
+            out.append(source_record(self.model_path, kind="calculation",
+                                     companions=bandfiles.companion_files(self.model_path),
+                                     note=f"drawn as {self.alignment.z:.4g} x E "
+                                          f"+ {self.alignment.shift:.4g} eV"))
+        return out
 
     def panels(self):
         out, problems = [], []

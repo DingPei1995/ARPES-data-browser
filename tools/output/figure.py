@@ -278,6 +278,11 @@ class PanelData:
     #: ui.panels.volume (faces, camera, colours, axes). The panel's own x
     #: and y then run 0..1 across the picture, for placing notes on it.
     scene: object = None
+    #: what the panel was made from, traced back as far as it goes: the
+    #: original measurement file (and entry), a calculation file, a picture
+    #: file -- ``tools.output.figfile.source_record`` dicts. Saved with the
+    #: figure, and copied into its "data for ..." folder.
+    sources: list = field(default_factory=list)
 
     def is_plot(self) -> bool:
         """Whether this is data drawn on axes (not a slot or a picture)."""

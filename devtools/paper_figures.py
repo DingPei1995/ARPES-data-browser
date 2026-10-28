@@ -22,7 +22,9 @@ symmetrisation, the second derivative, the Calculated-bands window, the
 crystal window and the figure composer -- so the figures are what a user
 gets by clicking through the same tools.
 
-Usage:  python devtools/paper_figures.py [output folder]   (default: docs/images)
+Usage:  python devtools/paper_figures.py [PNG folder] [.afig folder]
+        (PNGs default to docs/images; with a second folder the figures are
+        also saved there as .afig files, each with its "data for ..." folder)
 """
 import os
 import sys
@@ -46,7 +48,12 @@ import demo_data as D                                # noqa: E402
 # The measurement, converted to momentum as the program converts it
 # --------------------------------------------------------------------------
 def _scan(path, entry):
-    return registry.load(path, entry)
+    """A measurement, read as the launcher reads it: its info names the
+    file and entry it came from, which every dataset made from it keeps."""
+    scan = registry.load(path, entry)
+    scan.info.setdefault("origin.path", os.path.abspath(path))
+    scan.info.setdefault("origin.entry", entry)
+    return scan
 
 
 def converted(folder):
@@ -198,14 +205,21 @@ def _figure_style(figure):
     style.dpi = 300
 
 
-def figure_1(folder, dialog, out):
+def figure_1(folder, dialog, out, save_to=None):
     """Crystal, EDS, Brillouin zone, and ARPES along the path."""
     from tools.output import figure as F
     from ui.panels.figure import FigureWindow, Panel
 
     crystal, zone = crystal_pictures(folder)
+    from tools.output.figfile import source_record
+
     pa = Panel(data=F.picture_data(crystal, "crystal"))
     pc = Panel(data=F.picture_data(zone, "Brillouin zone"))
+    cif = os.path.join(folder, "demo_crystal.cif")
+    pa.data.sources = [source_record(cif, kind="structure",
+                                     note="the picture is drawn from this CIF")]
+    pc.data.sources = [source_record(cif, kind="structure",
+                                     note="the zone is that of this crystal")]
     for panel in (pa, pc):
         panel.x_labels = panel.y_labels = False
     pb = eds_panel(folder)
@@ -220,7 +234,10 @@ def figure_1(folder, dialog, out):
     _place(figure, [(4, 6, 40, 50), (56, 6, 58, 42), (124, 6, 52, 48),
                     (12, 68, 150, 62)], 180, 142)
     window.refresh()
-    return window.write(os.path.join(out, "paper_figure_1.png"), "png"), window
+    written = window.write(os.path.join(out, "paper_figure_1.png"), "png")
+    if save_to:
+        window.save_file(os.path.join(save_to, "paper_figure_1.afig"))
+    return written, window
 
 
 def _second_derivative(values, k, energy):
@@ -231,7 +248,7 @@ def _second_derivative(values, k, energy):
     return np.clip(d2, 0, None)
 
 
-def figure_2(folder, dialog, datasets, out):
+def figure_2(folder, dialog, datasets, out, save_to=None):
     """Constant-energy map, LH and LV cuts with the calculation, the
     calculation alone, and the second derivative."""
     from tools.output import figure as F
@@ -247,7 +264,8 @@ def figure_2(folder, dialog, datasets, out):
     kx, ky, plane, energy = dialog.map_plane(data["Γ-plane map"], energy=0.0)
     sym = symmetrise(plane, kx, ky, fold=6, mirror_angles=(0.0, 30.0))
     pa = panel_from_arrays(sym.values, kx, ky, "k_x (Å⁻¹)", "k_y (Å⁻¹)",
-                           "E_F", colormap="blue")
+                           "E_F", colormap="blue",
+                           sources=dialog.provenance([data["Γ-plane map"]]))
     for band, xs, ys in dialog.map_contours(kx, ky, energy):
         pa.overlays.append(F.Overlay(xs=list(xs), ys=list(ys), color="#d62728",
                                      width_pt=0.6, style="dashed",
@@ -274,6 +292,7 @@ def figure_2(folder, dialog, datasets, out):
     k = np.linspace(-1.2, 1.2, 481)
     bands = dialog.cut_bands(k)
     pd = curve_panel(k, [], x_label="", y_label="E - E_F (eV)", name="calculation")
+    pd.data.sources = dialog.provenance([])
     pd.data.x = np.array([-1.2, 1.2])
     pd.data.y = np.array([-1.3, 0.1])
     pd.y_range = (-1.3, 0.1)
@@ -287,7 +306,8 @@ def figure_2(folder, dialog, datasets, out):
     # (e) the LH cut's second derivative, with the bands named
     kk, ee, values = dialog.cut_arrays(data["cut_GM_LH"])
     pe = panel_from_arrays(_second_derivative(values, kk, ee), kk, ee, "k (Å⁻¹)",
-                           "E - E_F (eV)", "LH 2nd derivative", colormap="blue")
+                           "E - E_F (eV)", "LH 2nd derivative", colormap="blue",
+                           sources=dialog.provenance([data["cut_GM_LH"]]))
     pe.x_range, pe.y_range = (-1.2, 1.2), (-1.3, 0.1)
     pe.title = "LH, d²I/dE²"
     calc_at_0 = dialog.cut_bands(np.array([0.0, 0.45]))
@@ -313,10 +333,15 @@ def figure_2(folder, dialog, datasets, out):
     for panel in (pc, pd, pe):
         panel.y_labels = False
     window.refresh()
-    return window.write(os.path.join(out, "paper_figure_2.png"), "png"), window
+    written = window.write(os.path.join(out, "paper_figure_2.png"), "png")
+    if save_to:
+        window.save_file(os.path.join(save_to, "paper_figure_2.afig"))
+    return written, window
 
 
-def main(out=None):
+def main(out=None, save_to=None):
+    """The two figures as PNGs in ``out``; with ``save_to``, also as .afig
+    files there, each with its "data for ..." folder."""
     from PyQt5.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
@@ -326,12 +351,13 @@ def main(out=None):
         D.write_all(folder)
         datasets = converted(folder)
         dialog = bands_window(folder, datasets)
-        written, _w1 = figure_1(folder, dialog, out)
-        written2, _w2 = figure_2(folder, dialog, datasets, out)
+        written, _w1 = figure_1(folder, dialog, out, save_to)
+        written2, _w2 = figure_2(folder, dialog, datasets, out, save_to)
     for path in written + written2:
         print(path)
     return app
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else None)
+    main(sys.argv[1] if len(sys.argv) > 1 else None,
+         sys.argv[2] if len(sys.argv) > 2 else None)

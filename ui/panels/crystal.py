@@ -95,6 +95,8 @@ class CrystalView(QWidget):
     # -- state -------------------------------------------------------------
     def set_structure(self, structure):
         self.structure = structure
+        #: the CIF it was read from ("" when typed or from the zone tool)
+        self.cif_path = ""
         for element in (structure.elements() if structure else []):
             self.styles.setdefault(element, {
                 "colour": S.element_colour(element), "size": 1.0,
@@ -676,6 +678,7 @@ class CrystalDialog(QDialog):
             return None
         self.src_cif.setChecked(True)
         self.set_structure(structure)
+        self.cif_path = os.path.abspath(path)
         self.structure_label.setText(
             f"{structure.name or os.path.basename(path)} "
             f"({structure.formula()}), {structure.space_group}: "
@@ -1119,6 +1122,11 @@ class CrystalDialog(QDialog):
         rgba = _qimage_array(self.picture())
         name = (self.structure.name if self.structure else "") or "crystal"
         panel = Panel(data=nf.picture_data(rgba, name))
+        if getattr(self, "cif_path", ""):
+            from tools.output.figfile import source_record
+            panel.data.sources = [source_record(
+                self.cif_path, kind="structure",
+                note="the picture is drawn from this CIF")]
         panel.x_labels = panel.y_labels = False
         if target is None and ask:
             windows = open_figure_windows()

@@ -210,8 +210,9 @@ class LoaderDialog(QDialog):
             every.extend(loader.patterns)
         # dict.fromkeys: unique, in the order the loaders offered them.
         joined = " ".join(dict.fromkeys(every))
-        return ";;".join([f"Data files ({joined})"] + per_loader
-                         + ["All files (*)"])
+        # A figure saved by the composer opens from the same dialog.
+        return ";;".join([f"Data files ({joined} *.afig)"] + per_loader
+                         + ["ARPES viewer figure (*.afig)", "All files (*)"])
 
     def set_paths(self, paths):
         """Take a list of files (also how a test drives this)."""

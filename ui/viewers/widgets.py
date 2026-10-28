@@ -721,6 +721,15 @@ class NxsData:
                 raise
             self.scan = load_soleil_nxs(nxs_path, entry=entry)
         self.kind = self.scan.kind
+        # Where the measurement was first read: every dataset made from it
+        # copies this info forward, so a figure of a k-converted, cut-out
+        # plane can still name (and copy) the file it began as. A file this
+        # program wrote keeps the origin it already carries.
+        info = self.scan.info
+        if isinstance(info, dict) and not info.get("origin.path"):
+            info["origin.path"] = os.path.abspath(nxs_path)
+            info["origin.entry"] = str(entry or "")
+        self.entry = entry
         self._overview = None
         self._key = None
         self._refs = 1

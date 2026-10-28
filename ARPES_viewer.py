@@ -170,6 +170,13 @@ def add_files(paths, options=None, background: bool = True):
     (loader.nxs_file.list_datasets), so adding a folder of multi-GB scans is
     instant.
     """
+    figures = [p for p in paths if str(p).lower().endswith(".afig")]
+    if figures:
+        for path in figures:
+            open_saved_figure(path)
+        paths = [p for p in paths if p not in figures]
+        if not paths:
+            return
     if background and len(paths) > 1 and not nxs_jobs.busy():
         def work(report):
             scanned = []
@@ -684,6 +691,22 @@ def plot_selected_as_figure():
 
 #: figure composers opened from the launcher, kept alive
 figure_windows = []
+
+
+def open_saved_figure(path):
+    """A figure saved by the composer (.afig), open again to edit."""
+    from ui.panels.figure import open_figure_file
+
+    try:
+        window = open_figure_file(path, dataset_source={
+            "entries": listed_datasets, "loader": load_dataset})
+    except Exception as exc:
+        QMessageBox.warning(win, "Open a figure", f"Could not open {path}:\n{exc}")
+        return None
+    window.closed.connect(lambda w: figure_windows.remove(w)
+                          if w in figure_windows else None)
+    figure_windows.append(window)
+    return window
 
 
 def figure_window(panels):

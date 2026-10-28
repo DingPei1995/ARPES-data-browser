@@ -38,7 +38,7 @@ import numpy as np
 
 from tools.crystal.bands import BandGrid, BandPath, WannierModel, reciprocal_of
 
-__all__ = ["read", "read_bxsf", "write_bxsf", "read_hr", "write_hr",
+__all__ = ["companion_files", "read", "read_bxsf", "write_bxsf", "read_hr", "write_hr",
            "read_win_cell", "read_wannier_band", "read_spaghetti",
            "read_eigenval", "read_poscar", "read_procar", "FORMATS"]
 
@@ -52,6 +52,28 @@ FORMATS = (
     ("Wien2k band structure (*.spaghetti_ene)", ("*.spaghetti_ene",)),
     ("VASP EIGENVAL", ("EIGENVAL*",)),
 )
+
+
+def companion_files(path: str) -> list:
+    """The files beside ``path`` that reading it also uses (the cell, E_F,
+    labels, weights): a ``_hr.dat``'s ``.win``, a ``_band.dat``'s
+    ``labelinfo``, an ``EIGENVAL``'s POSCAR, PROCAR, OUTCAR, DOSCAR and
+    KPOINTS, a ``.spaghetti_ene``'s ``.klist_band``. Only those that exist."""
+    folder, name = os.path.split(os.path.abspath(path))
+    lower = name.lower()
+    wanted = []
+    if lower.endswith("_hr.dat"):
+        wanted = [name[:-len("_hr.dat")] + ".win"]
+    elif lower.endswith("_band.dat"):
+        wanted = [name[:-len(".dat")] + ".labelinfo.dat",
+                  name[:-len("_band.dat")] + ".win"]
+    elif lower.endswith("spaghetti_ene"):
+        stem = name[:-len(".spaghetti_ene")] if lower.endswith(".spaghetti_ene") else name
+        wanted = [stem + ".klist_band"]
+    elif lower.startswith("eigenval"):
+        wanted = ["POSCAR", "CONTCAR", "PROCAR", "OUTCAR", "DOSCAR", "KPOINTS"]
+    return [os.path.join(folder, w) for w in wanted
+            if os.path.isfile(os.path.join(folder, w))]
 
 
 def read(path: str, **options):

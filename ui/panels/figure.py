@@ -51,6 +51,7 @@ from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
 
 from tools.output import colormaps
 from tools.output import export
+from tools.output import figfile
 import tools.output.figure as nf
 from tools.output.figure import (Figure, FigureStyle, Panel, PanelData, Line,
                                  TextNote, Arrow, ScaleBar, Inset, Overlay,
@@ -2798,13 +2799,19 @@ class FigureToolsDialog(QDialog):
 # Turning this program's datasets into panels
 # --------------------------------------------------------------------------
 def panel_from_arrays(array, x, y, x_label="", y_label="", name="", info=None,
-                      colormap="gray", flip=False, smooth=True) -> Panel:
-    return Panel(data=PanelData(array=np.asarray(array, dtype=float),
-                                x=np.asarray(x, dtype=float),
-                                y=np.asarray(y, dtype=float),
-                                x_label=x_label, y_label=y_label, name=name,
-                                info=dict(info or {})),
-                 colormap=colormap, flip=flip, smooth=smooth)
+                      colormap="gray", flip=False, smooth=True,
+                      sources=None) -> Panel:
+    """A panel of an image. ``sources`` names what it was made from
+    (:func:`tools.output.figfile.source_record`); by default the origin
+    ``info`` records."""
+    from tools.output.figfile import sources_from_info
+
+    data = PanelData(array=np.asarray(array, dtype=float),
+                     x=np.asarray(x, dtype=float), y=np.asarray(y, dtype=float),
+                     x_label=x_label, y_label=y_label, name=name,
+                     info=dict(info or {}))
+    data.sources = list(sources) if sources is not None else sources_from_info(info)
+    return Panel(data=data, colormap=colormap, flip=flip, smooth=smooth)
 
 
 def panel_from_dataset(data, name="") -> Panel:
@@ -2826,10 +2833,12 @@ def panel_from_dataset(data, name="") -> Panel:
             if sigma is not None:
                 errors[names[index]] = values[:, sigma]
         labels = getattr(scan, "labels", {}) or {}
-        return curve_panel(scan.x, columns, x_label=labels.get("x", ""),
-                           y_label=C.value_label(scan.info),
-                           name=name or getattr(data, "source_label", "") or "curve",
-                           errors=errors)
+        panel = curve_panel(scan.x, columns, x_label=labels.get("x", ""),
+                            y_label=C.value_label(scan.info),
+                            name=name or getattr(data, "source_label", "") or "curve",
+                            errors=errors)
+        panel.data.sources = _dataset_sources(data)
+        return panel
     if getattr(scan, "value", None) is None or np.asarray(scan.value).ndim != 2:
         raise ValueError("only a two-dimensional dataset can be a panel on "
                          "its own; take a slice of a map first")
@@ -2837,7 +2846,17 @@ def panel_from_dataset(data, name="") -> Panel:
     return panel_from_arrays(scan.value, scan.x, scan.y,
                              labels.get("x", ""), labels.get("y", ""),
                              name or getattr(data, "source_label", "") or "panel",
-                             info=getattr(scan, "info", {}))
+                             info=getattr(scan, "info", {}),
+                             sources=_dataset_sources(data))
+
+
+def _dataset_sources(data) -> list:
+    """The original file a dataset began as (its info's origin, else the
+    file it was read from), for a panel made of it."""
+    from tools.output.figfile import sources_from_info
+
+    info = getattr(getattr(data, "scan", None), "info", None) or {}
+    return sources_from_info(info, getattr(data, "path", "") or "")
 
 
 class SliceSeriesDialog(QDialog):
@@ -3191,6 +3210,22 @@ class FigureWindow(QMainWindow):
         bar.addWidget(self._separator())
         bar.addWidget(self.undo_button)
         bar.addWidget(self.redo_button)
+        bar.addWidget(self._separator())
+        #: the .afig file this figure was opened from or last saved to
+        self.file_path = ""
+        for text, slot, tip in (
+                ("Open...", lambda: self.open_file(),
+                 "Open a figure saved by this program (.afig) in a new window."),
+                ("Save", lambda: self.save_file(self.file_path or None),
+                 "Save the figure to edit later (.afig), with the data it was "
+                 "made from in a “data for …” folder beside it."),
+                ("Save as...", lambda: self.save_file(),
+                 "Save the figure under a new name (.afig), with its data "
+                 "folder.")):
+            button = QPushButton(text)
+            button.setToolTip(tip)
+            button.clicked.connect(slot)
+            bar.addWidget(button)
         bar.addWidget(self._separator())
         for text, fmt in (("PDF", "pdf"), ("PNG", "png"), ("SVG", "svg")):
             button = QPushButton(text)
@@ -3550,6 +3585,7 @@ class FigureWindow(QMainWindow):
             return None
         rgba = _qimage_array(image)
         source = Panel(data=nf.picture_data(rgba, os.path.basename(path)))
+        source.data.sources = [figfile.source_record(path, kind="picture")]
         self.figure.freeze()
         self.fill_panel(panel, source)
         x, y, w, h = panel.frame
@@ -3674,6 +3710,90 @@ class FigureWindow(QMainWindow):
             os.path.basename(p) for p in written))
         return written
 
+    # -- the program's own figure file ---------------------------------------
+    def save_file(self, path=None, *, with_data: bool = True):
+        """Save the figure as an .afig file to open and edit again, and
+        (``with_data``) the data each panel was made from in "data for
+        <name>" beside it. Returns the path, or None."""
+        if path is None:
+            start = self.file_path or self._default_name(figfile.EXTENSION)
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save the figure", start,
+                f"ARPES viewer figure (*{figfile.EXTENSION})")
+            if not path:
+                return None
+        if not path.lower().endswith(figfile.EXTENSION):
+            path += figfile.EXTENSION
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            from version import VERSION
+            path = figfile.save(path, self.figure, flatten=self._flatten_panel,
+                                app_version=VERSION)
+            copied = (figfile.write_data_folder(path, self.figure,
+                                                picture_writer=_write_png)
+                      if with_data else {})
+        except Exception as exc:
+            QMessageBox.warning(self, "Save the figure", f"Could not save it:\n{exc}")
+            return None
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.file_path = path
+        # the next save finds the originals in this one's data folder
+        self.figure.loaded_from = path
+        self.setWindowTitle(os.path.splitext(os.path.basename(path))[0])
+        files = sum(len(v) for v in copied.values())
+        self.statusBar().showMessage(
+            f"Saved {os.path.basename(path)}"
+            + (f"; {files} file(s) in \u201c{os.path.basename(figfile.data_folder_of(path))}\u201d"
+               if with_data else ""))
+        return path
+
+    def open_file(self, path=None):
+        """Open an .afig figure in a new window (this one stays)."""
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Open a figure", os.path.dirname(self.file_path or ""),
+                f"ARPES viewer figure (*{figfile.EXTENSION})")
+            if not path:
+                return None
+        try:
+            window = open_figure_file(path, dataset_source=self.dataset_source)
+        except Exception as exc:
+            QMessageBox.warning(self, "Open a figure", f"Could not open it:\n{exc}")
+            return None
+        keep_figure_window(window)
+        return window
+
+    def set_figure(self, figure):
+        """Show ``figure`` (a loaded one) in this window: its panels, page,
+        drawings and style replace what is here."""
+        self.figure.panels = list(figure.panels)
+        self.figure.shapes = list(figure.shapes)
+        self.figure.style = figure.style
+        self.figure.rows, self.figure.cols = figure.rows, figure.cols
+        self.figure.title = figure.title
+        self.figure.loaded_from = getattr(figure, "loaded_from", "")
+        self._undo.clear()
+        self._redo.clear()
+        self._update_undo()
+        self.canvas.selection = None
+        self._selection_changed()
+        if self._tools is not None:
+            self._tools.sync()
+        self.refresh()
+
+    def _flatten_panel(self, panel):
+        """A 3-D view panel as the picture it shows (an .afig keeps
+        pictures and arrays, not live 3-D scenes)."""
+        x, y, w, h = panel.frame or (0.0, 0.0, 60.0, 60.0)
+        single = copy.copy(panel)
+        single.label, single.colorbar, single.frame = "", False, (0.0, 0.0, w, h)
+        page = Figure([single], style=copy.deepcopy(self.figure.style))
+        page.style.margin_left_mm = page.style.margin_right_mm = 0.0
+        page.style.margin_top_mm = page.style.margin_bottom_mm = 0.0
+        page.style.width_mm, page.style.height_mm = w, h
+        return _qimage_array(FigurePainter(page).to_image())
+
     def write(self, path: str, fmt: str):
         """Write the figure. Returns every file written."""
         if fmt == "layers":
@@ -3743,6 +3863,33 @@ def write_figure(painter: FigurePainter, path: str, fmt: str):
                            keep_alpha=True, dpi=painter.figure.style.dpi)
         return [path]
     raise ValueError(f"unknown format {fmt!r}")
+
+
+def _write_png(rgba, path):
+    export.write_image(path, np.asarray(rgba), pil_format="PNG", keep_alpha=True)
+
+
+def open_figure_file(path: str, dataset_source=None, show: bool = True):
+    """A composer window with the figure saved in ``path`` (.afig), ready
+    to edit."""
+    figure = figfile.load(path)
+    window = FigureWindow([Panel(data=nf.empty_data())],
+                          os.path.splitext(os.path.basename(path))[0],
+                          dataset_source=dataset_source)
+    window.set_figure(figure)
+    window.file_path = os.path.abspath(path)
+    if show:
+        window.show()
+    return window
+
+
+def keep_figure_window(window):
+    from ui.viewers.windows import keep_alive
+
+    keep_alive(window)
+    window.show()
+    window.raise_()
+    return window
 
 
 def open_figure_windows():
