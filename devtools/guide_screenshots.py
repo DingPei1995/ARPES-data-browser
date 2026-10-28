@@ -145,7 +145,8 @@ def demo_EF():
 
 
 class Shots:
-    ORDER = ["main_window", "loader", "information", "map_viewer", "cut_viewer",
+    ORDER = ["main_window", "loader", "information", "exp_log", "map_viewer",
+             "cut_viewer",
              "fermi", "fermi_map", "cut_k", "mdc_fit", "map_k", "brillouin",
              "arbitrary_cut",
              "fs_correction", "process", "stack", "volume", "cut_arithmetic",
@@ -195,6 +196,19 @@ class Shots:
         shot(self.av.win, "main_window_info", (860, 900))
         shot(window, "information_window", (520, 520))
         window.close()
+
+    def exp_log(self):
+        from tools.output import explog as EL
+        self._select("FS_map_hv60")
+        dialog = self.av.open_exp_log()
+        dialog.set_template(EL.Template([
+            EL.Column("File name", "@file"), EL.Column("Data Type", "@kind"),
+            EL.Column("Scan", "@scan1"), EL.Column("Energy", "@energy"),
+            EL.Column("Comments", "@blank")]))
+        dialog.folder_edit.setText(self.data_dir)
+        dialog.name_edit.setText("exp_log.csv")
+        shot(dialog, "exp_log_dialog", (1000, 720))
+        dialog.close()
 
     def map_viewer(self):
         contour = self._open("FS_map_hv60")

@@ -252,6 +252,31 @@ def test_diamond_deflector_map(tmp_path):
         np.testing.assert_array_equal(scan.value[::-1, 0], data[::-1, 0])
 
 
+def test_diamond_polar_map_keeps_the_positions_that_followed_the_angle(
+        tmp_path):
+    """A manipulator map: the beamline moved the sample along with the
+    polar angle to keep the spot on it. Those positions are motors of the
+    scan ("<name> range"), so the experiment log can say where it was."""
+    from tools.output import explog as EL
+    path = str(tmp_path / "polar.nxs")
+    _write_diamond(path, (4,), [
+        ("sapolar", np.linspace(-6, 6, 4), "1", True, "deg"),
+        ("sax", np.array([0.1, 0.12, 0.17, 0.25]), "1", False, "mm"),
+        ("say", np.full(4, -5.6), "1", False, "mm")])
+    with registry.load(path) as scan:
+        assert scan.kind == "map"
+        np.testing.assert_allclose(scan.x, np.linspace(-6, 6, 4))
+        assert scan.fourd_info["sax range"] == "0.1 .. 0.25 mm (4 steps)"
+        assert "say range" not in scan.fourd_info         # it stood still
+
+        class Data:
+            kind = scan.kind
+        Data.scan = scan
+        template = EL.Template([EL.Column("Polar", "motor:sapolar"),
+                                EL.Column("X", "info:manipulator.sax")])
+        assert EL.row(template, Data()) == ["-6/6/4", "0.1..0.25"]
+
+
 @pytest.mark.parametrize("hv_name,nano", [("energy", False), ("value", True)])
 def test_diamond_photon_energy_scan(tmp_path, hv_name, nano):
     """Each spectrum's own kinetic window, referred by its own hv: when the

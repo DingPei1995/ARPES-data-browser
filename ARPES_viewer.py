@@ -81,7 +81,8 @@ current_key = None               # which dataset's metadata is on show
 viewer_windows = []                 # open viewer windows, kept alive here
 data_ops_dialog = None              # the Data operations dialog, while open
 process_dialog = None               # the Process dialog (2D or 3D), while open
-info_window = None                  # the Dataset information window, once asked for
+info_window = None                  # the Experiment info window, once asked for
+exp_log_dialog = None               # the Auto Exp. log window, once asked for
 default_colormap = DEFAULT_COLORMAP   # what a newly opened window starts with
 default_flip = False
 
@@ -201,6 +202,7 @@ def _add_scanned(scanned, options=None):
     off the event loop.
     """
     added = 0
+    new_keys = []
     for path, datasets in scanned:
         name = os.path.basename(path)
         if not datasets:
@@ -250,9 +252,12 @@ def _add_scanned(scanned, options=None):
             item.setToolTip("\n".join(tip))
             ui.FilePathListWidget.addItem(item)
             added += 1
+            new_keys.append(key)
 
     ui.statusbar.showMessage(
         f"Added {added} dataset(s); {len(loaded_items)} in the list")
+    if new_keys and exp_log_dialog is not None and exp_log_dialog.auto_record():
+        exp_log_dialog.record(new_keys, quiet=True)
 
 
 def listed_names():
@@ -464,8 +469,8 @@ def _refresh_row_tags(key, data):
 
 
 def show_list_menu(position):
-    """The list's right-click menu. Acts on the whole selection, so a batch
-    of datasets can be saved or removed in one go.
+    """The list's right-click menu: the three ways of opening the selected
+    rows (the dataset itself, or a map's slit or scan-axis cut).
 
     An entry that does not fit the selection -- the wrong kind of dataset,
     or the wrong number of rows -- is greyed out, with a tooltip saying why
@@ -491,10 +496,11 @@ def show_list_menu(position):
         actions[action] = name
         return action
 
-    # Only what is done *to the rows*: opening them, keeping or dropping
-    # them, naming and describing them. Analysis and filters are buttons of
-    # the tool panel, and the operations that change the data are buttons
-    # under the list -- both always in sight, so nothing is only here.
+    # Only the ways of opening the rows. Describing, logging, naming,
+    # saving and removing them are the tool panel's Datasets box, analysis
+    # and filters its tools, and the operations that change the data
+    # (combining included) the buttons under the list -- all always in
+    # sight, so nothing is only here.
     add("open", "Open", "Open the dataset in its own viewer window "
         "(the same as double-clicking the row).")
     add("slit_cut", "Open slit cut" if len(keys) <= 1
@@ -508,30 +514,6 @@ def show_list_menu(position):
         "The cut along the map's scanned axis (deflector angle, manipulator "
         "rotation, or photon energy for a kz map) vs energy, in a window of "
         "its own, without opening the map's constant-energy contour.")
-    menu.addSeparator()
-    add("combine", "Combine datasets..." if len(keys) <= 1
-        else f"Combine {len(keys)} datasets...",
-        "Stack cuts into one map along an axis of your own (temperature, "
-        "gate voltage, photon energy -> a kz map...), or join the pieces of "
-        "a measurement taken in segments -- a map's deflector range, a kz "
-        "map's photon-energy range, a cut's energy window -- end to end.")
-    add("save", "Save dataset..." if len(keys) <= 1
-        else f"Save {len(keys)} datasets...",
-        "Write the selected datasets to a .nxs file of your own, which this "
-        "program opens again.")
-    add("remove", "Remove from list" if len(keys) <= 1
-        else f"Remove {len(keys)} from list",
-        "Take the rows out of the list (after asking). Files on disk are not "
-        "deleted.")
-    menu.addSeparator()
-    add("rename", "Rename...", "Change the name the dataset is listed "
-        "(and saved) under. The file on disk keeps its name.")
-    add("info", "Show information",
-        "The dataset's kind, axes and metadata, in the information panel.")
-    add("log", "Session log...",
-        "What has been auto-saved, saved and deleted this session, and "
-        "where each of it is -- the file to look at after a crash.")
-
     global last_list_menu
     last_list_menu = menu          # for the tests: what was offered, and how
     chosen = menu.exec_(ui.FilePathListWidget.mapToGlobal(position))
@@ -588,7 +570,8 @@ def update_tool_buttons():
 
     keys = selected_keys()
     rows = [_row_info(k, look_inside=len(keys) == 1) for k in keys]
-    for name, button in {**ui.ListButtons, **ui.ToolButtons}.items():
+    for name, button in {**ui.ListButtons, **ui.ToolButtons,
+                         **ui.DatasetButtons}.items():
         enabled, reason = availability(name, rows)
         button.setEnabled(enabled)
         description = button.property("description") or ""
@@ -633,6 +616,7 @@ def run_list_action(name):
         "kzalign": open_kz_alignment,
         "save": save_selected,
         "log": show_operations_log,
+        "explog": open_exp_log,
         "remove": remove_selected,
     }
     handler = handlers.get(name)
@@ -1009,7 +993,7 @@ def ensure_info_window():
 
 
 def show_information():
-    """Right-click -> Show information: read the highlighted dataset and put
+    """Datasets -> Experiment info: read the highlighted dataset and put
     what it is in front of the user."""
     window = ensure_info_window()
     if load_selected() is None:
@@ -2322,6 +2306,42 @@ def show_operations_log():
     return rows
 
 
+def _log_entries():
+    """``[(key, row label), ...]`` for every dataset in the list, in list
+    order, for the experiment log's choice of reference dataset."""
+    lw = ui.FilePathListWidget
+    entries = []
+    for i in range(lw.count()):
+        key = lw.item(i).data(QtCore.Qt.UserRole)
+        if key in loaded_items:
+            entries.append((key, lw.item(i).text()))
+    return entries
+
+
+def _log_load(key):
+    """Read one listed dataset for the experiment log: ``(data, record)``.
+    The caller closes ``data`` when done with it."""
+    return load_dataset(key), loaded_items.get(key, {})
+
+
+def open_exp_log():
+    """Datasets -> Auto Exp. log: the window that writes the experiment
+    log from the listed datasets' metadata. One window for the session, so
+    its folder, file name and "keep recording" survive closing it."""
+    global exp_log_dialog
+    from ui.panels.explog import ExpLogDialog
+    if exp_log_dialog is None:
+        exp_log_dialog = ExpLogDialog(
+            win, entries=_log_entries, load=_log_load, selected=selected_keys,
+            folder=ui.FilePathLE.displayText() or os.path.expanduser("~"),
+            status=ui.statusbar.showMessage)
+    exp_log_dialog.refresh()
+    exp_log_dialog.show()
+    exp_log_dialog.raise_()
+    exp_log_dialog.activateWindow()
+    return exp_log_dialog
+
+
 def unsaved_datasets():
     """Datasets that exist only because this session computed them and that
     the user has not put anywhere of their own.
@@ -2482,17 +2502,19 @@ def SetConnect():
 
     # A click only selects. Reading a dataset to describe it is real work --
     # for a GB-sized spatial scan it is seconds -- so the information panel
-    # is filled on request (right-click -> Show information), not on every
+    # is filled on request (Datasets -> Experiment info), not on every
     # click. Double-click still opens a viewer.
     ui.FilePathListWidget.itemDoubleClicked.connect(open_selected)
     ui.FilePathListWidget.customContextMenuRequested.connect(show_list_menu)
     # The metadata filter and its CSV export live in the information
     # window now, and are wired when that window is first made.
 
-    # The buttons under the list and in the tool panel are named by their
-    # list action, so the right-click menu, the buttons and the rules for
+    # The buttons under the list and in the tool panel (its tools and its
+    # Datasets box) are named by their list action, so the right-click
+    # menu, the buttons and the rules for
     # greying them out (ui.launcher.list_actions) cannot drift apart.
-    for name, button in {**ui.ListButtons, **ui.ToolButtons}.items():
+    for name, button in {**ui.ListButtons, **ui.ToolButtons,
+                         **ui.DatasetButtons}.items():
         button.clicked.connect(lambda _=False, name=name: run_list_action(name))
     ui.FilePathListWidget.itemSelectionChanged.connect(update_tool_buttons)
     update_tool_buttons()

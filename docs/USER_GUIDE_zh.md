@@ -2,7 +2,7 @@
 
 *[English version / 英文版](USER_GUIDE_en.md) · [Version française / 法文版](USER_GUIDE_fr.md)*
 
-*最后更新：2026 年 10 月 27 日——对应 ARPES viewer v1.1.0*
+*最后更新：2026 年 10 月 28 日——对应 ARPES viewer v1.2.0*
 
 程序的版本号和更新日期显示在主窗口标题栏和主窗口最下方。报告 bug、提问或获取最新版本：
 <https://github.com/DingPei1995/ARPES-data-browser>（报告 bug 时请注明版本号）。
@@ -111,20 +111,24 @@ k conversion (cut) 需要一张角度 cut，cut 运算需要恰好两张 cut，�
 |---|---|
 | 在独立窗口中打开数据集 | **双击**该行（或右键 → **Open**） |
 | 对选中的行运行某个工具 | **工具面板**中对应的按钮 |
-| 把多张 cut 叠成一个 map，或把分段采集的 map / kz map 拼接起来 | 列表下方的 **Combine...**（或右键 → **Combine N datasets...**） |
+| 把多张 cut 叠成一个 map，或把分段采集的 map / kz map 拼接起来 | 列表下方的 **Combine...** |
 | 裁剪范围、合并像素、每张谱自归一 | 列表下方的 **Truncate...**、**Compress...**、**Self-normalise...** |
-| 打开、保存、移除、重命名、查看各轴 | **右键**该行（或选中的多行） |
+| 打开 map 的 slit cut 或 scan-axis cut | **右键**该行（或选中的多行） |
+| 查看元数据、生成实验记录、重命名、保存、移除 | 工具面板中 Memory 上方的 **Datasets** 区 |
 | 查看并释放内存、关闭所有查看窗口、打开自动保存文件夹 | 左下的 **Memory** 区 |
 | 查看当前版本、报告 bug、获取最新版本 | 标题栏，以及窗口最后一行（GitHub 链接） |
 
 列表下方的四个按钮都作用于上方选中的行，结果都作为新行加入列表——原数据不会被修改。
 
-**右键菜单**只包含*对行本身*的操作，分三组：**Open**、**Open slit cut**、
-**Open scan-axis cut**（map）| **Combine**、**Save**、**Remove from list** |
-**Rename...**、**Show information**、**Session log...**。不适用于当前选择的条目
-显示为灰色，悬停提示会说明原因。
+**右键菜单**只保留三种打开方式：**Open**、**Open slit cut**、
+**Open scan-axis cut**（map）。不适用于当前选择的条目显示为灰色，悬停提示会说明原因。
 
-### 功能现在的位置（v1.1.0）
+**Datasets 区**（工具面板中，位于工具和 Memory 之间）包含其余对行本身的操作：
+**Experiment info**、**Auto Exp. log...**（见[实验记录](#实验记录auto-exp-log)）、
+**Rename...**、**Save datasets...**、**Remove from list**、**Session log...**。
+这些按钮和工具按钮一样，会随选择变灰。
+
+### 功能现在的位置（v1.2.0）
 
 如果你用过早期版本：工具已从右键菜单和查看窗口的 *Functions* 菜单移到了工具面板，
 每个工具只有一个入口，且始终可见。
@@ -146,19 +150,56 @@ k conversion (cut) 需要一张角度 cut，cut 运算需要恰好两张 cut，�
 | 工具面板 → Advanced → **Figure composer...** | 右键 → Open in figure composer |
 | 右键 → **Open scan-axis cut**，查看窗口按钮 **Scan-axis cut** | Open deflector cut、Deflector cut |
 | Memory 区 → **Free memory**、**Close all viewers**、**Open auto-save folder** | 列表下方 |
+| Datasets 区 → **Experiment info** | 右键 → Show information |
+| Datasets 区 → **Rename...**、**Save datasets...**、**Remove from list**、**Session log...** | 右键 |
+| 仅列表下方的 **Combine...** | 另有右键 → Combine N datasets |
 
-**Show information** 还会在独立窗口中显示该数据集的全部元数据，带过滤框，
+**Experiment info** 还会在独立窗口中显示该数据集的全部元数据，带过滤框，
 并可 **Export metadata (.csv)**：
 
 ![数据集信息](images/information_window.png)
+
+### 实验记录（Auto Exp. log）
+
+**Datasets → Auto Exp. log...** 根据数据文件自身的元数据生成实验记录——一个
+CSV 文件，每次测量一行。
+
+![Auto Exp. log 窗口](images/exp_log_dialog.png)
+
+1. **Log file（记录文件）。** 选择文件夹并输入文件名。如果该文件已存在，新记录会
+   写在**最后一条记录之后**，前面的内容不会改动；否则新建文件，并以各列标题作为表头。
+   （如果之后改了列，会先写一行以 `# columns` 开头的新表头。）
+2. **Columns（列）。** *Fields of:* 从主列表中选一个数据集（选最常记录的那种），
+   **Read fields** 列出它的全部字段及取值：由数据推出的文件名、数据类型、开始时间、
+   扫描范围，然后是所有元数据字段和电机位置。**勾选**字段即加为一列。在右侧表格中
+   双击标题可改名（`hν/Δ`、`Polar/Δ`、`Epass`……），用 **Top / Up / Down /
+   Bottom** 任意排序。**Add empty column** 加一列留空、手工填写（备注）。
+   *Ranges as:* 选择范围写成 `start/stop/step` 还是 `start:step:stop`。列的设置
+   会记住到下次使用；**Save columns as...** / **Load columns...** 可为每个线站各存一套。
+3. **If scanned（扫描时）。** 位置或角度列写什么，取决于测量类型：
+   - **cut**：样品位置固定——写电机的值；
+   - **SPEM** 扫描：扫描的样品台轴写成 `start/stop/step`（对样品台的列选
+     *SPEM: scanned X* / *Y*）；
+   - 用机械手而非 deflector 转角采集的 **map**：角度写成 `start/stop/step`
+     （*map: scanned angle*），而随角度修正的样品位置写成 `起点..终点`；
+   - **kz map**：光子能量范围（*kz map: photon energy*）。
+
+   默认的 *auto* 会按名字识别被扫描的电机，并按取值识别移动过的位置；其他测量
+   写该字段本身的值。
+4. **Record（记录）。** 选择 *The selected rows*（选中的行）或 *Every dataset
+   in the list*（列表中全部），然后点 **Write records**。*Skip datasets already
+   in the log* 会跳过文件名已在记录中的数据。勾选 **Keep recording** 后，此后加入
+   列表的每个文件都会自动写入记录，即使窗口已关闭：束线实验时每测完一个文件就把它
+   加入列表，记录会自动更新。
+
+如果记录文件正在 Excel 中打开，Windows 不允许写入：先在 Excel 中关闭再写。
 
 **Clear list** 会先确认；如果本次会话中有计算得到但尚未保存的数据，会提示保存。
 磁盘上的文件永远不会被删除。
 
 ### 合并数据集：叠加（Stack）与拼接（Join）
 
-**Combine...**（列表下方，或右键 → **Combine N datasets...**）可以做两件
-不同的事，并会让你选择：
+**Combine...**（列表下方）可以做两件不同的事，并会让你选择：
 
 - **Stack（叠加）**——*仅限 cut*。每张 cut 成为新 map 的一个切片，沿一个由你命名的
   轴：温度序列、门电压序列、每个光子能量一张的 cut。结果可以像普通 map 一样查看——
@@ -876,7 +917,8 @@ E-k 谱**。拖动红色靶标即可查看另一点的谱。在面板上右键�
 
 ![导出](images/export_dialog.png)
 
-在列表中右键 → **Save** 把数据集写入你自己的 `.nxs` 文件；选中多行时会写入同一个文件。
+**Save datasets...**（工具面板 Datasets 区）把选中的数据集写入你自己的 `.nxs`
+文件；选中多行时会写入同一个文件。
 
 ---
 

@@ -88,16 +88,83 @@ def test_memory_controls_are_in_the_tool_panel(launcher):
                                              "normalise"]
 
 
-def test_the_right_click_menu_holds_only_list_actions_in_order(launcher):
+def test_the_right_click_menu_holds_only_the_ways_of_opening(launcher):
     lv = launcher
     _select(lv, "m")
     QTimer.singleShot(0, lambda: lv.last_list_menu.close())
     lv.show_list_menu(QPoint(5, 5))
     texts = [a.text() or "---" for a in lv.last_list_menu.actions()]
-    assert texts == ["Open", "Open slit cut", "Open scan-axis cut", "---",
-                     "Combine datasets...", "Save dataset...",
-                     "Remove from list", "---", "Rename...",
-                     "Show information", "Session log..."]
+    assert texts == ["Open", "Open slit cut", "Open scan-axis cut"]
+
+
+def test_the_rest_of_the_menu_is_the_datasets_box_above_memory(launcher):
+    ui = launcher.ui
+    panel = ui.ToolPanel
+    assert [b.text() for b in ui.DatasetButtons.values()] == [
+        "Experiment info", "Auto Exp. log...", "Rename...", "Save datasets...",
+        "Remove from list", "Session log..."]
+    layout = panel.layout()
+    order = [layout.indexOf(w) for w in (ui.ToolTabs, ui.DatasetBox,
+                                         ui.MemoryBox)]
+    assert order == sorted(order) and -1 not in order
+    # combining is under the list only
+    assert "combine" not in ui.DatasetButtons and "combine" in ui.ListButtons
+    _select(launcher)
+    assert not ui.DatasetButtons["info"].isEnabled()
+    assert ui.DatasetButtons["explog"].isEnabled()
+    _select(launcher, "c")
+    assert ui.DatasetButtons["info"].isEnabled()
+    _select(launcher, "c", "m")
+    assert not ui.DatasetButtons["rename"].isEnabled()
+    assert ui.DatasetButtons["save"].isEnabled()
+
+
+def test_experiment_info_opens_the_information_window(launcher):
+    lv = launcher
+    _select(lv, "c")
+    lv.ui.DatasetButtons["info"].click()
+    assert lv.info_window.isVisible()
+    assert lv.info_window.windowTitle() == "Experiment info"
+    lv.info_window.close()
+
+
+def test_the_experiment_log_is_written_from_the_list(launcher, tmp_path,
+                                                     monkeypatch):
+    import csv
+    from tools.output import explog as EL
+    lv = launcher
+    monkeypatch.setattr(lv, "exp_log_dialog", None)
+    _select(lv, "m")
+    lv.ui.DatasetButtons["explog"].click()
+    dialog = lv.exp_log_dialog
+    assert dialog.isVisible() and dialog.reference is not None
+    # the selected map is the reference; its fields are offered
+    fields = [dialog.field_list.item(i).data(0x0100)
+              for i in range(dialog.field_list.count())]
+    assert fields[:len(EL.DERIVED)] == list(EL.DERIVED)
+    dialog.set_template(EL.Template([EL.Column("File name", "@file"),
+                                     EL.Column("Type", "@kind")]))
+    # tick a field: it becomes the last column; move it to the front
+    item = next(dialog.field_list.item(i)
+                for i in range(dialog.field_list.count())
+                if dialog.field_list.item(i).data(0x0100) == "@scan1")
+    item.setCheckState(2)
+    assert dialog.template.columns[-1].field == "@scan1"
+    dialog.table.selectRow(2)
+    dialog.move_column(-5)
+    assert [c.field for c in dialog.template.columns] == [
+        "@scan1", "@file", "@kind"]
+    dialog.folder_edit.setText(str(tmp_path))
+    dialog.name_edit.setText("beamtime")
+    dialog.all_radio.setChecked(True)
+    assert dialog.record() == 2
+    assert dialog.record() == 0                 # both are in it already
+    with open(tmp_path / "beamtime.csv", encoding="utf-8-sig") as handle:
+        rows = list(csv.reader(handle))
+    assert rows[0] == ["Scan axis", "File name", "Type"]
+    assert [r[1:] for r in rows[1:]] == [["c", "Cut"], ["m", "Map"]]
+    assert rows[2][0] == "Angle, deflector (deg): -5/5/1"
+    dialog.close()
 
 
 def test_each_direct_operation_opens_alone(launcher):
@@ -574,3 +641,30 @@ def test_modifier_key_is_named_for_the_platform(monkeypatch):
     assert importlib.reload(platform_style).MOD_KEY == "⌘"
     monkeypatch.setattr(sys, "platform", "win32")
     assert importlib.reload(platform_style).MOD_KEY == "Ctrl"
+
+
+def test_keep_recording_logs_each_file_added_to_the_list(launcher, tmp_path,
+                                                         monkeypatch):
+    import csv
+    from loader.nxs_file import save_dataset
+    from tools.output import explog as EL
+    lv = launcher
+    monkeypatch.setattr(lv, "exp_log_dialog", None)
+    _select(lv, "c")
+    dialog = lv.open_exp_log()
+    dialog.set_template(EL.Template([EL.Column("File name", "@file"),
+                                     EL.Column("hv", "info:photon_energy_eV")]))
+    dialog.folder_edit.setText(str(tmp_path))
+    dialog.name_edit.setText("auto.csv")
+    dialog.auto_box.setChecked(True)
+    dialog.close()                    # keeps recording with the window shut
+    path = str(tmp_path / "new_cut.nxs")
+    save_dataset(path, [{"name": "new_cut", "kind": "cut",
+                         "axes": (SLIT, EKIN),
+                         "labels": {"x": "Angle (deg)", "y": "Energy (eV)"},
+                         "value": np.ones((SLIT.size, EKIN.size)),
+                         "info": {"photon_energy_eV": 95.0}, "motors": {}}])
+    lv.add_files([path], background=False)
+    with open(tmp_path / "auto.csv", encoding="utf-8-sig") as handle:
+        rows = list(csv.reader(handle))
+    assert rows == [["File name", "hv"], ["new_cut", "95"]]

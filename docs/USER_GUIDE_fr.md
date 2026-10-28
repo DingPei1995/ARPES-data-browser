@@ -2,7 +2,7 @@
 
 *[English version](USER_GUIDE_en.md) · [中文版](USER_GUIDE_zh.md)*
 
-*Dernière mise à jour : 27 octobre 2026 — pour ARPES viewer v1.1.0*
+*Dernière mise à jour : 28 octobre 2026 — pour ARPES viewer v1.2.0*
 
 La version et sa date figurent dans la barre de titre et en bas de la fenêtre
 principale. Signaler un bogue, poser une question, obtenir la dernière version :
@@ -134,9 +134,10 @@ coupes, une vue 3D une carte. Un bouton grisé explique pourquoi au survol.
 |---|---|
 | Ouvrir un jeu de données dans sa propre fenêtre | **double-clic** sur la ligne (ou clic droit → **Open**) |
 | Lancer un outil sur les lignes sélectionnées | son bouton dans le **panneau d'outils** |
-| Empiler plusieurs coupes en une carte, ou raccorder une carte / carte kz mesurée en plusieurs morceaux | **Combine...** sous la liste (ou clic droit → **Combine N datasets...**) |
+| Empiler plusieurs coupes en une carte, ou raccorder une carte / carte kz mesurée en plusieurs morceaux | **Combine...** sous la liste |
 | Rogner à un intervalle, regrouper des points, normaliser chaque spectre sur lui-même | **Truncate...**, **Compress...**, **Self-normalise...** sous la liste |
-| Ouvrir, enregistrer, retirer, renommer, lire les axes | **clic droit** sur la ligne (ou sur une sélection de lignes) |
+| Ouvrir la coupe le long de la fente ou de l'axe balayé d'une carte | **clic droit** sur la ligne (ou sur une sélection de lignes) |
+| Lire les métadonnées, écrire le journal d'expérience, renommer, enregistrer, retirer | le cadre **Datasets** du panneau d'outils, au-dessus de Memory |
 | Voir et libérer la mémoire, fermer toutes les fenêtres, ouvrir le dossier de sauvegarde | le cadre **Memory**, en bas à gauche |
 | Voir quelle version est utilisée, signaler un bogue, obtenir la dernière version | la barre de titre et la dernière ligne de la fenêtre (lien GitHub) |
 
@@ -144,13 +145,18 @@ Les quatre boutons sous la liste agissent sur les lignes sélectionnées
 au-dessus et créent de nouvelles lignes — les originaux ne sont jamais
 modifiés.
 
-**Le menu contextuel** ne contient que ce qui se fait *aux lignes*, en trois
-groupes : **Open**, **Open slit cut**, **Open scan-axis cut** (pour une
-carte) | **Combine**, **Save**, **Remove from list** | **Rename...**, **Show
-information**, **Session log...**. Une entrée qui ne convient pas à la
-sélection est grisée, et son infobulle en donne la raison.
+**Le menu contextuel** ne contient que les façons d'ouvrir les lignes :
+**Open**, **Open slit cut** et **Open scan-axis cut** (pour une carte). Une
+entrée qui ne convient pas à la sélection est grisée, et son infobulle en
+donne la raison.
 
-### Où se trouvent les choses maintenant (v1.1.0)
+**Le cadre Datasets** (panneau d'outils, entre les outils et Memory) contient
+le reste de ce qui se fait aux lignes : **Experiment info**, **Auto Exp.
+log...** (voir [le journal d'expérience](#le-journal-dexpérience-auto-exp-log)),
+**Rename...**, **Save datasets...**, **Remove from list** et **Session
+log...**. Ses boutons se grisent comme les outils.
+
+### Où se trouvent les choses maintenant (v1.2.0)
 
 Pour qui a utilisé une version antérieure : les outils ont quitté le menu
 contextuel et les menus *Functions* des fenêtres pour le panneau d'outils ;
@@ -173,12 +179,62 @@ chacun a ainsi une seule entrée, toujours visible.
 | Panneau → Advanced → **Figure composer...** | clic droit → Open in figure composer |
 | Clic droit → **Open scan-axis cut**, bouton **Scan-axis cut** | Open deflector cut, Deflector cut |
 | Cadre Memory → **Free memory**, **Close all viewers**, **Open auto-save folder** | sous la liste |
+| Cadre Datasets → **Experiment info** | clic droit → Show information |
+| Cadre Datasets → **Rename...**, **Save datasets...**, **Remove from list**, **Session log...** | clic droit |
+| **Combine...** sous la liste (seulement) | aussi clic droit → Combine N datasets |
 
-**Show information** ouvre aussi toutes les métadonnées du jeu de données
+**Experiment info** ouvre aussi toutes les métadonnées du jeu de données
 dans une fenêtre à part, avec un champ de filtre et **Export metadata
 (.csv)** :
 
 ![Informations sur le jeu de données](images/information_window.png)
+
+### Le journal d'expérience (Auto Exp. log)
+
+**Datasets → Auto Exp. log...** écrit le journal du temps de faisceau -- un
+fichier CSV, une ligne par mesure -- à partir des métadonnées des fichiers
+eux-mêmes.
+
+![La fenêtre Auto Exp. log](images/exp_log_dialog.png)
+
+1. **Log file.** Choisissez le dossier et tapez le nom du fichier. Si un
+   journal de ce nom existe déjà, les nouvelles lignes sont écrites **après
+   sa dernière ligne** et rien au-dessus n'est modifié ; sinon il est créé,
+   avec les colonnes pour en-tête. (Si les colonnes ont changé depuis, une
+   ligne marquée `# columns` avec les nouveaux titres vient d'abord.)
+2. **Columns.** *Fields of:* choisit un jeu de données de la liste -- du
+   type que vous consignez le plus -- et **Read fields** liste tout ce qu'il
+   contient, avec sa valeur : nom du fichier, type, heure de début et
+   intervalles balayés tirés des données, puis chaque champ de métadonnées
+   et chaque moteur. **Cochez** un champ pour en faire une colonne. Dans le
+   tableau de droite, double-cliquez un titre pour le renommer, et rangez
+   les colonnes dans l'ordre voulu avec **Top / Up / Down / Bottom**. **Add
+   empty column** ajoute une colonne à remplir à la main (commentaires).
+   *Ranges as:* écrit un intervalle `start/stop/step` ou `start:step:stop`.
+   Les colonnes sont retenues pour la session suivante ; **Save columns
+   as...** / **Load columns...** en gardent un jeu par ligne de lumière.
+3. **If scanned.** Ce qu'écrit une colonne de position ou d'angle dépend de
+   la mesure :
+   - une **coupe** : l'échantillon n'a pas bougé -- la valeur du moteur ;
+   - un balayage **SPEM** : l'axe de platine balayé, `start/stop/step`
+     (*SPEM: scanned X* / *Y* pour les colonnes de la platine) ;
+   - une **carte** prise au manipulateur plutôt qu'au déflecteur : l'angle
+     en `start/stop/step` (*map: scanned angle*), et une position de
+     l'échantillon corrigée avec l'angle en `début..fin` ;
+   - une **carte kz** : l'intervalle d'énergie de photon (*kz map: photon
+     energy*).
+
+   *auto* (par défaut) reconnaît le moteur balayé à son nom, et une position
+   qui a bougé à ses valeurs. Toute autre mesure reçoit la valeur du champ.
+4. **Record.** *The selected rows* ou *Every dataset in the list*, puis
+   **Write records**. *Skip datasets already in the log* omet les fichiers
+   dont le nom figure déjà dans la colonne des noms. **Keep recording**
+   écrit la ligne de chaque fichier ajouté ensuite à la liste, même fenêtre
+   fermée : pendant le temps de faisceau, ajoutez chaque fichier mesuré et
+   le journal se tient à jour.
+
+Si le journal est ouvert dans Excel, Windows refuse de l'écrire : fermez-le
+dans Excel et recommencez.
 
 **Clear list** demande confirmation, et propose d'enregistrer ce qui a été
 calculé pendant la session sans avoir encore été sauvegardé. Les fichiers sur
@@ -186,8 +242,8 @@ le disque ne sont jamais supprimés.
 
 ### Combiner des jeux de données : empiler et raccorder
 
-**Combine...** (sous la liste, ou clic droit → **Combine N
-datasets...**) fait deux choses différentes, et demande laquelle :
+**Combine...** (sous la liste) fait deux choses différentes, et demande
+laquelle :
 
 - **Stack (empiler)** — *coupes seulement*. Chaque coupe devient une tranche
   d'une nouvelle carte, le long d'un axe que vous nommez : série en
@@ -1079,9 +1135,9 @@ Illustrator (avec, au choix, la zone de Brillouin tracée dans le cadre — voir
 
 ![Exportation](images/export_dialog.png)
 
-**Save** (clic droit sur des lignes de la liste) écrit des jeux de données
-dans un fichier `.nxs` de votre choix ; plusieurs lignes sélectionnées vont
-dans un même fichier.
+**Save datasets...** (panneau d'outils, cadre Datasets) écrit les jeux de
+données sélectionnés dans un fichier `.nxs` de votre choix ; plusieurs
+lignes sélectionnées vont dans un même fichier.
 
 ---
 

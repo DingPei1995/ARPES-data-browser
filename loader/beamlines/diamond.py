@@ -197,7 +197,7 @@ def read_layout(f: h5py.File, path: str = "") -> Layout:
             axis = values
         candidates[dim].append((name, unit, axis, _is_primary(item)))
 
-    dims = []
+    dims, followers = [], []
     for i, n in enumerate(scan_shape):
         found = candidates[i]
         hv_scan = False
@@ -218,6 +218,10 @@ def read_layout(f: h5py.File, path: str = "") -> Layout:
                             "index", "Scan point (index)"))
             continue
         name, unit, axis, _primary = pick
+        for other, other_unit, other_axis, _ in found:
+            if other != name and other_axis.size > 1 \
+                    and float(np.ptp(other_axis)) > 0:
+                followers.append(Dim(other, other_unit, other_axis, "position"))
         role, label = motor_role(name)
         if hv_scan:
             role, label = "photon_energy", "Photon energy (eV)"
@@ -240,7 +244,8 @@ def read_layout(f: h5py.File, path: str = "") -> Layout:
                   perm=tuple(scan_axes) + (angle_dim, energy_dim),
                   dims=dims, angle=angle, energy=energy, facility=facility,
                   prefix="I05-1_" if which == "I05-1" else "I05_",
-                  energies=energies if per_point else None, info=info)
+                  energies=energies if per_point else None, info=info,
+                  followers=followers)
 
 
 class _DiamondLoader(NexusArpesLoader, Loader):
