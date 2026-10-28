@@ -112,8 +112,9 @@ class Ui_MainWindow:
 
         self.OpenHint = QtWidgets.QLabel(
             "<b>Double-click a file to open it</b> in its own window; right-click "
-            "for its cuts, saving, renaming and its information. The tools on "
-            "the left light up for whatever the selection can take.",
+            "to open a map's cuts. The tools on the left -- and its Datasets "
+            "box: information, the experiment log, renaming, saving -- light "
+            "up for whatever the selection can take.",
             self.centralwidget)
         self.OpenHint.setWordWrap(True)
         menu_layout.addWidget(self.OpenHint)
@@ -129,8 +130,8 @@ class Ui_MainWindow:
             QtWidgets.QAbstractItemView.ExtendedSelection)
         self.FilePathListWidget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.FilePathListWidget.setToolTip(
-            "Double-click to open. Right-click to rename, save or remove the "
-            f"selected datasets; {MOD_KEY}/Shift-click selects several.")
+            "Double-click to open; right-click for a map's slit and scan-axis "
+            f"cuts. {MOD_KEY}/Shift-click selects several.")
         menu_layout.addWidget(self.FilePathListWidget, stretch=1)
 
         # -- what can be done to the data itself: one button per operation,
@@ -153,7 +154,7 @@ class Ui_MainWindow:
         # axis. It stays in the launcher because it is what you compare
         # between files while browsing; the rest of the information (the
         # metadata table) is a window of its own. Filled on demand
-        # (right-click -> Show information), since reading a dataset to
+        # (Datasets -> Experiment info), since reading a dataset to
         # describe it is work.
         self.DataInfoBox = QtWidgets.QGroupBox("Data Information", self.centralwidget)
         info_grid = QtWidgets.QGridLayout(self.DataInfoBox)
@@ -201,8 +202,9 @@ class Ui_MainWindow:
 
 
     def _tool_panel(self, parent):
-        """The tool panel: the tools for the selected datasets, then the
-        memory controls at the bottom.
+        """The tool panel: the tools for the selected datasets, then what
+        is done to the rows themselves (the Datasets box), then the memory
+        controls at the bottom.
 
         One button per tool, so every one of them is in sight -- they used
         to be behind a right-click or on a tab of a window the user had to
@@ -268,6 +270,23 @@ class Ui_MainWindow:
             QtWidgets.QStyle.PM_ScrollBarExtent)
         panel.setFixedWidth(max(262, widest + scrollbar + 24))
 
+        # -- what is done to the rows themselves rather than to their data:
+        # describing, logging, naming, saving and removing them. These were
+        # the right-click menu's, which kept only the three ways of opening
+        # a row; here they are in sight, and grey out like the tools.
+        self.DatasetBox = QtWidgets.QGroupBox("Datasets", panel)
+        dataset_layout = QtWidgets.QVBoxLayout(self.DatasetBox)
+        dataset_layout.setContentsMargins(4, 4, 4, 4)
+        dataset_layout.setSpacing(2)
+        self.DatasetButtons = {}
+        for name, text, tooltip in DATASET_ACTIONS:
+            button = QtWidgets.QPushButton(text, self.DatasetBox)
+            button.setToolTip(tooltip)
+            button.setProperty("description", tooltip)
+            dataset_layout.addWidget(button)
+            self.DatasetButtons[name] = button
+        layout.addWidget(self.DatasetBox)
+
         # -- memory: how much this program is holding, and a way to give
         # some of it back. Several spatial scans open at once is where it
         # adds up, so the numbers are always on show rather than in a menu.
@@ -326,6 +345,33 @@ LIST_OPERATIONS = (
     ("normalise", "Self-normalise...",
      "Divide each spectrum (each EDC, each cut...) by its own total or peak, "
      "optionally over a window of your own."),
+)
+
+#: The tool panel's Datasets box, top to bottom: (action, button text,
+#: tooltip). The action names are list_actions' and
+#: ARPES_viewer.run_list_action()'s.
+DATASET_ACTIONS = (
+    ("info", "Experiment info",
+     "The selected dataset's kind, axes and metadata: the photon energy, "
+     "temperature, analyser settings, motor positions... in a window of "
+     "its own, with a filter and a CSV export."),
+    ("explog", "Auto Exp. log...",
+     "Write an experiment log (.csv) from the datasets' own metadata: one "
+     "row per measurement, with the columns you choose from a dataset's "
+     "fields and in the order you like. An existing log is continued after "
+     "its last record."),
+    ("rename", "Rename...",
+     "Change the name the dataset is listed (and saved) under. The file on "
+     "disk keeps its name."),
+    ("save", "Save datasets...",
+     "Write the selected datasets to a .nxs file of your own, which this "
+     "program opens again."),
+    ("remove", "Remove from list",
+     "Take the selected rows out of the list (after asking). Files on disk "
+     "are not deleted."),
+    ("log", "Session log...",
+     "What has been auto-saved, saved and deleted this session, and where "
+     "each of it is -- the file to look at after a crash."),
 )
 
 #: Every tool of the tool panel: action -> (button text, tooltip). The
@@ -451,7 +497,7 @@ TOOL_SECTIONS = (
 class InfoWindow(QtWidgets.QWidget):
     """The selected dataset's metadata, in a window of its own.
 
-    Opened from the list's right-click menu ("Show information"). The
+    Opened from the tool panel's Datasets box ("Experiment info"). The
     metadata table is long -- a hundred-odd fields -- and under the file
     list it left neither the list nor itself much room; in its own window it
     can be moved beside a viewer, kept open while other files are browsed,
@@ -464,7 +510,7 @@ class InfoWindow(QtWidgets.QWidget):
         # Qt.Window, not a plain child: a QWidget given a parent without it
         # is laid out *inside* that parent rather than standing on its own.
         super().__init__(parent, QtCore.Qt.Window)
-        self.setWindowTitle("Dataset information")
+        self.setWindowTitle("Experiment info")
         self.resize(560, 620)
         layout = QtWidgets.QVBoxLayout(self)
 

@@ -2,7 +2,7 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-*Last updated: 27 October 2026 — for ARPES viewer v1.1.0*
+*Last updated: 28 October 2026 — for ARPES viewer v1.2.0*
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
@@ -123,22 +123,27 @@ says why when you hover over it.
 |---|---|
 | Open a dataset in its own window | **double-click** the row (or right-click → **Open**) |
 | Run a tool on the selected rows | its button in the **tool panel** |
-| Stack several cuts into one map, or join a map / kz map measured in segments | **Combine...** under the list (or right-click → **Combine N datasets...**) |
+| Stack several cuts into one map, or join a map / kz map measured in segments | **Combine...** under the list |
 | Crop to a range, bin points, normalise each spectrum to itself | **Truncate...**, **Compress...**, **Self-normalise...** under the list |
-| Open, save, remove, rename, read the axes | **right-click** the row (or a selection of rows) |
+| Open a map's slit or scan-axis cut | **right-click** the row (or a selection of rows) |
+| Read the metadata, write the experiment log, rename, save, remove | the **Datasets** box of the tool panel, above Memory |
 | See and free memory, close every viewer, open the autosave folder | the **Memory** box, bottom left |
 | See which version you are running, report a bug, get the latest version | the title bar and the last line of the window (link to GitHub) |
 
 The four buttons under the list act on the rows selected above them, and each
 makes new rows — the originals are never changed.
 
-**The right-click menu** holds only what is done *to the rows*, in three
-groups: **Open**, **Open slit cut**, **Open scan-axis cut** (for a map) |
-**Combine**, **Save**, **Remove from list** | **Rename...**, **Show
-information**, **Session log...**. An entry that does not fit the selection
-is greyed, with the reason in its tooltip.
+**The right-click menu** holds only the ways of opening the rows: **Open**,
+**Open slit cut** and **Open scan-axis cut** (for a map). An entry that does
+not fit the selection is greyed, with the reason in its tooltip.
 
-### Where things are now (v1.1.0)
+**The Datasets box** (tool panel, between the tools and Memory) holds the
+rest of what is done to the rows: **Experiment info**, **Auto Exp. log...**
+(see [the experiment log](#the-experiment-log-auto-exp-log)),
+**Rename...**, **Save datasets...**, **Remove from list** and **Session
+log...**. Its buttons grey out like the tools.
+
+### Where things are now (v1.2.0)
 
 If you used an earlier version: the tools moved out of the right-click menu
 and the viewers' *Functions* menus into the tool panel, so each has one way
@@ -161,19 +166,68 @@ in, always in sight.
 | Tool panel → Advanced → **Figure composer...** | right-click → Open in figure composer |
 | Right-click → **Open scan-axis cut**, viewer button **Scan-axis cut** | Open deflector cut, Deflector cut |
 | Memory box → **Free memory**, **Close all viewers**, **Open auto-save folder** | under the list |
+| Datasets box → **Experiment info** | right-click → Show information |
+| Datasets box → **Rename...**, **Save datasets...**, **Remove from list**, **Session log...** | right-click |
+| **Combine...** under the list (only) | also right-click → Combine N datasets |
 
-**Show information** also opens the full metadata of the dataset in a window
+**Experiment info** also opens the full metadata of the dataset in a window
 of its own, with a filter box and **Export metadata (.csv)**:
 
 ![Dataset information](images/information_window.png)
+
+### The experiment log (Auto Exp. log)
+
+**Datasets → Auto Exp. log...** writes the beamtime's log -- a CSV file, one
+row per measurement -- from the files' own metadata.
+
+![The Auto Exp. log window](images/exp_log_dialog.png)
+
+1. **Log file.** Choose the folder and type the file name. If a log of that
+   name is already there, the new records are written **after its last
+   record** and nothing above is changed; otherwise it is created, with the
+   columns as its header. (If the columns changed since, a row marked
+   `# columns` with the new headings comes first.)
+2. **Columns.** *Fields of:* picks a dataset of the main list -- choose one
+   of the kind you log most -- and **Read fields** lists everything it has,
+   with its value: the file name, data type, start time and scanned ranges
+   worked out from the data, then every metadata field and motor. **Tick**
+   a field to add it as a column. In the table on the right, double-click a
+   heading to rename it (`hν/Δ`, `Polar/Δ`, `Epass`...), and use **Top /
+   Up / Down / Bottom** to put the columns in any order. **Add empty
+   column** gives one to fill in by hand (comments). *Ranges as:* writes a
+   range `start/stop/step` or `start:step:stop`. The columns are remembered
+   for the next session; **Save columns as...** / **Load columns...** keep
+   one set per beamline.
+3. **If scanned.** What a position or angle column says depends on the
+   measurement:
+   - a **cut**: the sample stood still -- the motor's value;
+   - a **SPEM** scan: the scanned stage axis as `start/stop/step`
+     (choose *SPEM: scanned X* / *Y* for the stage columns);
+   - a **map** taken with the manipulator rather than the deflector: the
+     angle as `start/stop/step` (*map: scanned angle*), and a sample
+     position the beamline corrected along with the angle as
+     `first..last`;
+   - a **kz map**: the photon energy range (*kz map: photon energy*).
+
+   *auto* (the default) recognises the scanned motor by name, and a
+   position that moved by its values. Any other measurement gets the
+   field's own value.
+4. **Record.** *The selected rows* or *Every dataset in the list*, then
+   **Write records**. *Skip datasets already in the log* leaves out files
+   whose name is already in the log's file-name column. **Keep recording**
+   writes the record of every file you add to the list from then on, even
+   with the window closed: during a beamtime, add each file as it is
+   measured and the log keeps itself.
+
+If the log is open in Excel, Windows will not let it be written: close it
+there and write again.
 
 **Clear list** asks first, and offers to save anything computed in this
 session that has not been saved yet. Files on disk are never deleted.
 
 ### Combining datasets: stacking and joining
 
-**Combine...** (under the list, or right-click → **Combine N
-datasets...**) does two different things, and asks which:
+**Combine...** (under the list) does two different things, and asks which:
 
 - **Stack** — *cuts only*. Each cut becomes one slice of a new map, along an
   axis you name: a temperature series, a gate-voltage series, one cut per
@@ -1031,8 +1085,9 @@ Brillouin zone drawn in the box — see [§8.2](#82-brillouin-zone)).
 
 ![Export](images/export_dialog.png)
 
-**Save** (right-click rows in the list) writes datasets to a `.nxs` file of
-your own; several selected rows go into one file.
+**Save datasets...** (tool panel, Datasets box) writes the selected
+datasets to a `.nxs` file of your own; several selected rows go into one
+file.
 
 ---
 

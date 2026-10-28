@@ -1,6 +1,6 @@
 """Which of the main list's actions apply to a selection: the entries of
 its right-click menu, the buttons under it, and the buttons of the tool
-panel beside it.
+panel beside it (its tools, and its Datasets box).
 
 Decided from the list's own records -- the kind each row was listed as --
 without reading any data, so the menu opens instantly however large the
@@ -83,6 +83,8 @@ RULES = {
     "save": ("any", None, "datasets"),
     "remove": ("any", "all", "datasets"),
     "log": ("none", "all", ""),
+    # Logs the selection, or the whole list with nothing selected.
+    "explog": ("none", "all", ""),
 }
 
 

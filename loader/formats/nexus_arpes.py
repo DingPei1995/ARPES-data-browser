@@ -168,6 +168,11 @@ class Layout:
     #: The analyser work function, when the beamline states one; ``None``
     #: assumes :data:`WORK_FUNCTION_EV`.
     work_function: Optional[float] = None
+    #: Motors that moved along a scanned dimension without being its axis:
+    #: the sample position a beamline corrects as the manipulator turns, to
+    #: keep the spot on the sample. Listed as ``"<name> range"`` motors, so
+    #: the experiment log can say where the sample was.
+    followers: list = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------
@@ -515,7 +520,7 @@ def build_scan(layout: Layout, entry: str = None) -> NxsScan:
     else:                                                  # pragma: no cover
         raise AssertionError(kind)
 
-    for dim in layout.dims:
+    for dim in list(layout.dims) + list(layout.followers):
         if len(dim.axis) > 1 and dim.role != "index":
             scan.fourd_info.setdefault(
                 f"{dim.name} range",
