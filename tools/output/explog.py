@@ -27,10 +27,15 @@ Each column therefore has a *scan rule* (:data:`SCAN_RULES`) saying when its
 value is to be replaced by the range of a scanned axis; the default, "auto",
 recognises a scanned motor by name and a moving one by its per-point values.
 
-An existing log is appended to after its last record, never rewritten
-above it, so a log kept open across a beamtime (and edited by hand in
-between) keeps everything already in it. Qt-free, so it can be tested on its
-own.
+The format -- the columns, the separator and the decimal mark -- belongs to
+the log file: it is chosen once, when the log is started, and every later
+record is added in it after the last one. Changing the format of a log that
+already has records rewrites that log under its new header (the records
+moved to their columns' new places), so the header is only ever the first
+row. The separator and decimal mark are by default those Excel uses on the
+computer (``;`` and ``,`` in much of Europe), since Excel opens a CSV with
+the system's list separator and puts every row in one column otherwise.
+Qt-free, so it can be tested on its own.
 """
 from __future__ import annotations
 
@@ -39,6 +44,7 @@ import io
 import json
 import os
 import re
+import uuid
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -107,36 +113,64 @@ _RANGE_TEXT = re.compile(
     r"^\s*(-?[\d.eE+-]+)\s*\.\.\s*(-?[\d.eE+-]+)\s*(.*?)\s*\((\d+) steps?\)\s*$")
 
 
+#: The separators a log can be written with: setting -> what the list
+#: calls it. "auto" is Excel's on this computer (see :func:`resolve`).
+DELIMITERS = {"auto": "auto (as Excel on this computer)", ",": "comma  ,",
+              ";": "semicolon  ;", "\t": "tab"}
+#: The decimal marks: "auto" follows the separator of the file.
+DECIMALS = {"auto": "auto", ".": "point  .", ",": "comma  ,"}
+
+
+def _uid() -> str:
+    return uuid.uuid4().hex[:12]
+
+
 @dataclass
 class Column:
     """One column of the log: its heading, the field it is filled from,
-    and when a scanned axis's range replaces that field's value."""
+    and when a scanned axis's range replaces that field's value. ``uid``
+    follows the column through renames and moves, so its records follow it
+    when the log is reformatted."""
     header: str
     field: str
     scan: str = "auto"
+    uid: str = ""
+
+    def __post_init__(self):
+        if not self.uid:
+            self.uid = _uid()
 
     def to_json(self) -> dict:
-        return {"header": self.header, "field": self.field, "scan": self.scan}
+        return {"header": self.header, "field": self.field, "scan": self.scan,
+                "uid": self.uid}
 
     @classmethod
     def from_json(cls, item: dict) -> "Column":
         scan = item.get("scan", "auto")
         return cls(str(item.get("header", "")), str(item.get("field", "")),
-                   scan if scan in SCAN_RULES else "auto")
+                   scan if scan in SCAN_RULES else "auto",
+                   str(item.get("uid") or ""))
 
 
 @dataclass
 class Template:
-    """The log's columns, in order, and how ranges are written."""
+    """A log's format: its columns in order, how ranges are written, and
+    the separator and decimal mark of the file."""
     columns: list = field(default_factory=list)
     range_style: str = "slash"
+    delimiter: str = "auto"
+    decimal: str = "auto"
 
     def headers(self) -> list:
         return [column.header for column in self.columns]
 
+    def copy(self) -> "Template":
+        return Template.from_json(self.to_json())
+
     def to_json(self) -> dict:
         return {"columns": [c.to_json() for c in self.columns],
-                "range_style": self.range_style}
+                "range_style": self.range_style,
+                "delimiter": self.delimiter, "decimal": self.decimal}
 
     @classmethod
     def from_json(cls, stored) -> "Template":
@@ -145,7 +179,11 @@ class Template:
         columns = [Column.from_json(item) for item in stored.get("columns", ())
                    if isinstance(item, dict) and item.get("field")]
         style = stored.get("range_style", "slash")
-        return cls(columns, style if style in RANGE_STYLES else "slash")
+        delimiter = stored.get("delimiter", "auto")
+        decimal = stored.get("decimal", "auto")
+        return cls(columns, style if style in RANGE_STYLES else "slash",
+                   delimiter if delimiter in DELIMITERS else "auto",
+                   decimal if decimal in DECIMALS else "auto")
 
 
 def default_template() -> Template:
@@ -156,40 +194,116 @@ def default_template() -> Template:
                       "@energy", "@blank")])
 
 
+def template_from_header(header: list) -> Template:
+    """The format of a log this program does not know the columns of (made
+    on another computer, or by hand): its own headings, each filled from
+    the derived field of that name if there is one and by hand otherwise."""
+    by_name = {h.lower(): f for f, (_n, h) in DERIVED.items() if f != "@blank"}
+    return Template([Column(h, by_name.get(h.strip().lower(), "@blank"))
+                     for h in header])
+
+
 # --------------------------------------------------------------------------
-# The template, remembered between sessions
+# The settings, remembered between sessions
 # --------------------------------------------------------------------------
-TEMPLATE_FILE = "explog_template.json"
+SETTINGS_FILE = "explog_settings.json"
 
 
 def _config_path() -> str:
     folder = os.environ.get("ARPES_VIEWER_CONFIG_DIR") or os.path.join(
         os.path.expanduser("~"), ".arpes_viewer")
-    return os.path.join(folder, TEMPLATE_FILE)
+    return os.path.join(folder, SETTINGS_FILE)
 
 
-def load_template(path: str = None) -> Template:
-    """The template kept at ``path`` (by default the one used last); the
-    default template when there is none or it cannot be read."""
+@dataclass
+class Settings:
+    """Where the log is, its format, and the format of every log written
+    before (by path), so that going back to one picks its format up."""
+    folder: str = ""
+    name: str = "exp_log.csv"
+    template: Template = field(default_factory=default_template)
+    skip_logged: bool = True
+    formats: dict = field(default_factory=dict)
+    #: whether the format has been chosen at least once
+    configured: bool = False
+
+    def path(self) -> str:
+        """The log's full path, ``.csv`` added if the name has none; empty
+        while there is no name."""
+        name = (self.name or "").strip()
+        if not name:
+            return ""
+        if not name.lower().endswith(".csv"):
+            name += ".csv"
+        folder = (self.folder or "").strip() or os.path.expanduser("~")
+        return os.path.join(folder, name)
+
+    def to_json(self) -> dict:
+        return {"folder": self.folder, "name": self.name,
+                "template": self.template.to_json(),
+                "skip_logged": self.skip_logged, "formats": self.formats,
+                "configured": self.configured}
+
+    @classmethod
+    def from_json(cls, stored) -> "Settings":
+        if not isinstance(stored, dict):
+            return cls()
+        formats = stored.get("formats")
+        return cls(str(stored.get("folder") or ""),
+                   str(stored.get("name") or "exp_log.csv"),
+                   Template.from_json(stored.get("template")),
+                   bool(stored.get("skip_logged", True)),
+                   formats if isinstance(formats, dict) else {},
+                   bool(stored.get("configured", False)))
+
+    def remember_format(self, path: str, template: Template) -> None:
+        self.formats[os.path.abspath(path)] = template.to_json()
+
+    def format_for(self, path: str, header: list):
+        """The format remembered for the log at ``path``, if its headings
+        are still ``header``; None otherwise."""
+        stored = self.formats.get(os.path.abspath(path))
+        if stored is None:
+            return None
+        template = Template.from_json(stored)
+        return template if template.headers() == list(header) else None
+
+
+def load_settings(path: str = None) -> Settings:
     try:
         with open(path or _config_path(), encoding="utf-8") as handle:
-            return Template.from_json(json.load(handle))
+            return Settings.from_json(json.load(handle))
     except (OSError, ValueError):
-        return default_template()
+        return Settings()
 
 
-def save_template(template: Template, path: str = None) -> None:
-    """Keep ``template`` at ``path`` (by default for the next session).
-    Raises OSError when ``path`` was given and cannot be written; the
-    remembered copy is a convenience, so failing to write it is not."""
+def save_settings(settings: Settings, path: str = None) -> None:
+    """Keep ``settings`` for the next session. A failure to write the
+    remembered copy is not an error; one to write ``path`` is (OSError)."""
     target = path or _config_path()
     try:
         os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
         with open(target, "w", encoding="utf-8") as handle:
-            json.dump(template.to_json(), handle, indent=1)
+            json.dump(settings.to_json(), handle, indent=1)
     except OSError:
         if path is not None:
             raise
+
+
+def save_template(template: Template, path: str) -> None:
+    """Keep a format in a file of its own (one per beamline, say)."""
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(template.to_json(), handle, indent=1)
+
+
+def load_template(path: str) -> Template:
+    """A format saved with :func:`save_template`; the default one when the
+    file cannot be read."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return Template.from_json(json.load(handle))
+    except (OSError, ValueError):
+        return default_template()
 
 
 # --------------------------------------------------------------------------
@@ -426,11 +540,32 @@ def _derived(field_id: str, data, record: dict, style: str) -> str:
     return ""
 
 
+#: A decimal point between two digits -- not the ".." of a range.
+_POINT = re.compile(r"(?<=\d)\.(?=\d)")
+
+#: Derived fields that are numbers (and so take the decimal mark); the
+#: scanned axes are numbers after their label.
+_NUMERIC_DERIVED = {"@angle", "@energy"}
+
+
+def _with_decimal(text: str, decimal: str) -> str:
+    return _POINT.sub(",", text) if decimal == "," else text
+
+
 def cell(column: Column, data, record: dict = None,
-         style: str = "slash") -> str:
-    """What ``column`` holds for this dataset."""
+         style: str = "slash", decimal: str = ".") -> str:
+    """What ``column`` holds for this dataset. Numbers are written with
+    ``decimal`` as their decimal mark; names and text never change."""
     if column.field.startswith("@"):
-        return _derived(column.field, data, record, style)
+        text = _derived(column.field, data, record, style)
+        if column.field in _NUMERIC_DERIVED:
+            return _with_decimal(text, decimal)
+        if column.field in ("@scan1", "@scan2") and ": " in text:
+            label, _sep, values = text.rpartition(": ")
+            return f"{label}: {_with_decimal(values, decimal)}"
+        if column.field in ("@scan1", "@scan2"):
+            return _with_decimal(text, decimal)
+        return text
     if column.scan != "fixed":
         if column.scan == "auto":
             key = column.field.split(":", 1)[-1]
@@ -438,14 +573,18 @@ def cell(column: Column, data, record: dict = None,
         else:
             found = _rule_range(column.scan, data, style)
         if found is not None:
-            return found
+            return _with_decimal(found, decimal)
     _present, value = _source(column.field, data)
-    return plain(value, style)
+    text = plain(value, style)
+    if isinstance(value, (str, bytes)):
+        return text
+    return _with_decimal(text, decimal)
 
 
-def row(template: Template, data, record: dict = None) -> list:
+def row(template: Template, data, record: dict = None,
+        decimal: str = ".") -> list:
     """The log row for one dataset, in the template's column order."""
-    return [cell(column, data, record, template.range_style)
+    return [cell(column, data, record, template.range_style, decimal)
             for column in template.columns]
 
 
@@ -483,13 +622,15 @@ def _blank(line_cells) -> bool:
 
 @dataclass
 class LogFile:
-    """What is already in a log on disk: its last header row, the records
-    under it, and whether it starts with a byte-order mark."""
+    """What is already in a log on disk: its header (the first row), the
+    records under it, its separator, and whether it starts with a
+    byte-order mark."""
     path: str
     header: list = field(default_factory=list)
     records: list = field(default_factory=list)
     exists: bool = False
     bom: bool = False
+    delimiter: str = ","
 
     def column(self, header: str) -> list:
         """The values already in the column headed ``header``."""
@@ -497,41 +638,6 @@ class LogFile:
             return []
         index = self.header.index(header)
         return [r[index] for r in self.records if index < len(r)]
-
-
-def read_log(path: str) -> LogFile:
-    """Read an existing log (or describe one that does not exist yet).
-
-    The header is the last row the program would have written as one: a log
-    whose columns changed half way has a second header row, and the records
-    after it are the ones that header describes."""
-    log = LogFile(path)
-    if not os.path.isfile(path):
-        return log
-    log.exists = True
-    with open(path, "rb") as handle:
-        raw = handle.read()
-    log.bom = raw.startswith(b"\xef\xbb\xbf")
-    text = _decode(raw)
-    rows = [r for r in csv.reader(io.StringIO(text)) if not _blank(r)]
-    if not rows:
-        return log
-    # A later header row is written when the template changed (append());
-    # the records after the last one are the ones it describes.
-    start = next((i for i in range(len(rows) - 1, -1, -1)
-                  if rows[i] and rows[i][0] == _HEADER_MARK), None)
-    header = rows[0] if start is None else rows[start][1:]
-    while header and not header[-1].strip():
-        header = header[:-1]          # a spreadsheet's trailing empty cells
-    log.header = header
-    log.records = rows[(0 if start is None else start) + 1:]
-    return log
-
-
-#: The first cell of a header row written part way down a log, when its
-#: columns changed: it says what the row is, so it is not taken for a
-#: measurement, and lets the next append find the header that applies.
-_HEADER_MARK = "# columns"
 
 
 def _decode(raw: bytes) -> str:
@@ -543,50 +649,171 @@ def _decode(raw: bytes) -> str:
     return raw.decode("utf-8", "replace")
 
 
-def append(path: str, template: Template, rows: list) -> int:
-    """Add ``rows`` to the log at ``path`` after its last record, creating
-    it (with its header) if it does not exist. Returns how many were
-    written.
+def sniff_delimiter(first_line: str, default: str = ",") -> str:
+    """The separator of a log, from its header line: whichever of tab,
+    semicolon and comma it has most of, outside quotes."""
+    counts = {}
+    quoted = False
+    for char in first_line:
+        if char == '"':
+            quoted = not quoted
+        elif not quoted and char in ",;\t":
+            counts[char] = counts.get(char, 0) + 1
+    if not counts:
+        return default
+    return max(counts, key=lambda c: (counts[c], c == default))
 
-    Blank lines after the last record -- a spreadsheet saving the file
-    leaves rows of empty cells -- are dropped, so the new records follow the
-    last one directly. When the file's header is not the template's, a new
-    header row (marked ``# columns``) is written first, and everything
-    already in the file stays as it was. Written to a temporary file and
-    moved into place, so a failure cannot leave half a log.
-    """
-    headers = template.headers()
-    existing = read_log(path)
-    out = io.StringIO()
-    writer = csv.writer(out, lineterminator="\r\n")
-    if existing.exists:
-        with open(path, "rb") as handle:
-            text = _decode(handle.read())
-        lines = text.splitlines()
-        while lines and _blank(next(csv.reader([lines[-1]]), [])):
-            lines.pop()
-        body = "\r\n".join(lines)
-        if body:
-            body += "\r\n"
-        out.write(body)
-        if existing.header != headers:
-            writer.writerow([_HEADER_MARK] + headers if lines else headers)
+
+def read_log(path: str) -> LogFile:
+    """Read an existing log (or describe one that does not exist yet)."""
+    log = LogFile(path)
+    if not os.path.isfile(path):
+        return log
+    log.exists = True
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    log.bom = raw.startswith(b"\xef\xbb\xbf")
+    text = _decode(raw)
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    log.delimiter = sniff_delimiter(first)
+    rows = [r for r in csv.reader(io.StringIO(text), delimiter=log.delimiter)
+            if not _blank(r)]
+    if not rows:
+        return log
+    header = rows[0]
+    while header and not header[-1].strip():
+        header = header[:-1]          # a spreadsheet's trailing empty cells
+    log.header = header
+    log.records = rows[1:]
+    return log
+
+
+def resolve(template: Template, log: LogFile, system=(",", ".")):
+    """``(separator, decimal mark)`` to write ``log`` with. An existing log
+    keeps its own separator; a new one takes the template's, where "auto"
+    is ``system`` -- what Excel uses on this computer. The decimal mark is
+    the template's, where "auto" is the comma beside a semicolon and the
+    point otherwise (Excel's own pairing)."""
+    if log.exists and log.header:
+        delimiter = log.delimiter
+    elif template.delimiter == "auto":
+        delimiter = system[0]
     else:
-        writer.writerow(headers)
-    for cells in rows:
-        writer.writerow(cells)
+        delimiter = "\t" if template.delimiter == "\t" else template.delimiter
+    delimiter = "\t" if delimiter in ("\t", "\\t") else delimiter
+    if template.decimal != "auto":
+        decimal = template.decimal
+    elif not (log.exists and log.header) and template.delimiter == "auto":
+        decimal = system[1]
+    else:
+        decimal = "," if delimiter == ";" else "."
+    return delimiter, decimal
+
+
+class FormatMismatch(ValueError):
+    """A log's header is not the format records are being added in."""
+
+
+def _write(path: str, lines_text: str, bom: bool) -> None:
+    """Write a log through a temporary file, so a failure cannot leave half
+    of one. Excel reads a CSV as the system's code page unless it starts
+    with a byte-order mark, which turns "hν" and "Δ" into mojibake."""
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, exist_ok=True)
     temporary = os.path.join(folder, f".{os.path.basename(path)}.writing")
-    # Excel reads a CSV as the system's code page unless it starts with a
-    # byte-order mark, which turns "hν" and "Δ" into mojibake: new logs get
-    # one, an existing log keeps whatever it had.
-    bom = existing.bom or not existing.exists
     with open(temporary, "w", encoding="utf-8-sig" if bom else "utf-8",
               newline="") as handle:
-        handle.write(out.getvalue())
+        handle.write(lines_text)
     os.replace(temporary, path)
+
+
+def _kept_lines(path: str) -> str:
+    """An existing log's text without the blank rows after its last record
+    (a spreadsheet saving it leaves rows of empty cells), ending in a line
+    break, or empty."""
+    with open(path, "rb") as handle:
+        text = _decode(handle.read())
+    lines = text.splitlines()
+    delimiter = sniff_delimiter(next((l for l in lines if l.strip()), ""))
+    while lines and _blank(next(csv.reader([lines[-1]], delimiter=delimiter),
+                                [])):
+        lines.pop()
+    return "\r\n".join(lines) + "\r\n" if lines else ""
+
+
+def append(path: str, template: Template, rows: list,
+           system=(",", ".")) -> int:
+    """Add ``rows`` to the log at ``path`` after its last record, creating
+    it (with the template's headings as its first row) if it does not
+    exist. Returns how many were written.
+
+    Rows are added only under the log's own header: when it is not the
+    template's, :class:`FormatMismatch` is raised -- the log is reformatted
+    first (:func:`reformat`), never given a second header part way down.
+    """
+    headers = template.headers()
+    existing = read_log(path)
+    delimiter, _decimal = resolve(template, existing, system)
+    if existing.header and existing.header != headers:
+        raise FormatMismatch(
+            f"{os.path.basename(path)} has the columns "
+            f"{', '.join(existing.header)}, not the format's.")
+    out = io.StringIO()
+    writer = csv.writer(out, delimiter=delimiter, lineterminator="\r\n")
+    if existing.exists:
+        out.write(_kept_lines(path))
+    if not existing.header:
+        writer.writerow(headers)
+    for cells in rows:
+        writer.writerow(cells)
+    _write(path, out.getvalue(), existing.bom or not existing.exists)
     return len(rows)
+
+
+def reformat_plan(log: LogFile, old: Template, new: Template):
+    """How a log's records move when its format changes from ``old`` to
+    ``new``: ``(sources, lost)``, where ``sources[j]`` is the column of the
+    file that new column ``j`` takes its records from (None for a new,
+    empty column), and ``lost`` the headings of the file's columns that
+    hold something and are no longer in the format.
+
+    A column is followed by its identity (``uid``) through a rename or a
+    move; one the old format does not know is matched by its heading."""
+    header = list(log.header)
+    old_by_uid = {c.uid: c.header for c in (old.columns if old else ())}
+    sources = []
+    for column in new.columns:
+        heading = old_by_uid.get(column.uid)
+        if heading is None or heading not in header:
+            heading = column.header
+        sources.append(header.index(heading) if heading in header else None)
+    used = {s for s in sources if s is not None}
+    lost = [h for i, h in enumerate(header) if i not in used
+            and any(i < len(r) and r[i].strip() for r in log.records)]
+    return sources, lost
+
+
+def reformat(path: str, old: Template, new: Template,
+             system=(",", ".")) -> int:
+    """Rewrite the log at ``path`` in the format ``new``: the new headings
+    as its first row, every record moved to its columns' new places (see
+    :func:`reformat_plan`), and the new separator if the format names one.
+    Returns how many records were rewritten."""
+    log = read_log(path)
+    if not log.exists:
+        return 0
+    sources, _lost = reformat_plan(log, old, new)
+    delimiter = log.delimiter
+    if new.delimiter not in ("auto",):
+        delimiter = "\t" if new.delimiter == "\t" else new.delimiter
+    out = io.StringIO()
+    writer = csv.writer(out, delimiter=delimiter, lineterminator="\r\n")
+    writer.writerow(new.headers())
+    for record in log.records:
+        writer.writerow([record[s] if s is not None and s < len(record) else ""
+                         for s in sources])
+    _write(path, out.getvalue(), log.bom)
+    return len(log.records)
 
 
 def logged_names(log: LogFile, template: Template) -> set:

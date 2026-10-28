@@ -3,6 +3,7 @@ writes in a column, and how a log on disk is continued."""
 import csv
 
 import numpy as np
+import pytest
 
 from tools.output import explog as EL
 from ui.viewers.widgets import MemoryData
@@ -125,21 +126,71 @@ def test_a_log_is_created_then_continued_after_its_last_record(tmp_path):
     assert EL.logged_names(log, template) == {"a.nxs", "b.nxs"}
 
 
-def test_changed_columns_get_a_header_row_of_their_own(tmp_path):
+def test_a_log_takes_records_only_under_its_own_header(tmp_path):
     path = str(tmp_path / "log.csv")
     first = EL.Template([EL.Column("File", "@file")])
     EL.append(path, first, [["a.nxs"]])
     second = EL.Template([EL.Column("File", "@file"), EL.Column("T", "info:T")])
-    EL.append(path, second, [["b.nxs", "12"]])
+    with pytest.raises(EL.FormatMismatch):
+        EL.append(path, second, [["b.nxs", "12"]])
+    assert EL.read_log(path).records == [["a.nxs"]]
+
+
+def test_reformatting_rewrites_the_header_and_moves_the_records(tmp_path):
+    path = str(tmp_path / "log.csv")
+    old = EL.Template([EL.Column("File", "@file"), EL.Column("hv", "info:hv"),
+                       EL.Column("Notes", "@blank")])
+    EL.append(path, old, [["a.nxs", "90", "nice"], ["b.nxs", "95", ""]])
+    new = old.copy()
+    new.columns[1].header = "hν/Δ"                 # renamed: followed by uid
+    new.columns.insert(0, new.columns.pop(2))     # moved to the front
+    new.columns.append(EL.Column("T /K", "info:T"))
+    log = EL.read_log(path)
+    assert EL.reformat_plan(log, old, new) == ([2, 0, 1, None], [])
+    EL.reformat(path, old, new)
+    EL.append(path, new, [["", "c.nxs", "100", "12"]])
     with open(path, encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.reader(handle))
-    assert rows == [["File"], ["a.nxs"], ["# columns", "File", "T"],
-                    ["b.nxs", "12"]]
+    assert rows == [["Notes", "File", "hν/Δ", "T /K"],
+                    ["nice", "a.nxs", "90", ""], ["", "b.nxs", "95", ""],
+                    ["", "c.nxs", "100", "12"]]
+    # a column dropped from the format loses what it held: said beforehand
+    fewer = EL.Template(new.columns[1:])
+    assert EL.reformat_plan(EL.read_log(path), new, fewer)[1] == ["Notes"]
+
+
+def test_a_log_unknown_here_is_matched_by_its_headings(tmp_path):
+    path = tmp_path / "hand.csv"
+    path.write_bytes("File name;Polar\r\ni05-1.nxs;-14\r\n".encode())
+    log = EL.read_log(str(path))
+    assert log.delimiter == ";" and log.header == ["File name", "Polar"]
+    found = EL.template_from_header(log.header)
+    assert [c.field for c in found.columns] == ["@file", "@blank"]
+    assert EL.resolve(found, log) == (";", ",")
+
+
+def test_separator_and_decimal_follow_excel_on_this_computer(tmp_path):
+    path = str(tmp_path / "eu.csv")
+    template = EL.Template([EL.Column("File", "@file"),
+                            EL.Column("hv", "info:photon_energy_eV"),
+                            EL.Column("X", "motor:X"),
+                            EL.Column("Slit", "@angle")])
     log = EL.read_log(path)
-    assert log.header == ["File", "T"] and log.records == [["b.nxs", "12"]]
-    # the next append under the same columns needs no new header
-    EL.append(path, second, [["c.nxs", "13"]])
-    assert EL.read_log(path).records[-1] == ["c.nxs", "13"]
+    europe = (";", ",")
+    delimiter, decimal = EL.resolve(template, log, europe)
+    assert (delimiter, decimal) == (";", ",")
+    row = EL.row(template, _cut(photon_energy_eV=90.5), {"name": "s_1.5K.nxs"},
+                 decimal)
+    # numbers take the decimal comma; a file name keeps its point
+    assert row == ["s_1.5K.nxs", "90,5", "0,31", "-15/15/1"]
+    EL.append(path, template, [row], europe)
+    with open(path, encoding="utf-8-sig") as handle:
+        assert handle.read() == "File;hv;X;Slit\n" \
+            "s_1.5K.nxs;90,5;0,31;-15/15/1\n"
+    # appending on a computer with other settings keeps the file's own
+    assert EL.resolve(template, EL.read_log(path), (",", ".")) == (";", ",")
+    explicit = EL.Template(template.columns, delimiter="\t", decimal=".")
+    assert EL.resolve(explicit, EL.LogFile("x"), europe) == ("\t", ".")
 
 
 def test_an_existing_log_without_a_bom_keeps_its_encoding(tmp_path):
@@ -153,14 +204,19 @@ def test_an_existing_log_without_a_bom_keeps_its_encoding(tmp_path):
     assert raw.endswith(b"i05-1.nxs,quick map\r\ni05-2.nxs,Map\r\n")
 
 
-def test_the_template_is_remembered(tmp_path):
+def test_the_settings_and_formats_are_remembered(tmp_path):
     template = EL.Template([EL.Column("Polar", "info:p", "angle_scan")],
-                           range_style="colon")
-    EL.save_template(template)
-    again = EL.load_template()
-    assert again.to_json() == template.to_json()
+                           range_style="colon", delimiter=";")
+    settings = EL.Settings(str(tmp_path), "beamtime", template)
+    assert settings.path() == str(tmp_path / "beamtime.csv")
+    settings.remember_format(settings.path(), template)
+    EL.save_settings(settings)
+    again = EL.load_settings()
+    assert again.template.to_json() == template.to_json()
+    assert again.format_for(settings.path(), ["Polar"]).columns[0].uid \
+        == template.columns[0].uid
+    assert again.format_for(settings.path(), ["Other"]) is None
     EL.save_template(template, str(tmp_path / "mine.json"))
-    assert EL.load_template(str(tmp_path / "mine.json")).columns[0].scan \
-        == "angle_scan"
+    assert EL.load_template(str(tmp_path / "mine.json")).delimiter == ";"
     assert EL.load_template(str(tmp_path / "none.json")).headers() \
         == EL.default_template().headers()

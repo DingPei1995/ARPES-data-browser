@@ -1,91 +1,146 @@
 """
 ui/panels/explog.py
 ===================
-The Auto Exp. log window: write the experiment log (.csv) from the listed
-datasets' own metadata.
+The experiment log, from the tool panel's Datasets box: two buttons side by
+side.
 
-Opened from the tool panel's Datasets box (**Auto Exp. log...**). Three
-parts, top to bottom:
+* **Exp. log format...** -- the window that sets the log up, once: the
+  folder and file name, the separator and decimal mark, and the columns.
+  A dataset of the main list is picked as the reference and its fields are
+  listed: the file name, the kind and the scanned ranges worked out from the
+  data, then every metadata field and motor position the file has, each
+  with its value there. Ticking a field adds a column; the columns can be
+  renamed, put in any order, and told when a scanned axis's range stands in
+  for the field's value (a SPEM scan's stage, a manipulator map's angle --
+  see :data:`tools.output.explog.SCAN_RULES`). Pointing it at a log that
+  already exists shows *that log's* format, to adjust; saving a changed
+  format rewrites the log under its new header, so the header stays the
+  only first row. *Keep recording* logs every file added to the main list
+  from then on.
+* **Auto Exp. log** -- one click: the selected datasets' records are added
+  to the log, in its format, after its last record. The first click opens
+  the format window when no log has been set up yet.
 
-* **Log file** -- the folder and the file name. A file that is already
-  there is continued after its last record; one that is not is created with
-  the columns as its header.
-* **Columns** -- what each row holds. A dataset of the main list is picked as
-  the reference and its fields are listed: the file name, the kind and the
-  scanned ranges worked out from the data, then every metadata field and
-  motor position the file has, each with its value there. Ticking a field
-  adds a column; the columns can be renamed, moved up and down, and told
-  when a scanned axis's range stands in for the field's value (a SPEM
-  scan's stage, a manipulator map's angle -- see
-  :data:`tools.output.explog.SCAN_RULES`). The columns are remembered for
-  the next session, and can be saved to a file and loaded from one, to keep
-  one per beamline.
-* **Record** -- which datasets (the selection, or the whole list) and
-  whether to skip those already in the log. *Keep recording* logs every file
-  added to the list from then on, which is the beamtime use: load each new
-  file as it is measured and the log keeps itself.
-
-:mod:`tools.output.explog` does the work and is Qt-free.
+:mod:`tools.output.explog` does the work and is Qt-free; this module adds
+the windows, and what Excel uses as a separator on this computer
+(:func:`excel_conventions`).
 """
 from __future__ import annotations
 
 import os
+import sys
 import traceback
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QLocale, Qt
 from PyQt5.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
-                             QFileDialog, QGridLayout, QGroupBox, QHBoxLayout,
-                             QHeaderView, QLabel, QLineEdit, QListWidget,
-                             QListWidgetItem, QMessageBox, QPushButton,
-                             QRadioButton, QSplitter, QTableWidget,
+                             QDialogButtonBox, QFileDialog, QGridLayout,
+                             QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+                             QLineEdit, QListWidget, QListWidgetItem,
+                             QMessageBox, QPushButton, QSplitter, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
 from tools.output import explog as EL
 from ui.common.screen import fits_screen
 
-__all__ = ["ExpLogDialog"]
+__all__ = ["ExpLogFormatDialog", "excel_conventions", "record_datasets"]
 
-DEFAULT_NAME = "exp_log.csv"
+TITLE = "Experiment log"
+
+
+def excel_conventions():
+    """``(separator, decimal mark)`` Excel uses for a CSV on this computer.
+
+    Excel splits a CSV at the system's *list separator*, not at commas: on
+    a Windows set to French, German, Italian... that is ``;``, and a comma
+    file opens with every row in the first column. Windows keeps both in
+    the registry; Excel for Mac (and LibreOffice) pairs them with the
+    system's decimal mark -- ``;`` where the decimal mark is a comma."""
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Control Panel\International") as key:
+                separator = winreg.QueryValueEx(key, "sList")[0]
+                decimal = winreg.QueryValueEx(key, "sDecimal")[0]
+            if separator in (",", ";", "\t") and decimal in (".", ","):
+                return separator, decimal
+        except OSError:
+            pass
+    point = QLocale.system().decimalPoint()
+    return (";", ",") if point == "," else (",", ".")
+
+
+def _describe(delimiter: str) -> str:
+    return {",": "comma", ";": "semicolon", "\t": "tab"}.get(delimiter,
+                                                              delimiter)
 
 
 @fits_screen
-class ExpLogDialog(QDialog):
+class ExpLogFormatDialog(QDialog):
     """``entries()`` lists the main list as ``[(key, row text), ...]``;
     ``load(key)`` reads one as ``(data, record)`` (the data is closed here
-    when done); ``selected()`` is the list's selection, as keys; ``status``
-    shows a line in the main window's status bar."""
+    when done); ``selected()`` is the list's selection, as keys.
+
+    Works on a copy of the settings; :meth:`accept` (Save format) is what
+    writes them, and reformats an existing log whose format changed."""
 
     def __init__(self, parent=None, *, entries, load, selected, folder="",
-                 status=None):
+                 keep_recording=False, system=None):
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle("Auto Exp. log")
-        self.resize(980, 720)
+        self.setWindowTitle("Exp. log format")
+        self.resize(1000, 760)
         self._entries, self._load, self._selected = entries, load, selected
-        self._status = status or (lambda text: None)
-        self.template = EL.load_template()
+        self.system = system or excel_conventions()
+        self.settings = EL.load_settings()
+        if not self.settings.folder:
+            self.settings.folder = folder
+        self.template = self.settings.template.copy()
+        #: the format of the log on disk, when there is one with records
+        self.file_template = None
+        self.file_log = None
         self.reference = None            # (data, record) of the reference
         self._filling = False
 
         layout = QVBoxLayout(self)
-        layout.addWidget(self._file_box(folder))
+        layout.addWidget(self._file_box())
+        layout.addWidget(self._format_box())
         layout.addWidget(self._columns_box(), stretch=1)
-        layout.addWidget(self._record_box())
-        self._fill_columns()
-        self._update_file_status()
+        self.skip_box = QCheckBox("Skip datasets already in the log (by file "
+                                  "name)")
+        self.skip_box.setChecked(self.settings.skip_logged)
+        self.auto_box = QCheckBox(
+            "Keep recording: log each file added to the main list from now on")
+        self.auto_box.setChecked(keep_recording)
+        self.auto_box.setToolTip(
+            "During a beamtime: add each new file to the list as it is "
+            "measured (Load data or Quick add) and its record is written "
+            "straight away, in this format. Until the program is closed.")
+        layout.addWidget(self.skip_box)
+        layout.addWidget(self.auto_box)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save
+                                   | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setText("Save format")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._sync_to_file()
+        self.refresh()
 
     # -- building ---------------------------------------------------------
-    def _file_box(self, folder):
+    def _file_box(self):
         box = QGroupBox("Log file")
         grid = QGridLayout(box)
-        self.folder_edit = QLineEdit(folder)
+        self.folder_edit = QLineEdit(self.settings.folder)
         self.folder_edit.setPlaceholderText("Folder the log is written to")
         browse = QPushButton("Folder...")
         browse.clicked.connect(self._browse)
-        self.name_edit = QLineEdit(DEFAULT_NAME)
+        self.name_edit = QLineEdit(self.settings.name)
         self.name_edit.setPlaceholderText("Log file name (.csv)")
         self.name_edit.setToolTip(
-            "If a log of this name is already in the folder, the new records "
-            "are written after its last one; nothing in it is changed.")
+            "If a log of this name is already in the folder, its own format "
+            "is shown below to adjust, and new records go after its last "
+            "one.")
         self.file_status = QLabel("")
         self.file_status.setWordWrap(True)
         grid.addWidget(QLabel("Folder:"), 0, 0)
@@ -94,8 +149,48 @@ class ExpLogDialog(QDialog):
         grid.addWidget(QLabel("File name:"), 1, 0)
         grid.addWidget(self.name_edit, 1, 1, 1, 2)
         grid.addWidget(self.file_status, 2, 0, 1, 3)
-        self.folder_edit.textChanged.connect(self._update_file_status)
-        self.name_edit.textChanged.connect(self._update_file_status)
+        self.folder_edit.editingFinished.connect(self._sync_to_file)
+        self.name_edit.editingFinished.connect(self._sync_to_file)
+        return box
+
+    def _format_box(self):
+        box = QGroupBox("Format")
+        row = QHBoxLayout(box)
+        row.addWidget(QLabel("Separator:"))
+        self.delimiter_combo = QComboBox()
+        for value, text in EL.DELIMITERS.items():
+            if value == "auto":
+                text = (f"auto: {_describe(self.system[0])}, as Excel on "
+                        f"this computer")
+            self.delimiter_combo.addItem(text, value)
+        self.delimiter_combo.setToolTip(
+            "Excel opens a CSV with the computer's own list separator: a "
+            "semicolon where the decimal mark is a comma (much of Europe), "
+            "a comma elsewhere. A file with the other one opens with every "
+            "row in the first column. LibreOffice and Numbers ask, or "
+            "detect it.")
+        row.addWidget(self.delimiter_combo)
+        row.addWidget(QLabel("Decimal mark:"))
+        self.decimal_combo = QComboBox()
+        for value, text in EL.DECIMALS.items():
+            if value == "auto":
+                text = "auto: comma beside a semicolon"
+            self.decimal_combo.addItem(text, value)
+        self.decimal_combo.setToolTip(
+            "Numbers are written with this decimal mark, so a spreadsheet "
+            "using a decimal comma reads them as numbers (and does not turn "
+            "1.5 into a date). Names and text are never changed.")
+        row.addWidget(self.decimal_combo)
+        row.addWidget(QLabel("Ranges as:"))
+        self.style_combo = QComboBox()
+        for style, text in EL.RANGE_STYLES.items():
+            self.style_combo.addItem(text, style)
+        row.addWidget(self.style_combo)
+        row.addStretch(1)
+        self.delimiter_combo.currentIndexChanged.connect(self._format_changed)
+        self.decimal_combo.currentIndexChanged.connect(self._format_changed)
+        self.style_combo.currentIndexChanged.connect(self._format_changed)
+        self._show_format()
         return box
 
     def _columns_box(self):
@@ -116,14 +211,6 @@ class ExpLogDialog(QDialog):
         read = QPushButton("Read fields")
         read.clicked.connect(self.read_reference)
         top.addWidget(read)
-        top.addWidget(QLabel("Ranges as:"))
-        self.style_combo = QComboBox()
-        for style, text in EL.RANGE_STYLES.items():
-            self.style_combo.addItem(text, style)
-        self.style_combo.setCurrentIndex(
-            max(0, self.style_combo.findData(self.template.range_style)))
-        self.style_combo.currentIndexChanged.connect(self._style_changed)
-        top.addWidget(self.style_combo)
         column.addLayout(top)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -185,11 +272,11 @@ class ExpLogDialog(QDialog):
 
         template_row = QHBoxLayout()
         for text, slot, tip in (
-                ("Save columns as...", self.save_template_as,
-                 "Keep these columns in a file of your own -- one per "
-                 "beamline, say -- to load again later."),
-                ("Load columns...", self.load_template_from,
-                 "Use columns saved earlier with Save columns as."),
+                ("Save format as...", self.save_template_as,
+                 "Keep this format in a file of your own -- one per "
+                 "beamline, say -- to load again for a new log."),
+                ("Load format...", self.load_template_from,
+                 "Use a format saved earlier with Save format as."),
                 ("Default columns", self.reset_template,
                  "Start again from the default columns.")):
             button = QPushButton(text)
@@ -200,94 +287,82 @@ class ExpLogDialog(QDialog):
         column.addLayout(template_row)
         return box
 
-    def _record_box(self):
-        box = QGroupBox("Record")
-        grid = QGridLayout(box)
-        self.selected_radio = QRadioButton("The selected rows")
-        self.all_radio = QRadioButton("Every dataset in the list")
-        self.selected_radio.setChecked(True)
-        self.skip_box = QCheckBox("Skip datasets already in the log")
-        self.skip_box.setChecked(True)
-        self.skip_box.setToolTip(
-            "A dataset whose file name is already in the log's file-name "
-            "column is not written again. Needs a File name column.")
-        self.auto_box = QCheckBox(
-            "Keep recording: log each file added to the main list from now on")
-        self.auto_box.setToolTip(
-            "During a beamtime: add each new file to the list as it is "
-            "measured (Load data or Quick add) and its record is written "
-            "straight away, with these columns, to this log.")
-        self.write_button = QPushButton("Write records")
-        self.write_button.setDefault(True)
-        self.write_button.clicked.connect(lambda: self.record())
-        close = QPushButton("Close")
-        close.clicked.connect(self.close)
-        grid.addWidget(self.selected_radio, 0, 0)
-        grid.addWidget(self.all_radio, 0, 1)
-        grid.addWidget(self.skip_box, 0, 2)
-        grid.addWidget(self.auto_box, 1, 0, 1, 3)
-        grid.addWidget(self.write_button, 0, 3)
-        grid.addWidget(close, 1, 3)
-        grid.setColumnStretch(2, 1)
-        return box
-
     # -- the log file -----------------------------------------------------
     def log_path(self) -> str:
-        """The log's full path, ``.csv`` added if the name has none; empty
-        while no name is given."""
-        name = self.name_edit.text().strip()
-        if not name:
-            return ""
-        if not name.lower().endswith(".csv"):
-            name += ".csv"
-        folder = self.folder_edit.text().strip() or os.path.expanduser("~")
-        return os.path.join(folder, name)
+        self.settings.folder = self.folder_edit.text().strip()
+        self.settings.name = self.name_edit.text().strip()
+        return self.settings.path()
 
     def _browse(self):
         folder = QFileDialog.getExistingDirectory(
             self, "Folder for the experiment log", self.folder_edit.text())
         if folder:
             self.folder_edit.setText(folder)
+            self._sync_to_file()
 
-    def _update_file_status(self, *_):
+    def _sync_to_file(self):
+        """Show the format of the log the folder and name point at: for a
+        log that already has records, its own (remembered, or read off its
+        header); for a new one, the format being edited."""
         path = self.log_path()
+        self.file_log, self.file_template = None, None
+        if path:
+            try:
+                log = EL.read_log(path)
+            except (OSError, UnicodeError):
+                log = None
+            if log is not None and log.header:
+                known = self.settings.format_for(path, log.header)
+                if known is None and self.template.headers() == log.header:
+                    known = self.template.copy()
+                if known is None:
+                    known = EL.template_from_header(log.header)
+                known.delimiter = log.delimiter
+                self.file_log, self.file_template = log, known
+                self.template = known.copy()
+                self._show_format()
+                self._fill_fields()
+        self._fill_columns()
+
+    def _update_file_status(self):
+        path = self.settings.path()
         if not path:
             self.file_status.setText("Give the log a file name.")
             return
-        try:
-            log = EL.read_log(path)
-        except (OSError, UnicodeError) as exc:
-            self.file_status.setText(f"Cannot read {path}: {exc}")
-            return
-        if not log.exists:
+        if self.file_log is None:
             self.file_status.setText(
-                f"New log: {path} will be created, with the columns below as "
-                f"its header.")
+                f"New log: {path} is created at the first record, with these "
+                f"columns as its header.")
             return
-        same = log.header == self.template.headers()
-        self.file_status.setText(
-            f"Existing log, {len(log.records)} record(s): new records go "
-            f"after the last one."
-            + ("" if same else " Its columns differ from the ones below, so "
-               "a new header row is written before them."))
+        changed = self.template.headers() != self.file_log.header or (
+            self.template.delimiter not in ("auto", self.file_log.delimiter))
+        text = (f"Existing log, {len(self.file_log.records)} record(s), "
+                f"{_describe(self.file_log.delimiter)}-separated: below is "
+                f"its format. New records go after the last one.")
+        if changed:
+            text += (" The format was changed: Save format rewrites the log "
+                     "under the new header, its records moved with their "
+                     "columns.")
+        self.file_status.setText(text)
 
     # -- the reference dataset and its fields -----------------------------
     def refresh(self):
-        """Fill the reference list from the main list again, keeping the
-        current choice, or picking the selection."""
-        current = self.reference_combo.currentData()
+        """Fill the reference list from the main list, picking the
+        selection."""
         selected = list(self._selected() or ())
         self.reference_combo.blockSignals(True)
         self.reference_combo.clear()
         for key, text in self._entries():
             self.reference_combo.addItem(text, key)
-        want = selected[0] if selected else current
+        want = selected[0] if selected else None
         index = self.reference_combo.findData(want) if want is not None else -1
         self.reference_combo.setCurrentIndex(max(0, index))
         self.reference_combo.blockSignals(False)
-        if self.reference is None and self.reference_combo.count():
+        if self.reference_combo.count():
             self.read_reference()
-        self._update_file_status()
+        else:
+            self._fill_fields()
+            self._fill_columns()
 
     def _close_reference(self):
         if self.reference is not None:
@@ -308,12 +383,10 @@ class ExpLogDialog(QDialog):
         except Exception as exc:                           # noqa: BLE001
             traceback.print_exc()
             self.reference = None
-            QMessageBox.warning(self, "Auto Exp. log",
+            QMessageBox.warning(self, TITLE,
                                 f"Could not read the dataset:\n{exc}")
-            return
-        if self.reference is None or self.reference[0] is None:
+        if self.reference is not None and self.reference[0] is None:
             self.reference = None
-            return
         self._fill_fields()
         self._fill_columns()
 
@@ -327,7 +400,7 @@ class ExpLogDialog(QDialog):
         for fid, name, value in fields:
             listed.add(fid)
             self._add_field_item(fid, name, value, fid in chosen)
-        # Columns of a remembered template that this dataset does not have.
+        # Columns of the format that this dataset does not have.
         for c in self.template.columns:
             if c.field not in listed:
                 listed.add(c.field)
@@ -365,6 +438,25 @@ class ExpLogDialog(QDialog):
                                      if c.field != fid]
         self._fill_columns()
 
+    # -- the format -------------------------------------------------------
+    def _show_format(self):
+        for combo, value in ((self.delimiter_combo, self.template.delimiter),
+                             (self.decimal_combo, self.template.decimal),
+                             (self.style_combo, self.template.range_style)):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(max(0, combo.findData(value)))
+            combo.blockSignals(False)
+
+    def _format_changed(self, *_):
+        self.template.delimiter = self.delimiter_combo.currentData()
+        self.template.decimal = self.decimal_combo.currentData()
+        self.template.range_style = self.style_combo.currentData()
+        self._fill_columns()
+
+    def _decimal(self) -> str:
+        log = self.file_log or EL.LogFile(self.settings.path())
+        return EL.resolve(self.template, log, self.system)[1]
+
     # -- the columns ------------------------------------------------------
     def _fill_columns(self, select: int = None):
         self._filling = True
@@ -376,9 +468,9 @@ class ExpLogDialog(QDialog):
                 widget.hide()
                 self.table.removeCellWidget(index, 2)
         self.table.setRowCount(len(self.template.columns))
+        decimal = self._decimal()
         for index, column in enumerate(self.template.columns):
-            heading = QTableWidgetItem(column.header)
-            self.table.setItem(index, 0, heading)
+            self.table.setItem(index, 0, QTableWidgetItem(column.header))
             name = EL.DERIVED[column.field][0] if column.field in EL.DERIVED \
                 else column.field.split(":", 1)[-1]
             source = QTableWidgetItem(name)
@@ -399,7 +491,7 @@ class ExpLogDialog(QDialog):
             rules.currentIndexChanged.connect(
                 lambda _i, c=column, box=rules: self._rule_changed(c, box))
             self.table.setCellWidget(index, 2, rules)
-            example = self._example(column)
+            example = self._example(column, decimal)
             value = QTableWidgetItem(example)
             value.setFlags(value.flags() & ~Qt.ItemIsEditable)
             value.setToolTip(example)
@@ -408,14 +500,13 @@ class ExpLogDialog(QDialog):
         if select is not None and 0 <= select < self.table.rowCount():
             self.table.selectRow(select)
         self._update_file_status()
-        EL.save_template(self.template)
 
-    def _example(self, column) -> str:
+    def _example(self, column, decimal=".") -> str:
         if self.reference is None:
             return ""
         try:
             return EL.cell(column, self.reference[0], self.reference[1],
-                           self.template.range_style)
+                           self.template.range_style, decimal)
         except Exception as exc:                           # noqa: BLE001
             return f"<{exc}>"
 
@@ -426,19 +517,13 @@ class ExpLogDialog(QDialog):
         if row < len(self.template.columns):
             self.template.columns[row].header = item.text().strip()
             self._update_file_status()
-            EL.save_template(self.template)
 
     def _rule_changed(self, column, box):
         column.scan = box.currentData()
         row = self.template.columns.index(column)
         item = self.table.item(row, 3)
         if item is not None:
-            item.setText(self._example(column))
-        EL.save_template(self.template)
-
-    def _style_changed(self, *_):
-        self.template.range_style = self.style_combo.currentData()
-        self._fill_columns()
+            item.setText(self._example(column, self._decimal()))
 
     def current_row(self) -> int:
         rows = self.table.selectionModel().selectedRows()
@@ -467,126 +552,181 @@ class ExpLogDialog(QDialog):
         self._fill_columns(select=len(self.template.columns) - 1)
 
     def set_template(self, template):
+        """Use ``template``'s columns and format. For an existing log, its
+        columns are followed by heading where they keep one."""
         self.template = template
-        self.style_combo.blockSignals(True)
-        self.style_combo.setCurrentIndex(
-            max(0, self.style_combo.findData(template.range_style)))
-        self.style_combo.blockSignals(False)
+        self._show_format()
         self._fill_fields()
         self._fill_columns()
 
     def save_template_as(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save the log's columns", "explog_columns.json",
-            "Columns (*.json)")
+            self, "Save the log's format", "explog_format.json",
+            "Format (*.json)")
         if not path:
             return
         try:
             EL.save_template(self.template, path)
         except OSError as exc:
-            QMessageBox.warning(self, "Auto Exp. log",
-                                f"Could not save the columns:\n{exc}")
+            QMessageBox.warning(self, TITLE,
+                                f"Could not save the format:\n{exc}")
 
     def load_template_from(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Load the log's columns", "", "Columns (*.json)")
+            self, "Load a log format", "", "Format (*.json)")
         if path:
             self.set_template(EL.load_template(path))
 
     def reset_template(self):
         self.set_template(EL.default_template())
 
-    # -- recording --------------------------------------------------------
-    def auto_record(self) -> bool:
-        """Whether files added to the list are to be logged as they come."""
-        return self.auto_box.isChecked() and bool(self.log_path())
-
-    def _keys_to_log(self):
-        if self.all_radio.isChecked():
-            return [key for key, _text in self._entries()]
-        return list(self._selected() or ())
-
-    def record(self, keys=None, quiet: bool = False) -> int:
-        """Write the records of ``keys`` (by default the selection or the
-        whole list, as chosen) to the log. Returns how many were written.
-        ``quiet`` (Keep recording) reports in the status bar instead of in
-        a message box."""
-        def tell(text, warning=False):
-            if quiet or not warning:
-                self._status(text)
-            if warning and not quiet:
-                QMessageBox.warning(self, "Auto Exp. log", text)
-
+    # -- saving -----------------------------------------------------------
+    def save(self) -> bool:
+        """Keep the format; reformat the log on disk if it changed. False
+        (with the reason shown) when it could not be done or was called
+        off."""
         path = self.log_path()
         if not path:
-            tell("Give the experiment log a file name first.", warning=True)
-            return 0
+            QMessageBox.warning(self, TITLE, "Give the log a file name.")
+            return False
         if not self.template.columns:
-            tell("The experiment log has no columns: tick some fields first.",
-                 warning=True)
+            QMessageBox.warning(self, TITLE,
+                                "The log has no columns: tick some fields.")
+            return False
+        if len(set(self.template.headers())) != len(self.template.columns):
+            QMessageBox.warning(self, TITLE,
+                                "Two columns have the same heading; rename "
+                                "one of them.")
+            return False
+        log = self.file_log
+        if log is not None and (
+                self.template.headers() != log.header
+                or self.template.delimiter not in ("auto", log.delimiter)):
+            _sources, lost = EL.reformat_plan(log, self.file_template,
+                                              self.template)
+            question = (f"{os.path.basename(path)} already holds "
+                        f"{len(log.records)} record(s). Rewrite it in the new "
+                        f"format? Its records move with their columns; new "
+                        f"columns are left empty for them.")
+            if lost:
+                question += ("\n\nThese columns are no longer in the format, "
+                             "and what they hold is removed from the log: "
+                             + ", ".join(lost))
+            answer = QMessageBox.question(
+                self, TITLE, question, QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return False
+            try:
+                EL.reformat(path, self.file_template, self.template,
+                            self.system)
+            except PermissionError as exc:
+                QMessageBox.warning(
+                    self, TITLE, f"Could not rewrite the log -- is it open in "
+                    f"Excel? Close it there and save again.\n{exc}")
+                return False
+            except OSError as exc:
+                QMessageBox.warning(self, TITLE,
+                                    f"Could not rewrite the log:\n{exc}")
+                return False
+        if log is not None and self.template.delimiter == "auto":
+            self.template.delimiter = EL.read_log(path).delimiter
+        self.settings.template = self.template.copy()
+        self.settings.skip_logged = self.skip_box.isChecked()
+        self.settings.configured = True
+        self.settings.remember_format(path, self.template)
+        EL.save_settings(self.settings)
+        return True
+
+    def accept(self):
+        if self.save():
+            self._close_reference()
+            super().accept()
+
+    def reject(self):
+        self._close_reference()
+        super().reject()
+
+
+def record_datasets(keys, load, *, parent=None, status=None, quiet=False,
+                    system=None) -> int:
+    """Add the records of ``keys`` to the experiment log, in its saved
+    format (Auto Exp. log, and Keep recording). Returns how many were
+    written. ``quiet`` reports in the status bar only."""
+    status = status or (lambda text: None)
+
+    def tell(text, warning=False):
+        status(text.replace("\n", " "))
+        if warning and not quiet:
+            QMessageBox.warning(parent, TITLE, text)
+
+    settings = EL.load_settings()
+    path = settings.path()
+    if not path or not settings.template.columns:
+        tell("Set the experiment log up first (Exp. log format...).", True)
+        return 0
+    keys = list(keys or ())
+    if not keys:
+        tell("Select the datasets to log in the main list.", True)
+        return 0
+    system = system or excel_conventions()
+    try:
+        log = EL.read_log(path)
+    except (OSError, UnicodeError) as exc:
+        tell(f"Could not read the log {path}:\n{exc}", True)
+        return 0
+    template = settings.template
+    if log.header and log.header != template.headers():
+        template = settings.format_for(path, log.header)
+        if template is None:
+            tell(f"The columns of {os.path.basename(path)} are not the "
+                 f"format's (was it edited by hand?). Open Exp. log format... "
+                 f"to adjust it.", True)
             return 0
-        keys = self._keys_to_log() if keys is None else list(keys)
-        if not keys:
-            tell("Select the datasets to log in the main list (or choose "
-                 "Every dataset in the list).", warning=True)
-            return 0
+    _delimiter, decimal = EL.resolve(template, log, system)
+    done = EL.logged_names(log, template) if settings.skip_logged else set()
+    file_column = next((i for i, c in enumerate(template.columns)
+                        if c.field == "@file"), None)
+    rows, skipped, failed = [], 0, []
+    for key in keys:
         try:
-            existing = EL.read_log(path)
-        except (OSError, UnicodeError) as exc:
-            tell(f"Could not read the log {path}:\n{exc}", warning=True)
-            return 0
-        done = EL.logged_names(existing, self.template) \
-            if self.skip_box.isChecked() else set()
-        file_column = next((i for i, c in enumerate(self.template.columns)
-                            if c.field == "@file"), None)
-        rows, skipped, failed = [], 0, []
-        for key in keys:
-            try:
-                data, record = self._load(key)
-            except Exception as exc:                       # noqa: BLE001
-                traceback.print_exc()
-                failed.append(f"{key[0]}: {exc}")
-                continue
-            if data is None:
-                failed.append(str(key[0]))
-                continue
-            try:
-                cells = EL.row(self.template, data, record)
-            finally:
-                data.close()
-            if file_column is not None and cells[file_column].strip() in done:
+            data, record = load(key)
+        except Exception as exc:                           # noqa: BLE001
+            traceback.print_exc()
+            failed.append(f"{key[0]}: {exc}")
+            continue
+        if data is None:
+            failed.append(str(key[0]))
+            continue
+        try:
+            cells = EL.row(template, data, record, decimal)
+        finally:
+            data.close()
+        if file_column is not None:
+            name = cells[file_column].strip()
+            if name in done:
                 skipped += 1
                 continue
-            if file_column is not None:
-                done.add(cells[file_column].strip())
-            rows.append(cells)
-        written = 0
-        if rows:
-            try:
-                written = EL.append(path, self.template, rows)
-            except PermissionError as exc:
-                tell(f"Could not write the log -- is it open in Excel? Close "
-                     f"it there and write again.\n{exc}", warning=True)
-                return 0
-            except OSError as exc:
-                tell(f"Could not write the log:\n{exc}", warning=True)
-                return 0
-        EL.save_template(self.template)
-        self._update_file_status()
-        message = f"Experiment log: {written} record(s) written to {path}"
-        if skipped:
-            message += f", {skipped} already in it"
-        if failed:
-            message += f", {len(failed)} could not be read"
-        tell(message)
-        if failed and not quiet:
-            QMessageBox.warning(self, "Auto Exp. log",
-                                "Could not read:\n" + "\n".join(failed[:10]))
-        return written
-
-    def closeEvent(self, event):
-        EL.save_template(self.template)
-        # Keep recording works with the window closed; only the reference
-        # dataset is let go.
-        self._close_reference()
-        super().closeEvent(event)
+            done.add(name)
+        rows.append(cells)
+    written = 0
+    if rows:
+        try:
+            written = EL.append(path, template, rows, system)
+        except PermissionError as exc:
+            tell(f"Could not write the log -- is it open in Excel? Close it "
+                 f"there and log again.\n{exc}", True)
+            return 0
+        except (OSError, EL.FormatMismatch) as exc:
+            tell(f"Could not write the log:\n{exc}", True)
+            return 0
+    message = f"Experiment log: {written} record(s) added to {path}"
+    if skipped:
+        message += f", {skipped} already in it"
+    if failed:
+        message += f", {len(failed)} could not be read"
+    tell(message)
+    if failed and not quiet:
+        QMessageBox.warning(parent, TITLE,
+                            "Could not read:\n" + "\n".join(failed[:10]))
+    return written

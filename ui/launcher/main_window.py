@@ -279,12 +279,18 @@ class Ui_MainWindow:
         dataset_layout.setContentsMargins(4, 4, 4, 4)
         dataset_layout.setSpacing(2)
         self.DatasetButtons = {}
-        for name, text, tooltip in DATASET_ACTIONS:
-            button = QtWidgets.QPushButton(text, self.DatasetBox)
-            button.setToolTip(tooltip)
-            button.setProperty("description", tooltip)
-            dataset_layout.addWidget(button)
-            self.DatasetButtons[name] = button
+        actions = {name: (text, tip) for name, text, tip in DATASET_ACTIONS}
+        for row_names in DATASET_ROWS:
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(2)
+            for name in row_names:
+                text, tooltip = actions[name]
+                button = QtWidgets.QPushButton(text, self.DatasetBox)
+                button.setToolTip(tooltip)
+                button.setProperty("description", tooltip)
+                row.addWidget(button, stretch=1)
+                self.DatasetButtons[name] = button
+            dataset_layout.addLayout(row)
         layout.addWidget(self.DatasetBox)
 
         # -- memory: how much this program is holding, and a way to give
@@ -355,11 +361,15 @@ DATASET_ACTIONS = (
      "The selected dataset's kind, axes and metadata: the photon energy, "
      "temperature, analyser settings, motor positions... in a window of "
      "its own, with a filter and a CSV export."),
-    ("explog", "Auto Exp. log...",
-     "Write an experiment log (.csv) from the datasets' own metadata: one "
-     "row per measurement, with the columns you choose from a dataset's "
-     "fields and in the order you like. An existing log is continued after "
-     "its last record."),
+    ("explogformat", "Log format...",
+     "Set the experiment log up, once: its folder and file name, its "
+     "separator, and its columns -- chosen from a dataset's fields and put "
+     "in the order you like. An existing log shows its own format, to "
+     "adjust."),
+    ("explog", "Auto Exp. log",
+     "Add the selected datasets to the experiment log (.csv), one row each, "
+     "in its format, after its last record. The first time, the format is "
+     "asked for."),
     ("rename", "Rename...",
      "Change the name the dataset is listed (and saved) under. The file on "
      "disk keeps its name."),
@@ -373,6 +383,11 @@ DATASET_ACTIONS = (
      "What has been auto-saved, saved and deleted this session, and where "
      "each of it is -- the file to look at after a crash."),
 )
+
+#: How the Datasets box lays them out: one row each, but the log's format
+#: and the log itself side by side.
+DATASET_ROWS = (("info",), ("explogformat", "explog"), ("rename",), ("save",),
+                ("remove",), ("log",))
 
 #: Every tool of the tool panel: action -> (button text, tooltip). The
 #: action names are list_actions' and ARPES_viewer.run_list_action()'s.

@@ -2,7 +2,7 @@
 
 *[English version / 英文版](USER_GUIDE_en.md) · [Version française / 法文版](USER_GUIDE_fr.md)*
 
-*最后更新：2026 年 10 月 28 日——对应 ARPES viewer v1.2.0*
+*最后更新：2026 年 10 月 28 日——对应 ARPES viewer v1.1.1*
 
 程序的版本号和更新日期显示在主窗口标题栏和主窗口最下方。报告 bug、提问或获取最新版本：
 <https://github.com/DingPei1995/ARPES-data-browser>（报告 bug 时请注明版本号）。
@@ -124,11 +124,11 @@ k conversion (cut) 需要一张角度 cut，cut 运算需要恰好两张 cut，�
 **Open scan-axis cut**（map）。不适用于当前选择的条目显示为灰色，悬停提示会说明原因。
 
 **Datasets 区**（工具面板中，位于工具和 Memory 之间）包含其余对行本身的操作：
-**Experiment info**、**Auto Exp. log...**（见[实验记录](#实验记录auto-exp-log)）、
+**Experiment info**、并排的 **Log format...** 与 **Auto Exp. log**（见[实验记录](#实验记录)）、
 **Rename...**、**Save datasets...**、**Remove from list**、**Session log...**。
 这些按钮和工具按钮一样，会随选择变灰。
 
-### 功能现在的位置（v1.2.0）
+### 功能现在的位置（v1.1.1）
 
 如果你用过早期版本：工具已从右键菜单和查看窗口的 *Functions* 菜单移到了工具面板，
 每个工具只有一个入口，且始终可见。
@@ -159,24 +159,30 @@ k conversion (cut) 需要一张角度 cut，cut 运算需要恰好两张 cut，�
 
 ![数据集信息](images/information_window.png)
 
-### 实验记录（Auto Exp. log）
+### 实验记录
 
-**Datasets → Auto Exp. log...** 根据数据文件自身的元数据生成实验记录——一个
-CSV 文件，每次测量一行。
+**Datasets** 区里并排的两个按钮根据数据文件自身的元数据生成实验记录——一个 CSV
+文件，每次测量一行：左边的 **Log format...** 只需设置一次，右边的
+**Auto Exp. log** 单击即可把选中的数据加入记录。
 
-![Auto Exp. log 窗口](images/exp_log_dialog.png)
+![Log format 窗口](images/exp_log_dialog.png)
 
-1. **Log file（记录文件）。** 选择文件夹并输入文件名。如果该文件已存在，新记录会
-   写在**最后一条记录之后**，前面的内容不会改动；否则新建文件，并以各列标题作为表头。
-   （如果之后改了列，会先写一行以 `# columns` 开头的新表头。）
-2. **Columns（列）。** *Fields of:* 从主列表中选一个数据集（选最常记录的那种），
+**Log format...**
+
+1. **Log file（记录文件）。** 选择文件夹并输入文件名。如果该文件已存在，窗口显示的
+   就是**这个文件自己的格式**，可以在此基础上调整。
+2. **Format（格式）。** *Separator*（分隔符）和 *Decimal mark*（小数点）默认采用
+   本机 Excel 的设置。Excel 按系统的列表分隔符拆分 CSV——凡是小数点为逗号的地区
+   （法语、德语、意大利语等设置）都是**分号**——所以逗号分隔的文件在那里打开时所有
+   内容都挤在第一列。除非记录要给设置不同的电脑使用，保持 *auto* 即可。
+   *Ranges as:* 选择范围写成 `start/stop/step` 还是 `start:step:stop`。
+3. **Columns（列）。** *Fields of:* 从主列表中选一个数据集（选最常记录的那种），
    **Read fields** 列出它的全部字段及取值：由数据推出的文件名、数据类型、开始时间、
    扫描范围，然后是所有元数据字段和电机位置。**勾选**字段即加为一列。在右侧表格中
    双击标题可改名（`hν/Δ`、`Polar/Δ`、`Epass`……），用 **Top / Up / Down /
    Bottom** 任意排序。**Add empty column** 加一列留空、手工填写（备注）。
-   *Ranges as:* 选择范围写成 `start/stop/step` 还是 `start:step:stop`。列的设置
-   会记住到下次使用；**Save columns as...** / **Load columns...** 可为每个线站各存一套。
-3. **If scanned（扫描时）。** 位置或角度列写什么，取决于测量类型：
+   **Save format as...** / **Load format...** 可为每个线站各存一套格式。
+4. **If scanned（扫描时）。** 位置或角度列写什么，取决于测量类型：
    - **cut**：样品位置固定——写电机的值；
    - **SPEM** 扫描：扫描的样品台轴写成 `start/stop/step`（对样品台的列选
      *SPEM: scanned X* / *Y*）；
@@ -186,16 +192,19 @@ CSV 文件，每次测量一行。
 
    默认的 *auto* 会按名字识别被扫描的电机，并按取值识别移动过的位置；其他测量
    写该字段本身的值。
-4. **Record（记录）。** 选择 *The selected rows*（选中的行）或 *Every dataset
-   in the list*（列表中全部），然后点 **Write records**。*Skip datasets already
-   in the log* 会跳过文件名已在记录中的数据。勾选 **Keep recording** 后，此后加入
-   列表的每个文件都会自动写入记录，即使窗口已关闭：束线实验时每测完一个文件就把它
-   加入列表，记录会自动更新。
+5. **Save format（保存格式）。** 如果记录文件里已有记录而你改了格式，文件会
+   **按新表头整体重写**：每条记录随所在列移动（改名或移动过的列都能跟上），新列
+   对旧记录留空；被去掉的列会先列出来确认，因为其中的内容会被删除。表头始终只有
+   第一行。
 
-如果记录文件正在 Excel 中打开，Windows 不允许写入：先在 Excel 中关闭再写。
+*Skip datasets already in the log* 会跳过文件名已在记录中的数据。勾选
+**Keep recording** 后，此后加入列表的每个文件都会自动写入记录，直到关闭程序：
+束线实验时每测完一个文件就把它加入列表，记录会自动更新。
 
-**Clear list** 会先确认；如果本次会话中有计算得到但尚未保存的数据，会提示保存。
-磁盘上的文件永远不会被删除。
+**Auto Exp. log** 把选中的行加到记录最后一条之后，不弹出任何窗口；状态栏会显示
+加入了几条。第一次使用（还没有保存过格式）时会先打开 *Log format...*。
+
+如果记录文件正在 Excel 中打开，Windows 不允许写入：先在 Excel 中关闭再点一次。
 
 ### 合并数据集：叠加（Stack）与拼接（Join）
 
