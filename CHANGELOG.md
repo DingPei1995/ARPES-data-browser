@@ -10,6 +10,27 @@ file is the record of how it got that way.
 
 ---
 
+## 1.2.2 — 2026-10-29
+
+The terms of use and the authorship, as published with the package, and a
+reference to cite. No change to what the program does.
+
+- **The terms agree with the licence.** Discussing an AI-related paper with
+  the author first is now asked, not required: the PolyForm Noncommercial
+  licence decides what is permitted, and a README cannot add conditions to
+  it. 1.2.1's page on PyPI still showed the old wording, and a released
+  version's files cannot be replaced there -- hence this release.
+- **Authorship.** README and `NOTICE` add that some of the program's ideas
+  were inspired by the data-processing programs of the Chen Group at the
+  University of Oxford (<https://www.arpes.org.uk>), and that most of the
+  code was written in 2026.
+- **A reference to cite.** `CITATION.cff` (with the author's ORCID) gives
+  the reference for GitHub's *Cite this repository* and for Zenodo, which
+  archives each release from this one on; a test keeps its version and date
+  with `version.py`.
+
+---
+
 ## 1.2.1 — 2026-10-29
 
 Calculations from the theory side as they really come -- the FPLO + Wannier
@@ -35,11 +56,6 @@ Enter in a field never presses a button.
   Ding Pei's personal work, developed from Ding Pei's own earlier code with
   no institutional funding, with Ding Pei's testing on real experimental
   data and the feedback from it, and the implementation assisted by Claude.
-  Some of its ideas were inspired by the data-processing programs of the
-  Chen Group at the University of Oxford. `CITATION.cff` gives the
-  reference for GitHub's *Cite this repository* and for Zenodo. The request
-  to discuss AI-related papers first is a request, not a condition of use:
-  the licence decides what is permitted.
 
 - **Calculated bands: the plane, the cell, the bands' looks**
   (`tools/crystal/planecut.py`, `ui/panels/bands.py`, `ui/panels/fsview.py`).
