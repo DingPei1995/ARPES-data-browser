@@ -13,7 +13,8 @@ abstract: >-
 authors:
   - family-names: Pei
     given-names: Ding
-version: 1.2.1
+    orcid: "https://orcid.org/0000-0002-3995-0690"
+version: 1.2.2
 date-released: 2026-10-29
 repository-code: "https://github.com/DingPei1995/ARPES-data-browser"
 url: "https://pypi.org/project/arpes-viewer/"

@@ -4,7 +4,7 @@ PyPI shows README.md as the project's description, but it has no repository
 to resolve ``docs/...`` against: images would be missing and links dead.
 The publish workflow runs this on its own copy just before building, so the
 links point at the released tag's files; the README in the repository keeps
-its relative links. Usage: ``python devtools/pypi_readme.py README.md v1.2.1``.
+its relative links. Usage: ``python devtools/pypi_readme.py README.md v1.2.2``.
 """
 import re
 import sys
