@@ -2,7 +2,7 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-*Last updated: 28 October 2026 — for ARPES viewer v1.2.0*
+*Last updated: 29 October 2026 — for ARPES viewer v1.2.1*
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
@@ -222,7 +222,7 @@ rest of what is done to the rows: **Experiment info**, **Log format...** and
 **Rename**, **Save** and **Remove** on one row, **Sum repeated scans...**
 and **Session log...**. Its buttons grey out like the tools.
 
-### Where things are now (v1.2.0)
+### Where things are now (v1.2.1)
 
 If you used an earlier version: the tools moved out of the right-click menu
 and the viewers' *Functions* menus into the tool panel, so each has one way
@@ -1301,34 +1301,125 @@ calculation beside the measurement. Select what to compare it with — k-maps,
 kz maps in momentum and cuts in momentum — or nothing, to look at the
 calculation alone. Four steps.
 
-**1. The calculation.** **Open calculation...** reads, whichever program
-wrote it:
+Like every step-by-step window (Crystal structure, Tight-binding fit, Sum
+repeated scans, Detector corrections), it **asks before closing** — the last
+step's Close sits where Next was, so a quick double click no longer loses the
+work; the title bar's close and Esc ask too. **Enter in a field takes its
+value** (and redraws what depends on it) — in every window of the program it
+never presses Next, Close or any other button; only a button that has the
+focus answers Enter. What you set is **kept**: the window opens as you left
+it (**Restore defaults** at the bottom left starts afresh).
 
-| File | Written by | What it holds |
-|---|---|---|
-| `.bxsf` (XCrySDen band grid) | Wien2k, Quantum ESPRESSO, VASP, Wannier90 | the bands everywhere in the zone, interpolated |
-| `_hr.dat` (+ `.win` beside it) | Wannier90, any tight-binding model | a Hamiltonian, diagonalised exactly at each k; orbital weights |
-| `_band.dat` (+ `labelinfo`) | Wannier90 | bands along a path |
-| `.spaghetti_ene` (+ `.klist_band`) | Wien2k | bands along a path |
-| `EIGENVAL` (+ `POSCAR`, `PROCAR`) | VASP | bands along a path or on a grid; atomic and orbital weights |
+**1. The calculation.** First say **what you want to see**:
 
-A calculation "everywhere" can be cut anywhere: along any measured cut, on
-the k_z a photon energy reaches, at any energy as contours. One "along a
-path" can be drawn along that path only. *Set E_F myself* overrides the
-file's Fermi level; *bxsf k units* is for a grid written without 2π. The
-**space group** names the zone's points; it is guessed from the cell's
-shape — set the crystal's own (or take it from the Brillouin-zone tool).
+- **E–k dispersion** — the bands along a path, or along your measured cut.
+  Any calculation works.
+- **Constant-energy contours** — to compare with a k-map (Fermi-surface
+  map).
+- **3D Fermi surface.**
 
-**2. Along a path.** The calculation through the high-symmetry points
-(`Γ-M-K-Γ-A-L-H-A`; `G` for Γ, `|` for a jump), over the **measurement
-along the same path**, assembled from the selected maps: each in-plane
-segment from the map measured on its k_z plane (Γ-M-K-Γ from the Γ-plane
-map, A-L-H-A from the zone-top one), Γ-A from a kz map. Each map's k_z comes
-from its photon energy and the inner potential V0; correct it in the table
-if needed, untick a map to leave it out, and give the azimuth of the
-crystal's a axis on the map. Where a map does not reach a point, its
-symmetry-equivalent point is used. **Weight** draws fat bands: the thickness
-is the chosen orbital's weight.
+The last two need the bands **everywhere in the zone** (a band grid or a
+Hamiltonian); a band structure along a path cannot give them, and the window
+says so rather than going on. The choice also sorts the file list of
+**Open calculation...**: its first filter shows only the kinds of file that
+can give what you want. Selected k-maps choose contours for you, selected
+cuts the dispersion. A file can also be dropped on the window; **Reopen …**
+opens last time's file again.
+
+| File | Written by | What it holds | Can show |
+|---|---|---|---|
+| `.bxsf` (XCrySDen band grid) | Wien2k, Quantum ESPRESSO, VASP, Wannier90 | the bands everywhere in the zone, interpolated | all three |
+| `_hr.dat` (+ `.win` beside it) | Wannier90, any tight-binding model | a Hamiltonian, diagonalised exactly at each k; orbital weights | all three |
+| `wannier90_hr_fplo.dat` (+ `KPOINTS`, `wannier_name_center.txt`) | FPLO's Wannier Hamiltonian | as `_hr.dat`; weights per Wannier function, per shell ("Cr 3d") and per spin | all three |
+| `band.dat` with rows `k1 k2 k3 E1 E2 …` (+ `KPOINTS`) | FPLO + Wannier tools | a 3-D band grid | all three |
+| MATLAB `.mat` holding `Ek_3D` (+ `KPOINTS`) | the theory side's MATLAB, from that 3-D `band.dat` | a 3-D band grid | all three |
+| `EIGENVAL` (+ `POSCAR`, `PROCAR`) | VASP | bands along a path or on a grid; atomic and orbital weights | a grid: all three |
+| `_band.dat` (+ `labelinfo`) | Wannier90 | bands along a path | dispersion |
+| `.spaghetti_ene` (+ `.klist_band`) | Wien2k | bands along a path | dispersion |
+| `band.dat`, `Eigenvalue.dat` (+ `KPOINTS`, `orbital.dat`) | FPLO + Wannier tools (`k_path.exe`, `H.exe`, `plot.exe`) | bands along a path (a third column is a weight) | dispersion |
+
+Files are recognised by their **content**, not their name: a standard file
+renamed on the way (`hamiltonian.txt` that is really an `_hr.dat`) opens all
+the same. The FPLO tools' `KPOINTS` (first line "segments
+points-per-segment", then the direct and reciprocal vectors, then each
+segment's ends with `! label`) gives the cell and the labels — keep it beside
+the band file; without one, the cell is taken from the Brillouin-zone tool's
+crystal. Long reads (a 3-D `band.dat` of 101³ points and 136 bands is about
+2 GB; a large `_hr.dat`) show a **progress bar** with Cancel; a big grid
+keeps only the bands near E_F (*Reading options ▸ Big grids*).
+
+**Which file? ...** helps when you do not know which of a dozen files is the
+calculation: choose the folder the theory side sent, and every file in it is
+read and said in plain words — what it is, what it can show, what reading it
+lacks (the cell, the labels), whether it is a standard file under another
+name, or one file **cut into pieces** (`band.dat.1, band.dat.2`,
+`band_part1.dat …`, `xaa, xab` — as files are split to pass an upload
+limit). Green rows open for what you want to see; **Join the pieces, then
+open** writes the pieces back into one file beside them.
+
+*Reading options ▸* (usually nothing to change): *Set E_F myself* overrides
+the file's Fermi level; *bxsf k units* is for a grid written without 2π; *Big
+grids: keep bands from … to …* of E_F.
+
+**The crystal.** The cell (a, b, c, α, β, γ) is read from the calculation
+and the **space group** that names the zone's points is guessed from its
+shape. Once read, both are **locked** — as are *From the Brillouin-zone
+tool* — so a stray click cannot change the calculation's lattice. Tick
+**Change the lattice parameters** to change them on purpose: typing a new
+cell (or taking the Brillouin-zone tool's) scales the calculation to it —
+its bands, held in fractional coordinates, stretch with the zone.
+
+**A calculation in another format.** When the theory side's files are none of
+these, the safest route is to ask for (or convert to) one of the standard
+ones: a `.bxsf` for bands everywhere, `_hr.dat` + `.win` for a Hamiltonian,
+or a two-column `_band.dat` (distance, energy; a blank line between bands)
+with its `_band.labelinfo.dat` for a path. What to ask them: which columns,
+which order of k, the units of k (with or without 2π, fractional or
+Cartesian) and whether energies are already relative to E_F.
+
+**2. What it looks like** — by what you chose in step 1:
+
+- **Along a path** (dispersion). The calculation through the high-symmetry
+  points (`Γ-M-K-Γ-A-L-H-A`; `G` for Γ, `|` for a jump), over the
+  **measurement along the same path**, assembled from the selected maps: each
+  in-plane segment from the map measured on its k_z plane (Γ-M-K-Γ from the
+  Γ-plane map, A-L-H-A from the zone-top one), Γ-A from a kz map. Each map's
+  k_z comes from its photon energy and the inner potential V0; correct it in
+  the table if needed, untick a map to leave it out, and give the azimuth of
+  the crystal's a axis on the map. **Highlight bands** draws chosen bands
+  thick and in colour, the others grey — their numbers as the file counts
+  them (`41-44`), or `EF` for every band crossing E_F (step 1 lists them).
+- **Constant-energy contours.** The calculated contours at one energy on any
+  plane of k-space, set as in the Brillouin-zone tool: its **normal (hkl)**
+  (conventional reciprocal axes; (001) gives k_x-k_y), and **k⊥**, how far it
+  sits from Γ along that normal — **Through point** puts it through a
+  high-symmetry point (Γ K M at 0, A H L at π/c for (001)); **In-plane
+  rotation** turns the two drawn axes about the normal (to match a measured
+  map's azimuth, say). The **k⊥
+  integration window** sums the bands over a range of k⊥ about the plane —
+  along the (hkl) normal, not the absolute k_z — as a map with a finite k⊥
+  resolution does; the integrated intensity is drawn grey under the
+  contours of the middle plane. **Show the plane in the Brillouin zone...**
+  opens a turnable 3-D view of the zone with the plane in it (red), the
+  faces of its k⊥ window (light red) and the named points it holds; it
+  follows the plane as you change it. The zones' outlines on the plane are
+  dashed grey.
+- **3D Fermi surface.** The surfaces where the bands cross the energy,
+  inside the first zone, with the zone's edges and named points. Drag to
+  turn, wheel to zoom; Enter in *Energy* redraws it; *Detail* trades speed
+  for smoothness (a Hamiltonian is diagonalised on a grid first, with a
+  progress bar). **Open in its own window** shows it large, with *Save
+  picture*; the energy, detail and bands are still set here. With this goal
+  there is nothing to compare, so the Compare step is left out.
+
+Each band's **colour** (from the list, or *Other colour...*), and for a
+surface its **opacity**, and whether it is **shown**, are set in the band
+table. Several bands may share one colour — to group the electron pockets
+in one colour and the hole pockets in another, say — and a band keeps its
+colour from the contours to the 3-D view.
+
+**Colour by orbital weight** draws fat bands along a path, or splits the
+contours where the chosen orbital's weight exceeds one half.
 
 ![Along the path](images/bands_path.png)
 
@@ -1345,18 +1436,30 @@ of −49.8 meV, the values the demo was made with (0.8 and −50 meV).
 
 ![Compare with a cut](images/bands_compare.png)
 
-**4. Output.**
+**4. Output.** With no measurement selected, step 3 says so: press Next.
 
-- **To figure composer...** makes the panels ticked: the measurement along
-  the path with the calculation over it, the calculation alone (the points'
-  names on its axis), the compared cut or map with its calculation, and —
-  with **Constant-energy series at** — for a compared k-map, the measured
-  maps at each energy with the zones dashed (top row) and the calculated
-  contours alone (bottom row), coloured by the weight chosen in step 2 (the
-  parts where it exceeds one half in green).
-- **Calculation to list** makes the calculation a spectrum (Lorentzians of
-  the width set), along the compared cut or along the path, so it opens in
-  the viewers beside the data or is subtracted from it.
+- **To figure composer...** makes the panels ticked — ticked for you by
+  what you chose in step 1: the measurement along the path with the
+  calculation over it, the calculation alone (the points' names on its axis),
+  the compared cut or map with its calculation, the calculated contours alone
+  at the energies listed (no map needed), the 3D Fermi surface as drawn in
+  step 2, and — with **Constant-energy series of the compared map** — the
+  measured maps at each energy with the zones dashed (top row) and the
+  calculated contours (bottom row).
+- **Save … to main panel** (beside it) puts the calculation in the list as
+  data the main panel's viewers open, and what it saves follows step 1:
+  - *dispersion* — a cut: the bands as a spectrum (Lorentzians of the width
+    set) along the compared cut or along the path. A cut along a path keeps
+    its high-symmetry points: the cut viewer shows their names along the
+    top, with a dashed line at each (**High-symmetry points**, ticked; the k
+    values stay on the bottom axis), and the figure composer puts them on
+    the k axis.
+  - *contours* — **Save calculated map to main panel**: a k-map of the
+    calculated intensity on the plane of step 2 (its (hkl), k⊥, in-plane
+    rotation and k⊥ window) at every energy of *Energies of the saved map*, to slice and
+    compare like a measured map.
+  - *3D Fermi surface* — greyed out: the viewers open cuts and maps, not a
+    surface; the figure composer (or *Save picture*) takes it.
 
 ![Output](images/bands_output.png)
 

@@ -27,6 +27,8 @@ def _private_config_dir(tmp_path, monkeypatch):
     last crystal) go to a folder of this test's own, not the user's home --
     so no test sees what another one, or a real session, left behind."""
     monkeypatch.setenv("ARPES_VIEWER_CONFIG_DIR", str(tmp_path / "config"))
+    # tool windows ask before closing; a test closes them without a question
+    monkeypatch.setenv("ARPES_VIEWER_NO_CONFIRM", "1")
 
 
 #: The QApplication, once a test has made one, held for the whole session.

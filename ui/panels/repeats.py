@@ -33,7 +33,7 @@ from tools.processing import cutops
 from tools.processing import process as P
 from tools.processing import repeats as R
 from ui.common.screen import fits_screen
-from ui.common.stepper import Step, Stepper
+from ui.common.stepper import Step, Stepper, guard_window
 from ui.viewers.widgets import MemoryData
 
 __all__ = ["RepeatsDialog"]
@@ -79,6 +79,7 @@ class RepeatsDialog(QDialog):
                                finish_text="Sum to list")
         self.stepper.finished.connect(self.sum_to_list)
         layout.addWidget(self.stepper)
+        guard_window(self, self.stepper, "sum_repeats", "Sum repeated scans")
 
     # -- data --------------------------------------------------------------
     def values(self, i):

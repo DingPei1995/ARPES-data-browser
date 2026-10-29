@@ -40,7 +40,7 @@ from tools.crystal import last_crystal
 from tools.crystal import tightbinding as TB
 from tools.processing import ridge as RD
 from ui.common.screen import fits_screen
-from ui.common.stepper import Step, Stepper
+from ui.common.stepper import Step, Stepper, guard_window
 from ui.viewers.widgets import (MemoryData, apply_colormap, fit_frame_view,
                                 plain_image_view, show_frame)
 
@@ -82,8 +82,9 @@ class TightBindingDialog(QDialog):
         self.stepper = Stepper([self._step_lattice(), self._step_points(),
                                 self._step_fit(), self._step_use()], self,
                                finish_text="Close")
-        self.stepper.finished.connect(self.accept)
         layout.addWidget(self.stepper)
+        guard_window(self, self.stepper, "tight_binding", "Tight-binding fit",
+                     close_on_finish=True)
         self._lattice_changed()
 
     # ==================================================================

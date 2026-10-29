@@ -3158,11 +3158,16 @@ def panel_from_dataset(data, name="") -> Panel:
         raise ValueError("only a two-dimensional dataset can be a panel on "
                          "its own; take a slice of a map first")
     labels = getattr(scan, "labels", {}) or {}
-    return panel_from_arrays(scan.value, scan.x, scan.y,
-                             labels.get("x", ""), labels.get("y", ""),
-                             name or getattr(data, "source_label", "") or "panel",
-                             info=getattr(scan, "info", {}),
-                             sources=_dataset_sources(data))
+    panel = panel_from_arrays(scan.value, scan.x, scan.y,
+                              labels.get("x", ""), labels.get("y", ""),
+                              name or getattr(data, "source_label", "") or "panel",
+                              info=getattr(scan, "info", {}),
+                              sources=_dataset_sources(data))
+    # a calculation saved along a path: its points' names on the k axis
+    from ui.viewers.windows import path_points
+
+    panel.x_tick_labels = path_points(getattr(scan, "info", {}))
+    return panel
 
 
 def _dataset_sources(data) -> list:

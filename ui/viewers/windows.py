@@ -1150,6 +1150,23 @@ class SpatialScanWindow(ViewerWindow):
 # --------------------------------------------------------------------------
 # Single cut
 # --------------------------------------------------------------------------
+def path_points(info) -> list:
+    """The high-symmetry points a cut computed along a path records (the
+    Calculated bands window writes ``calc.path`` as ``"Γ@0.0000
+    M@0.5851 ..."``): ``[(distance, label), ...]``, or ``[]``."""
+    text = (info or {}).get("calc.path")
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
+    points = []
+    for part in str(text or "").split():
+        label, _at, where = part.rpartition("@")
+        try:
+            points.append((float(where), label))
+        except ValueError:
+            continue
+    return points if all(label for _d, label in points) else []
+
+
 class CutWindow(ViewerWindow):
     """One E-vs-k spectrum (a scan taken at a single deflector position)."""
 
@@ -1168,7 +1185,19 @@ class CutWindow(ViewerWindow):
             "Straighten bands (FS correction)...", self.open_fs_correction,
             "Straighten a curved feature: click along it, fit a polynomial, and "
             "shift every angle column in energy so it comes out flat.")
-        self.build_toolbar()
+        # a calculation saved along a path of high-symmetry points: their
+        # names over the k axis (the k values stay below)
+        self.path_points = path_points(scan.info)
+        self.points_box = None
+        if self.path_points:
+            self.points_box = QCheckBox("High-symmetry points")
+            self.points_box.setChecked(True)
+            self.points_box.setToolTip(
+                "Show the names of the path's high-symmetry points along the "
+                "top of the cut, with a dashed line at each "
+                + ", ".join(label for _d, label in self.path_points) + ".")
+            self.points_box.toggled.connect(lambda *_: self._show_path_points())
+        self.build_toolbar([self.points_box] if self.points_box else ())
 
         self.view = FrameImageView()
         # Titled from the axes themselves: a cut read from a file is an
@@ -1183,8 +1212,33 @@ class CutWindow(ViewerWindow):
         self.view.set_frame(data.cut_frame, scan.x, scan.y)
         self.view.enable_selection_action(False)
         self._mark_path_corners()
+        self._point_lines = []
+        self._show_path_points()
         self.set_colormap(colormap, flip)
         self.apply_display_options()
+
+    def _show_path_points(self):
+        """The path's high-symmetry points on the top axis, with a dashed
+        line at each, or none (the box unticked)."""
+        if not self.path_points:
+            return
+        for line in self._point_lines:
+            self.view.view_box.removeItem(line)
+        self._point_lines = []
+        top = self.view.plot.getAxis("top")
+        shown = self.points_box is None or self.points_box.isChecked()
+        if shown:
+            top.setTicks([[(float(d), str(label)) for d, label in self.path_points], []])
+            top.setStyle(showValues=True)
+            for d, _label in self.path_points:
+                line = pg.InfiniteLine(pos=float(d), angle=90, pen=pg.mkPen(
+                    "#ffffff", width=1, style=Qt.DashLine))
+                line.setZValue(24)
+                self.view.view_box.addItem(line, ignoreBounds=True)
+                self._point_lines.append(line)
+        else:
+            top.setTicks(None)
+            top.setStyle(showValues=False)
 
     def image_panels(self):
         return (self.panel,)

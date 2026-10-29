@@ -223,6 +223,39 @@ def test_the_bands_window_fits_and_names_its_sources(app, tmp_path):
     assert spectrum.kind == "cut" and spectrum.scan.value.shape == (k.size, e.size)
 
 
+def test_a_calculation_alone_goes_to_the_output(app, tmp_path):
+    """No measurement selected: the FPLO tools' band.dat along a path and a
+    Hamiltonian open, and their panels (the bands along the path, the
+    contours at E_F) come out without a compare."""
+    from tools.crystal import bandfiles
+    from ui.panels.bands import BandsDialog
+
+    a = 3.3
+    lattice = np.array([[a, 0, 0], [-a / 2, a * np.sqrt(3) / 2, 0], [0, 0, 6.0]])
+    hop = {(0, 0, 0): np.array([[0.5]])}
+    for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (1, 1, 0), (-1, -1, 0)):
+        hop[R] = np.array([[-0.15]])
+    hr = str(tmp_path / "wannier90_hr.dat")
+    bandfiles.write_hr(hr, lattice, hop, 1)
+    path = str(tmp_path / "band.dat")
+    with open(path, "w") as handle:
+        handle.write("".join(f"  {d:.4f}  {-0.5 + d:.4f}\n" for d in np.linspace(0, 1, 11)))
+        handle.write("\n")
+    dialog = BandsDialog([])
+    assert dialog.open_file(path) is not None
+    assert not dialog.panel_boxes["path"].isChecked()
+    dialog.stepper.go(3)
+    panels, problems = dialog.panels()
+    assert len(panels) == 1 and not problems
+    dialog.open_file(hr)
+    dialog.set_goal("contours")
+    assert dialog.panel_boxes["contours"].isChecked()
+    dialog.series_energies.setText("0")
+    panels, problems = dialog.panels()
+    assert len(panels) == 1 and not problems                 # the contours alone
+    assert any(o.name.startswith("band") for o in panels[0].overlays)
+
+
 def test_the_stacked_slices_view_draws_layers_and_a_mark(app):
     from ui.panels.volume import VolumeWindow
 

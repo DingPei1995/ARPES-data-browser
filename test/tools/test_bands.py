@@ -75,6 +75,96 @@ def test_hr_and_bxsf_files_read_back(tmp_path):
     assert np.abs(grid.energies(k) - model.energies(k)).max() < 0.03
 
 
+def _fplo_folder(tmp_path, per=21):
+    """The files the FPLO + Wannier tools leave along a path, as they write
+    them: KPOINTS (segments, cell, labelled ends), band.dat (blank line
+    between bands), orbital.dat (a third column) and Eigenvalue.dat (2π
+    times fractional k, then one energy per line)."""
+    model = _model()
+    ends = [((0, 0, 0), "Γ"), ((0.5, 0, 0), "M"), ((0.5, 0, 0), "M"),
+            ((1 / 3, 1 / 3, 0), "K"), ((0, 0, 0.5), "A"), ((0.5, 0, 0.5), "L")]
+    b = B.reciprocal_of(LATTICE)
+    with open(tmp_path / "KPOINTS", "w") as handle:
+        handle.write(f"3 {per}      Direct Lattice Vectors(Ang)   Reciprocal Lattice Vectors(Ang)\n")
+        for row, rec in zip(LATTICE, b / (2 * np.pi)):
+            handle.write(" ".join(f"{v:14.9f}" for v in (*row, *rec)) + "\n")
+        handle.write(" \n")
+        for i, (k, label) in enumerate(ends):
+            handle.write(f"  {k[0]:.10f} {k[1]:.10f} {k[2]:.10f}   ! {label}\n")
+            if i % 2:
+                handle.write("\n")
+    frac = np.concatenate([np.linspace(ends[2 * s][0], ends[2 * s + 1][0], per)
+                           for s in range(3)])
+    k = frac @ b
+    steps = np.r_[0, np.linalg.norm(np.diff(k, axis=0), axis=1)]
+    steps[per::per] = 0                              # K -> A is a jump
+    distance = np.cumsum(steps)
+    energies = model.energies(k)
+    weight = model.weights_at(k, "a")
+    with open(tmp_path / "band.dat", "w") as bands, \
+            open(tmp_path / "orbital.dat", "w") as orbital:
+        for row, w in zip(energies, weight):
+            for d, e, x in zip(distance, row, w):
+                bands.write(f"  {d:.8f}  {e:.7f}\n")
+                orbital.write(f"  {d:.8f}  {e:.7f}  {x:.8E}\n")
+            bands.write("\n")
+            orbital.write("\n")
+    with open(tmp_path / "Eigenvalue.dat", "w") as handle:
+        for point, column in zip(2 * np.pi * frac, energies.T):
+            handle.write("\n" + "  ".join(f"{v:.16f}" for v in point) + "\n")
+            handle.write("".join(f"  {e:.16f}\n" for e in column))
+    return model, distance, energies, weight
+
+
+def test_the_fplo_tools_path_files_read(tmp_path):
+    _model_, distance, energies, weight = _fplo_folder(tmp_path)
+    for name in ("band.dat", "Eigenvalue.dat"):
+        path = bandfiles.read(str(tmp_path / name))
+        assert isinstance(path, B.BandPath)
+        assert np.allclose(path.distance, distance, atol=1e-6)
+        assert np.allclose(path.relative(), energies, atol=1e-6)
+        assert [l for _d, l in path.labels] == ["Γ", "M", "K|A", "L"]
+        assert np.isclose(path.labels[2][0], distance[2 * 21 - 1])
+    band = bandfiles.read(str(tmp_path / "band.dat"))
+    assert np.allclose(band.weights["orbital"], weight, atol=1e-6)
+    assert "KPOINTS" in [os.path.basename(p) for p in
+                         bandfiles.companion_files(str(tmp_path / "band.dat"))]
+
+
+def test_the_fplo_tools_grid_reads_and_keeps_the_bands_near_ef(tmp_path):
+    model = _model()
+    _fplo_folder(tmp_path)
+    n = 21
+    axis = np.linspace(-0.5, 0.5, n)
+    # MATLAB's reshape order: k1 fastest
+    k3, k2, k1 = np.meshgrid(axis, axis, axis, indexing="ij")
+    frac = np.column_stack([k1.ravel(), k2.ravel(), k3.ravel()])
+    energies = model.energies(frac @ B.reciprocal_of(LATTICE))
+    energies = np.vstack([energies, energies[1] + 5.0])        # a band far above
+    table = np.column_stack([frac, energies.T])
+    np.savetxt(tmp_path / "band3d.dat", table, fmt="%.8f")
+    grid = bandfiles.read(str(tmp_path / "band3d.dat"), window=(-2, 2), chunk=1000)
+    assert isinstance(grid, B.BandGrid)
+    assert grid.band_count() == 2 and list(grid.band_numbers) == [1, 2]
+    assert grid.values.shape == (2, n - 1, n - 1, n - 1)
+    k = np.random.default_rng(2).uniform(-1, 1, (40, 3))
+    assert np.abs(grid.energies(k) - model.energies(k)).max() < 0.02
+
+
+def test_an_fplo_hamiltonian_takes_the_tools_cell_and_names(tmp_path):
+    _fplo_folder(tmp_path)
+    hr = str(tmp_path / "wannier90_hr_fplo.dat")
+    bandfiles.write_hr(hr, LATTICE, _hoppings(), 2)       # (its .win is not the seed's)
+    with open(tmp_path / "wannier_name_center.txt", "w") as handle:
+        handle.write("  1   Cr3 3d+0UP   0.0 0.0 0.0\n  2   Cr3 3d+0DN   0.0 0.0 0.0\n")
+    model = bandfiles.read(hr)
+    assert np.allclose(model.lattice, LATTICE)
+    assert model.orbital_names == ["Cr3 3d+0UP", "Cr3 3d+0DN"]
+    assert model.weight_names[:3] == ["Cr 3d", "spin up", "spin down"]
+    k = np.random.default_rng(3).uniform(-1, 1, (10, 3))
+    assert np.allclose(model.weights_at(k, "Cr 3d"), 1.0)
+
+
 def test_named_path_through_the_hexagonal_zone():
     params = LatticeParams(A, A, CC, 90, 90, 120, space_group=191)
     k, distance, ticks = B.named_path(params, "G-M-K-G-A")

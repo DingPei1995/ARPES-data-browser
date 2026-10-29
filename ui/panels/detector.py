@@ -30,7 +30,7 @@ from loader.nxs_file import axis_slots
 from tools.processing import detector as DT
 from tools.processing import process as P
 from ui.common.screen import fits_screen
-from ui.common.stepper import Step, Stepper
+from ui.common.stepper import Step, Stepper, guard_window
 from ui.panels.process import PreviewPair
 from ui.viewers.widgets import MemoryData
 
@@ -79,6 +79,7 @@ class DetectorDialog(QDialog):
                                finish_text="Apply to list")
         self.stepper.finished.connect(lambda: self.apply_to_list())
         layout.addWidget(self.stepper)
+        guard_window(self, self.stepper, "detector", "Detector corrections")
         self.update_keystone()
         self.update_regions()
 

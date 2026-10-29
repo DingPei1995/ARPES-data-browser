@@ -11,9 +11,11 @@ steps:
 
 1. **The calculation** -- a file from the theory side: an XCrySDen
    ``.bxsf`` band grid (Wien2k, Quantum ESPRESSO, VASP, Wannier90), a
-   Wannier90 Hamiltonian (``_hr.dat``), or bands along a path (Wannier90
+   Wannier90 Hamiltonian (``_hr.dat``), bands along a path (Wannier90
    ``_band.dat``, Wien2k ``.spaghetti_ene``, VASP ``EIGENVAL`` with its
-   ``PROCAR``). The crystal's space group names the high-symmetry points.
+   ``PROCAR``), or what the FPLO + Wannier tools write (``band.dat`` along
+   a path or on a 3-D grid, ``Eigenvalue.dat``, with their ``KPOINTS``).
+   The crystal's space group names the high-symmetry points.
 2. **Along a path** -- the bands through the high-symmetry points
    (Γ-M-K-Γ-A-L-H-A), optionally coloured by orbital character, over the
    measurement along the same path, assembled from the selected maps (the
@@ -26,7 +28,10 @@ steps:
 4. **Output** -- the calculation's spectral function to the list, and
    figure-composer panels: measurement with calculation, calculation
    alone (with the points' names on the axis), constant-energy map with
-   calculated contours.
+   calculated contours, and calculated contours alone (no map needed).
+
+With no measurement selected, steps 2 and 3 can simply be paged through:
+the calculation alone goes to the output all the same.
 
 The arithmetic is :mod:`tools.crystal.bands`, :mod:`tools.crystal.compare`
 and :mod:`tools.crystal.bandfiles`, none of which imports Qt.
@@ -42,8 +47,9 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                              QDoubleSpinBox, QFileDialog, QFormLayout,
                              QGroupBox, QHBoxLayout, QHeaderView,
-                             QInputDialog, QLabel, QLineEdit, QPushButton,
-                             QRadioButton, QSlider, QSpinBox, QTableWidget,
+                             QInputDialog, QLabel, QLineEdit, QListWidget,
+                             QListWidgetItem, QPushButton, QRadioButton,
+                             QSlider, QSpinBox, QStackedWidget, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
 from tools.crystal import bandfiles
@@ -52,7 +58,7 @@ from tools.crystal import compare as C
 from tools.crystal import last_crystal
 from tools.crystal.lattice import LatticeParams
 from ui.common.screen import fits_screen
-from ui.common.stepper import Step, Stepper
+from ui.common.stepper import Step, Stepper, guard_window
 from ui.viewers.widgets import (MemoryData, apply_colormap, fit_frame_view,
                                 plain_image_view, show_frame)
 
@@ -69,6 +75,58 @@ WEIGHT_COLOURS = ("#d62728", "#1f77b4", "#2ca02c", "#ff7f0e", "#9467bd",
                   "#8c564b")
 
 ACCEPTED = ("k_map", "kz_map_k", "cut")
+
+#: under the goal's button in step 1: which files serve it, in plain words
+GOAL_HINTS = {
+    "dispersion": (
+        "Any calculation works. Usually it is the file the theory side plots "
+        "their band structure from: <code>band.dat</code>, "
+        "<code>*_band.dat</code>, <code>Eigenvalue.dat</code>, "
+        "<code>case.spaghetti_ene</code>, VASP <code>EIGENVAL</code>. A file "
+        "of the bands everywhere (below) works too, and can also be cut "
+        "along your own measured direction."),
+    "contours": (
+        "Needs the bands <b>everywhere in the zone</b>: a band grid "
+        "(<code>.bxsf</code>; a <code>band.dat</code> with columns k1 k2 k3 "
+        "E1 E2 ...; a MATLAB <code>Ek_3D</code> <code>.mat</code>) or a "
+        "Wannier Hamiltonian (<code>*_hr.dat</code>). A band structure along "
+        "a path cannot give contours."),
+    "fs": (
+        "Needs the bands <b>everywhere in the zone</b>, as for contours: a "
+        "band grid (<code>.bxsf</code>, a 3-D <code>band.dat</code>, a MATLAB "
+        "<code>Ek_3D</code> <code>.mat</code>) or a Hamiltonian "
+        "(<code>*_hr.dat</code>)."),
+}
+
+#: step 2's title and text, by the goal
+VIEW_STEPS = {
+    "dispersion": ("Along a path", (
+        "The calculation along a path of high-symmetry points -- the usual "
+        "band-structure picture -- with the measurement under it along the "
+        "<b>same</b> path when maps are selected (each in-plane segment from "
+        "the map measured on its k_z plane, Γ-A from a k_z scan; correct a "
+        "map's k_z in the table, untick it to leave it out). "
+        "<b>Highlight bands</b> draws chosen bands in colour, the rest grey. "
+        "The calculation is drawn as Z x E + shift (step 3 fits them).")),
+    "contours": ("Constant-energy contours", (
+        "The calculation's contours at one energy on one plane of k-space "
+        "-- a calculated Fermi-surface map. The plane: its normal (hkl), as "
+        "in the Brillouin-zone tool, and where it sits along that normal (k⊥; "
+        "<b>Through point</b> puts it through a high-symmetry point). A "
+        "<b>k⊥ integration window</b> sums the bands over a range of k⊥ "
+        "about it, as a map's finite k⊥ resolution does. <b>Show the plane "
+        "in the Brillouin zone</b> says where the cut lies. Each band's "
+        "colour is yours to choose (the same for several, to group pockets). "
+        "Step 3 puts the contours over a measured k-map, step 4 makes "
+        "figures and a calculated map of them.")),
+    "fs": ("3D Fermi surface", (
+        "The surfaces where the bands cross the energy chosen, inside the "
+        "first Brillouin zone. Each band's colour (the same for several, to "
+        "group electron and hole pockets), opacity and visibility are yours "
+        "to set. Drag to turn it; Enter in the energy redraws it. Step 4 puts "
+        "the picture in the figure composer (there is nothing to compare, so "
+        "the Compare step is left out).")),
+}
 
 
 def _spin(value, lo, hi, decimals=3, suffix="", step=None):
@@ -155,17 +213,47 @@ class BandsDialog(QDialog):
         self._existing = existing_names or (lambda: [])
         self.model = None
         self.model_path = ""
+        self._last_file = ""
+        self._folder = ""
+        self._which = None
+        self._fs_grid = None
+        self._fs_drawn = None
         self.params = None
         self.alignment = B.Alignment()
         self._items = []
         self._kz_typed = set()
 
         layout = QVBoxLayout(self)
-        self.stepper = Stepper([self._step_calculation(), self._step_path(),
+        self.stepper = Stepper([self._step_calculation(), self._step_view(),
                                 self._step_compare(), self._step_output()],
                                self, finish_text="Close")
-        self.stepper.finished.connect(self.accept)
         layout.addWidget(self.stepper)
+        # the cell and space group are the calculation's, never last time's
+        self._not_remembered = ("compare_combo", "weight_combo", "fs_view_combo",
+                                "space_group", "change_lattice")
+        guard_window(self, self.stepper, "calculated_bands", "Calculated bands",
+                     close_on_finish=True,
+                     extra=lambda: {"last_file": self.model_path or self._last_file,
+                                    "folder": self._folder})
+        from ui.common import remember
+
+        kept = remember.load("calculated_bands").get("_extra") or {}
+        self._folder = kept.get("folder") or ""
+        last = kept.get("last_file") or ""
+        if last and os.path.isfile(last):
+            self._last_file = last
+            self.reopen_button.setText(f"Reopen {os.path.basename(last)}")
+            self.reopen_button.setToolTip(f"The calculation opened last time:\n{last}")
+            self.reopen_button.setVisible(True)
+        self._lock_lattice()
+        # what was selected says what is wanted
+        kinds = {d.kind for _n, d in self.datasets}
+        if "k_map" in kinds and "cut" not in kinds:
+            self.set_goal("contours")
+        elif kinds:
+            self.set_goal("dispersion")
+        else:
+            self._goal_changed()
 
     # ==================================================================
     # Step 1: the calculation
@@ -173,16 +261,66 @@ class BandsDialog(QDialog):
     def _step_calculation(self):
         page = QWidget()
         column = QVBoxLayout(page)
+
+        goal = QGroupBox("What do you want to see?")
+        g = QVBoxLayout(goal)
+        self.goal_dispersion = QRadioButton(
+            "E–k dispersion — the bands along a path, or along my measured cut")
+        self.goal_contours = QRadioButton(
+            "Constant-energy contours — to compare with a k-map (Fermi surface map)")
+        self.goal_fs = QRadioButton("3D Fermi surface")
+        self.goal_dispersion.setChecked(True)
+        for button in (self.goal_dispersion, self.goal_contours, self.goal_fs):
+            g.addWidget(button)
+            button.toggled.connect(lambda on: on and self._goal_changed())
+        self.goal_hint = QLabel("")
+        self.goal_hint.setWordWrap(True)
+        self.goal_hint.setTextFormat(Qt.RichText)
+        self.goal_hint.setStyleSheet("color: #333; padding-left: 4px;")
+        g.addWidget(self.goal_hint)
+        column.addWidget(goal)
+
         row = QHBoxLayout()
         self.open_button = QPushButton("Open calculation...")
+        self.open_button.setToolTip("Choose the file. The list shows first the "
+                                    "kinds of file that can give what you want "
+                                    "to see.")
         self.open_button.clicked.connect(lambda: self.open_file())
         row.addWidget(self.open_button)
+        self.which_button = QPushButton("Which file? ...")
+        self.which_button.setToolTip(
+            "Not sure which file of the folder is the calculation? This reads "
+            "every file in it and says in plain words what each is, what it "
+            "can show, what is missing, and whether a standard file was only "
+            "renamed or cut into pieces.")
+        self.which_button.clicked.connect(lambda: self.which_file())
+        row.addWidget(self.which_button)
+        self.reopen_button = QPushButton("")
+        self.reopen_button.setVisible(False)
+        self.reopen_button.clicked.connect(lambda: self.open_file(self._last_file))
+        row.addWidget(self.reopen_button)
+        row.addStretch(1)
+        column.addLayout(row)
         self.file_label = QLabel("No calculation yet.")
         self.file_label.setWordWrap(True)
-        row.addWidget(self.file_label, 1)
-        column.addLayout(row)
+        self.file_label.setTextFormat(Qt.RichText)
+        column.addWidget(self.file_label)
 
-        options = QGroupBox("Reading it")
+        self.options_toggle = QPushButton("Reading options ▸")
+        self.options_toggle.setCheckable(True)
+        self.options_toggle.setAutoDefault(False)
+        self.options_toggle.setFlat(True)
+        self.options_toggle.setStyleSheet("text-align: left; color: #1f6f8b;")
+        self.options_toggle.setToolTip("E_F, the k units of a .bxsf, which "
+                                       "bands a big grid keeps -- usually "
+                                       "nothing to change.")
+        column.addWidget(self.options_toggle)
+        options = QGroupBox("Reading it (usually nothing to change)")
+        options.setVisible(False)
+        self.options_toggle.toggled.connect(lambda on: (
+            options.setVisible(on),
+            self.options_toggle.setText("Reading options ▾" if on else
+                                        "Reading options ▸")))
         form = QFormLayout(options)
         self.fermi_box = QCheckBox("Set E_F myself")
         self.fermi_value = _spin(0.0, -1000.0, 1000.0, 4, " eV")
@@ -198,10 +336,42 @@ class BandsDialog(QDialog):
                                "Programs differ; if the zone comes out 2π "
                                "too small or large, change this.")
         form.addRow("bxsf k units", self.k_unit)
+        keep = QHBoxLayout()
+        self.keep_lo = _spin(-2.0, -50.0, 0.0, 2, " eV", 0.5)
+        self.keep_hi = _spin(1.0, 0.0, 50.0, 2, " eV", 0.5)
+        for box in (self.keep_lo, self.keep_hi):
+            box.setToolTip("A 3-D band grid (band.dat of the FPLO tools, a "
+                           "MATLAB Ek_3D) holds every band on a dense grid -- "
+                           "gigabytes; only the bands that come within this "
+                           "window of E_F are kept.")
+        keep.addWidget(self.keep_lo)
+        keep.addWidget(QLabel("to"))
+        keep.addWidget(self.keep_hi)
+        keep.addStretch(1)
+        form.addRow("Big grids: keep bands from", keep)
         column.addWidget(options)
 
         crystal = QGroupBox("The crystal (names the high-symmetry points)")
         cform = QFormLayout(crystal)
+        self.change_lattice = QCheckBox("Change the lattice parameters")
+        self.change_lattice.setToolTip(
+            "The cell comes with the calculation, so it is locked once read. "
+            "Tick this only to change it on purpose (to scale the calculation "
+            "to another lattice constant, say, or to name its points by "
+            "another space group).")
+        self.change_lattice.toggled.connect(lambda *_: self._lock_lattice())
+        cform.addRow(self.change_lattice)
+        cell_row = QHBoxLayout()
+        self.cell_boxes = []
+        for name, value, top, suffix in (("a", 3.0, 1000.0, " Å"), ("b", 3.0, 1000.0, " Å"),
+                                         ("c", 3.0, 1000.0, " Å"), ("α", 90.0, 179.0, "°"),
+                                         ("β", 90.0, 179.0, "°"), ("γ", 90.0, 179.0, "°")):
+            box = _spin(value, 0.1 if suffix == " Å" else 1.0, top, 4, suffix)
+            box.editingFinished.connect(lambda: self._cell_typed())
+            cell_row.addWidget(QLabel(name))
+            cell_row.addWidget(box)
+            self.cell_boxes.append(box)
+        cform.addRow("Cell", cell_row)
         self.space_group = QSpinBox()
         self.space_group.setRange(1, 230)
         self.space_group.setValue(191)
@@ -215,6 +385,7 @@ class BandsDialog(QDialog):
         take.setToolTip(last_crystal.describe())
         take.clicked.connect(lambda: self.take_space_group())
         sg_row.addWidget(take)
+        self.take_button = take
         sg_row.addStretch(1)
         cform.addRow("Space group", sg_row)
         self.crystal_label = QLabel("")
@@ -222,45 +393,134 @@ class BandsDialog(QDialog):
         cform.addRow(self.crystal_label)
         column.addWidget(crystal)
         column.addStretch(1)
-        text = ("The calculation, as the theory side sends it. Two kinds: "
-                "<b>bands everywhere</b> -- a band grid over the zone "
-                "(XCrySDen <code>.bxsf</code>, written by Wien2k, Quantum "
-                "ESPRESSO, VASP and Wannier90) or a Wannier Hamiltonian "
-                "(<code>_hr.dat</code>, with its <code>.win</code> beside it "
-                "for the cell) -- which can be cut anywhere: along any "
-                "measured cut, on the k_z a photon energy reaches, at any "
-                "energy as contours; and <b>bands along a path</b> "
-                "(<code>_band.dat</code>, <code>.spaghetti_ene</code>, VASP "
-                "<code>EIGENVAL</code>), which can be drawn along that path "
-                "only. Orbital weights come with a Hamiltonian (its Wannier "
-                "functions) or a VASP <code>PROCAR</code>.<br>The space "
-                "group names the zone's points; it is guessed from the "
-                "cell's shape -- set the crystal's own for its labels.")
-        return Step("The calculation", text, page,
-                    ready=lambda: "" if self.model is not None
-                    else "Open a calculation first.")
+        self.setAcceptDrops(True)
+        text = ("First say what you want to see; then open the calculation "
+                "-- the file list shows first the files that can give it. Not "
+                "sure which file it is? <b>Which file?</b> reads the folder "
+                "and tells. (A file can also be dropped on this window.) With "
+                "no measurement selected, the next steps simply show the "
+                "calculation, and step 4 makes its figures.")
+        return Step("The calculation", text, page, ready=self._calculation_ready)
+
+    def _settings_applied(self):
+        """Settings from last time were put back: show what they say."""
+        if hasattr(self, "view_pages"):
+            self._goal_changed()
+
+    # -- what the user wants ------------------------------------------------
+    def goal(self) -> str:
+        if self.goal_contours.isChecked():
+            return "contours"
+        if self.goal_fs.isChecked():
+            return "fs"
+        return "dispersion"
+
+    def set_goal(self, goal: str):
+        {"dispersion": self.goal_dispersion, "contours": self.goal_contours,
+         "fs": self.goal_fs}[goal].setChecked(True)
+        self._goal_changed()
+
+    def _goal_changed(self):
+        goal = self.goal()
+        self.goal_hint.setText(GOAL_HINTS[goal])
+        title, text = VIEW_STEPS[goal]
+        if hasattr(self, "view_pages"):
+            self.view_pages.setCurrentIndex(bandfiles.GOALS.index(goal))
+            self.stepper.retitle(1, title, text)
+            # a 3-D Fermi surface has nothing to be compared with
+            self.stepper.set_skipped(2, goal == "fs")
+            self._output_defaults()
+            self.stepper.refresh()
+
+    def _calculation_ready(self) -> str:
+        if self.model is None:
+            return "Open a calculation first."
+        if isinstance(self.model, B.BandPath) and self.goal() != "dispersion":
+            what = ("constant-energy contours" if self.goal() == "contours"
+                    else "a 3D Fermi surface")
+            return (f"This file holds the bands along a path only: it cannot "
+                    f"give {what}. Open a file of the bands everywhere (a band "
+                    "grid or a Hamiltonian -- “Which file?” helps), or choose "
+                    "E–k dispersion.")
+        return ""
+
+    # -- opening a file -----------------------------------------------------
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if urls:
+            self.open_file(urls[0])
+
+    def which_file(self, folder=None):
+        """The "Which file?" helper on ``folder`` (the last one used)."""
+        from ui.panels.bandfinder import WhichFileDialog
+
+        dialog = WhichFileDialog(folder or self._folder, self.goal(), self)
+        dialog.chosen.connect(lambda path: self.open_file(path))
+        self._which = dialog
+        dialog.show()
+        if not dialog.folder:
+            dialog.choose_folder()
+        return dialog
 
     def open_file(self, path=None, **options):
         if path is None:
-            filters = ";;".join([label for label, _p in bandfiles.FORMATS]
-                                + ["All files (*)"])
-            path, _ = QFileDialog.getOpenFileName(self, "Calculated bands", "",
-                                                  filters)
+            filters = [f"{label} ({' '.join(patterns)})"
+                       for label, patterns in bandfiles.formats_for(self.goal())]
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Calculated bands", self._folder or "",
+                ";;".join(filters + ["All files (*)"]))
             if not path:
                 return None
+        if not os.path.isfile(path):
+            self.file_label.setText(f"<b>Not found:</b> {path}")
+            return None
+        self._folder = os.path.dirname(os.path.abspath(path))
         kwargs = dict(options)
         if self.fermi_box.isChecked():
             kwargs.setdefault("fermi", self.fermi_value.value())
         if path.lower().endswith(".bxsf"):
             kwargs.setdefault("k_scale", (1.0, 2 * np.pi, 1.0 / bandfiles.BOHR)[
                 self.k_unit.currentIndex()])
+        kwargs.setdefault("window", (self.keep_lo.value(), self.keep_hi.value()))
+        crystal = last_crystal.lattice_params()
+
+        def work(report):
+            try:
+                return bandfiles.read(path, progress=report, **kwargs), False
+            except ValueError as exc:
+                # no cell beside the file: the Brillouin-zone tool's crystal
+                if "cell is needed" not in str(exc) or crystal is None \
+                        or "lattice" in kwargs:
+                    raise
+                from tools.crystal.lattice import primitive_vectors
+
+                return bandfiles.read(path, progress=report,
+                                      lattice=primitive_vectors(crystal),
+                                      **kwargs), True
+
+        from ui.common.jobs import JobCancelled, run_blocking
+
         try:
-            model = bandfiles.read(path, **kwargs)
-        except (OSError, ValueError, IndexError) as exc:
-            self.file_label.setText(f"<b>Could not read it:</b> {exc}")
+            model, borrowed = run_blocking(
+                self, f"Reading {os.path.basename(path)}", work)
+        except JobCancelled:
+            self.file_label.setText("Reading was cancelled.")
+            return None
+        except (OSError, ValueError, IndexError, MemoryError) as exc:
+            self.file_label.setText(
+                f"<b>Could not read {os.path.basename(path)}:</b> {exc}<br>"
+                "<b>Which file?</b> says what each file of the folder is.")
             return None
         self.model_path = path
         self.set_model(model)
+        if borrowed:
+            self.file_label.setText(self.file_label.text()
+                                    + " <i>The cell is the Brillouin-zone tool's "
+                                      "crystal (none came with the file).</i>")
         return model
 
     def set_model(self, model, space_group: int = None):
@@ -277,30 +537,131 @@ class BandsDialog(QDialog):
             self.space_group.blockSignals(True)
             self.space_group.setValue(int(self.params.space_group))
             self.space_group.blockSignals(False)
+            self._show_cell(self.params)
             kind = ("a Hamiltonian, diagonalised at every k"
                     if isinstance(model, B.WannierModel)
                     else "a band grid, interpolated")
             count = model.band_count()
+            numbers = getattr(model, "band_numbers", None)
+            if numbers is not None and len(numbers):
+                count = (f"{count} (bands {numbers[0]}-{numbers[-1]} of "
+                         f"{model.total_bands}, those near E_F)")
         weights = list(getattr(model, "weight_names", []) or [])
         name = os.path.basename(self.model_path) or getattr(model, "name", "") \
             or "calculation"
+        crossing = self.crossing_numbers()
+        shows = ("E–k dispersion along its path only" if isinstance(model, B.BandPath)
+                 else "E–k dispersion, constant-energy contours and the 3D "
+                      "Fermi surface")
         self.file_label.setText(
             f"<b>{name}</b>: {kind}; {count} bands; E_F = "
             f"{getattr(model, 'fermi', 0.0):.4g} eV"
-            + (f"; weights: {', '.join(weights)}" if weights else "") + ".")
+            + (f"; bands crossing E_F: {', '.join(map(str, crossing))}"
+               if crossing else "")
+            + (f"; weights: {', '.join(weights[:12])}"
+               + (f" and {len(weights) - 12} more" if len(weights) > 12 else "")
+               if weights else "")
+            + f".<br>It can show: <b>{shows}</b>.")
+        self._fs_grid = None
+        self._fs_drawn = None
         self.weight_combo.blockSignals(True)
         self.weight_combo.clear()
         self.weight_combo.addItem("(one colour)")
         self.weight_combo.addItems(weights)
         self.weight_combo.blockSignals(False)
+        self.change_lattice.blockSignals(True)
+        self.change_lattice.setChecked(False)
+        self.change_lattice.blockSignals(False)
+        self._lock_lattice()
+        self._plane_cache = None
+        if hasattr(self, "cont_through"):
+            self.cont_through.clear()
         self._crystal_changed()
         self._fill_compare_list()
+        self._output_defaults()
         self.stepper.refresh()
 
+    # -- the cell: read from the calculation, locked unless asked -----------
+    def _show_cell(self, params):
+        for box, value in zip(self.cell_boxes, (params.a, params.b, params.c,
+                                                params.alpha, params.beta,
+                                                params.gamma)):
+            box.blockSignals(True)
+            box.setValue(float(value))
+            box.blockSignals(False)
+
+    def _lock_lattice(self):
+        """The cell and space group are the calculation's: editable only
+        with "Change the lattice parameters" ticked (or with no cell yet)."""
+        has_cell = self.model is not None and not isinstance(self.model, B.BandPath)
+        free = has_cell and self.change_lattice.isChecked()
+        for widget in self.cell_boxes + [self.space_group, self.take_button]:
+            widget.setEnabled(free)
+        self.change_lattice.setEnabled(has_cell)
+        tip = ("" if not has_cell else "Read from the calculation; tick “Change "
+               "the lattice parameters” to change it." if not free else "")
+        for widget in self.cell_boxes + [self.space_group]:
+            widget.setToolTip(tip or widget.toolTip())
+
+    def _cell_typed(self):
+        """A cell typed with the box ticked: the calculation scaled to it."""
+        if not self.change_lattice.isChecked() or self.model is None \
+                or isinstance(self.model, B.BandPath):
+            return
+        a, b, c, alpha, beta, gamma = (box.value() for box in self.cell_boxes)
+        self.set_lattice(LatticeParams(a, b, c, alpha, beta, gamma,
+                                       space_group=self.space_group.value()))
+
+    def set_lattice(self, params):
+        """Give the calculation the cell ``params``: its bands, held in
+        fractional coordinates, keep their place in the zone and stretch
+        with it. Same angles: the calculation's own axes are kept."""
+        from tools.crystal.lattice import primitive_vectors
+
+        old = params_of_lattice(self.model.lattice, self.space_group.value())
+        lattice = np.asarray(self.model.lattice, float)
+        same_angles = all(abs(x - y) < 1e-6 for x, y in
+                          ((old.alpha, params.alpha), (old.beta, params.beta),
+                           (old.gamma, params.gamma)))
+        if same_angles:
+            lattice = lattice / np.linalg.norm(lattice, axis=1)[:, None] * \
+                np.array([params.a, params.b, params.c])[:, None]
+        else:
+            lattice = primitive_vectors(params)
+        self.model.reciprocal = B.reciprocal_of(lattice)
+        self._fs_grid = self._fs_drawn = self._plane_cache = None
+        self._show_cell(params_of_lattice(lattice, params.space_group))
+        self._crystal_changed()
+
+    def band_number(self, index: int) -> int:
+        """Band ``index`` of the calculation as its file counts it."""
+        numbers = getattr(self.model, "band_numbers", None)
+        return int(numbers[index]) if numbers is not None else index + 1
+
+    def crossing_numbers(self):
+        """The bands (as the file counts them) that cross E_F, when that is
+        cheap to know (a path or a grid; a Hamiltonian says it when drawn)."""
+        model = self.model
+        if isinstance(model, B.BandPath):
+            rel = model.relative()
+        elif isinstance(model, B.BandGrid):
+            rel = (model.values - model.fermi).reshape(model.band_count(), -1)
+        else:
+            return []
+        return [self.band_number(i) for i in
+                np.flatnonzero((rel.min(1) <= 0) & (rel.max(1) >= 0))]
+
     def take_space_group(self):
+        """The Brillouin-zone tool's crystal: its space group, and -- the box
+        ticked -- its cell."""
         params = last_crystal.lattice_params()
-        if params is not None and params.space_group:
+        if params is None:
+            return
+        if params.space_group:
             self.space_group.setValue(int(params.space_group))
+        if self.change_lattice.isChecked() and self.model is not None \
+                and not isinstance(self.model, B.BandPath):
+            self.set_lattice(params)
 
     def _crystal_changed(self):
         if self.model is None or isinstance(self.model, B.BandPath):
@@ -327,7 +688,7 @@ class BandsDialog(QDialog):
     # ==================================================================
     # Step 2: along a path
     # ==================================================================
-    def _step_path(self):
+    def _path_page(self):
         page = QWidget()
         column = QHBoxLayout(page)
         left = QVBoxLayout()
@@ -348,8 +709,15 @@ class BandsDialog(QDialog):
         self.weight_combo.setToolTip("Draw the bands as fat bands: the "
                                      "thickness is the chosen orbital's "
                                      "weight in each state (optional).")
-        self.weight_combo.currentIndexChanged.connect(lambda *_: self.draw_path())
-        form.addRow("Weight", self.weight_combo)
+        self.weight_combo.currentIndexChanged.connect(lambda *_: self._redraw_view())
+        self.highlight_edit = QLineEdit("")
+        self.highlight_edit.setPlaceholderText("e.g. 41-44, or EF for those crossing E_F")
+        self.highlight_edit.setToolTip(
+            "Bands to draw thick and in colour, the others grey (as the "
+            "theory side's scripts highlight them): their numbers as the file "
+            "counts them, or EF for every band crossing E_F. Empty: all alike.")
+        self.highlight_edit.editingFinished.connect(lambda: self.draw_path())
+        form.addRow("Highlight bands", self.highlight_edit)
         self.line_colour = QComboBox()
         self.line_colour.addItems(["black", "white", "red", "blue"])
         self.line_colour.currentIndexChanged.connect(lambda *_: self.draw_path())
@@ -404,7 +772,514 @@ class BandsDialog(QDialog):
                 "map. Where a map does not reach a point, its symmetric "
                 "equivalent is used.<br>The calculation is drawn as Z x E + "
                 "shift (step 3 fits them); choose a weight to draw fat bands.")
-        return Step("Along a path", text, page, enter=self._enter_path)
+        return page
+
+    # ==================================================================
+    # Step 2: what the calculation looks like -- by the goal of step 1
+    # ==================================================================
+    def _step_view(self):
+        page = QWidget()
+        column = QVBoxLayout(page)
+        self.view_pages = QStackedWidget()
+        self.view_pages.addWidget(self._path_page())
+        self.view_pages.addWidget(self._contour_page())
+        self.view_pages.addWidget(self._fs_page())
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Colour by orbital weight"))
+        top.addWidget(self.weight_combo)
+        top.addStretch(1)
+        column.addLayout(top)
+        column.addWidget(self.view_pages, 1)
+        title, text = VIEW_STEPS["dispersion"]
+        return Step(title, text, page, enter=self._enter_view)
+
+    def _enter_view(self):
+        goal = self.goal()
+        if goal == "dispersion":
+            self._enter_path()
+        elif goal == "contours":
+            self.draw_contours()
+        else:
+            if self._fs_drawn is None:
+                self.draw_fermi_surface()
+
+    def _redraw_view(self):
+        goal = self.goal()
+        if goal == "dispersion":
+            self.draw_path()
+        elif goal == "contours":
+            self.draw_contours()
+
+    def highlighted(self, count: int, energies=None):
+        """The indices (0-based, of ``count`` bands) the highlight box names."""
+        text = self.highlight_edit.text().strip()
+        if not text:
+            return set()
+        if text.upper().replace("_", "") in ("EF", "E F", "FERMI"):
+            if energies is None:
+                return set()
+            e = np.asarray(energies, float)
+            return set(np.flatnonzero((np.nanmin(e, 1) <= 0) & (np.nanmax(e, 1) >= 0)))
+        wanted = set()
+        for part in text.replace(";", ",").split(","):
+            part = part.strip()
+            try:
+                if "-" in part[1:]:
+                    a, b = part.split("-", 1)
+                    wanted.update(range(int(a), int(b) + 1))
+                elif part:
+                    wanted.add(int(part))
+            except ValueError:
+                continue
+        return {i for i in range(count) if self.band_number(i) in wanted}
+
+    def band_styles(self, distance, energies, ticks, window, colour):
+        """``(band, xs, ys, colour, highlighted)`` of every drawn piece: with
+        bands highlighted, those in colour (one each) and the rest grey."""
+        from ui.panels.fsview import BAND_COLOURS
+
+        chosen = sorted(self.highlighted(np.asarray(energies).shape[0], energies))
+        for band, xs, ys in C.band_segments(distance, energies, ticks, window):
+            if not chosen:
+                yield band, xs, ys, colour, False
+            elif band in chosen:
+                yield (band, xs, ys,
+                       BAND_COLOURS[chosen.index(band) % len(BAND_COLOURS)], True)
+            else:
+                yield band, xs, ys, "#9a9a9a", False
+
+    # -- constant-energy contours -------------------------------------------
+    def _contour_page(self):
+        from ui.panels.fsview import BandStyleTable
+
+        page = QWidget()
+        column = QHBoxLayout(page)
+        left = QVBoxLayout()
+        form = QFormLayout()
+        self.cont_energy = _spin(0.0, -20.0, 20.0, 3, " eV", 0.02)
+        self.cont_energy.setToolTip("E - E_F of the contours (0: the Fermi surface).")
+        self.cont_energy.valueChanged.connect(lambda *_: self.draw_contours())
+        form.addRow("Energy E - E_F", self.cont_energy)
+        hkl_row = QHBoxLayout()
+        self.cont_h, self.cont_k, self.cont_l = (QSpinBox(), QSpinBox(), QSpinBox())
+        for name, box, value in (("h", self.cont_h, 0), ("k", self.cont_k, 0),
+                                 ("l", self.cont_l, 1)):
+            box.setRange(-9, 9)
+            box.setValue(value)
+            box.setKeyboardTracking(False)
+            box.valueChanged.connect(lambda *_: self._plane_normal_changed())
+            hkl_row.addWidget(QLabel(name))
+            hkl_row.addWidget(box)
+        hkl_row.addStretch(1)
+        form.addRow("Plane normal (hkl)", hkl_row)
+        self.cont_offset = _spin(0.0, -50.0, 50.0, 4, " Å⁻¹", 0.02)
+        self.cont_offset.setToolTip("How far the plane sits from Γ along its own "
+                                    "normal: k⊥ relative to the (hkl) direction.")
+        self.cont_offset.valueChanged.connect(lambda *_: self.draw_contours())
+        form.addRow("k⊥ along the normal", self.cont_offset)
+        self.cont_through = QComboBox()
+        self.cont_through.setToolTip(
+            "The offsets at which the plane holds a high-symmetry point (as in "
+            "the Brillouin-zone tool); choosing one moves the plane there.")
+        self.cont_through.activated.connect(lambda i: self._through_chosen(i))
+        form.addRow("Through point", self.cont_through)
+        self.cont_rotation = _spin(0.0, -360.0, 360.0, 2, " °", 5.0)
+        self.cont_rotation.setToolTip(
+            "Turn the plane's two drawn axes about its normal (counter-"
+            "clockwise as drawn) -- to match a measured map's azimuth, say.")
+        self.cont_rotation.valueChanged.connect(lambda *_: self.draw_contours())
+        form.addRow("In-plane rotation", self.cont_rotation)
+        self.cont_window = _spin(0.0, 0.0, 5.0, 3, " Å⁻¹", 0.02)
+        self.cont_window.setToolTip(
+            "Integrate over this range of k⊥ about the plane -- along the "
+            "(hkl) normal, not the absolute k_z -- as a map with a finite k⊥ "
+            "resolution does. 0: the plane alone. The integrated intensity is "
+            "drawn grey under the contours of the middle plane.")
+        self.cont_window.valueChanged.connect(lambda *_: self.draw_contours())
+        form.addRow("k⊥ integration window", self.cont_window)
+        self.cont_width = _spin(0.02, 0.002, 0.5, 3, " eV", 0.005)
+        self.cont_width.setToolTip("Energy half-width given to each band for the "
+                                   "integrated intensity.")
+        self.cont_width.valueChanged.connect(lambda *_: self.draw_contours())
+        form.addRow("Band width (HWHM)", self.cont_width)
+        self.cont_reach = _spin(1.0, 0.5, 3.0, 2, " zone(s)", 0.25)
+        self.cont_reach.setToolTip("How far out to draw: 1 shows the first zone "
+                                   "and a little of its neighbours.")
+        self.cont_reach.valueChanged.connect(lambda *_: self.draw_contours())
+        form.addRow("Show", self.cont_reach)
+        left.addLayout(form)
+        zone = QPushButton("Show the plane in the Brillouin zone...")
+        zone.setAutoDefault(False)
+        zone.setToolTip("A turnable 3-D view of the zone with this plane (and "
+                        "its k⊥ window) in it, and the points it holds.")
+        zone.clicked.connect(lambda: self.open_zone_window())
+        left.addWidget(zone)
+        left.addWidget(QLabel("Bands (colour, shown):"))
+        self.band_looks = {}
+        self.cont_table = BandStyleTable(self.band_looks, opacity=False)
+        self.cont_table.changed.connect(lambda: self.draw_contours(recompute=False))
+        left.addWidget(self.cont_table)
+        self.cont_label = QLabel("")
+        self.cont_label.setWordWrap(True)
+        self.cont_label.setTextFormat(Qt.RichText)
+        left.addWidget(self.cont_label)
+        left.addStretch(1)
+        column.addLayout(left, 2)
+        self.cont_view = pg.PlotWidget()
+        self.cont_view.setBackground("w")
+        self.cont_view.setAspectLocked(True)
+        self.cont_view.setLabel("bottom", "k (Å⁻¹), first in-plane axis")
+        self.cont_view.setLabel("left", "k (Å⁻¹), second in-plane axis")
+        column.addWidget(self.cont_view, 3)
+        self._plane_cache = None
+        self._zone_window = None
+        return page
+
+    def current_plane(self):
+        """The cut of the contour page as a :class:`planecut.Plane`."""
+        from tools.crystal import planecut
+
+        if self.model is None or isinstance(self.model, B.BandPath) or self.params is None:
+            raise ValueError("contours need the bands everywhere: a band grid or "
+                             "a Hamiltonian")
+        b = np.asarray(self.model.reciprocal, float)
+        reach = 0.8 * float(np.linalg.norm(b, axis=1).max()) * self.cont_reach.value()
+        return planecut.plane_of(self.params, b, self.hkl(), self.cont_offset.value(),
+                                 reach, self.cont_rotation.value())
+
+    def hkl(self):
+        return (self.cont_h.value(), self.cont_k.value(), self.cont_l.value())
+
+    def named_points(self):
+        from tools.crystal import planecut
+
+        key = (id(self.model), self.params)
+        if getattr(self, "_points_cache", (None,))[0] != key:
+            try:
+                points = planecut.named_points(self.params, self.model.reciprocal)
+            except Exception:                                  # noqa: BLE001
+                points = []
+            self._points_cache = (key, points)
+        return self._points_cache[1]
+
+    def _plane_normal_changed(self):
+        self._fill_through()
+        self.draw_contours()
+
+    def _fill_through(self):
+        from tools.crystal import planecut
+
+        combo = self.cont_through
+        combo.clear()
+        try:
+            normal = self.current_plane().normal
+            offsets = planecut.through_points(self.named_points(), normal)
+        except ValueError:
+            offsets = []
+        combo.addItem("Choose a high-symmetry point...", None)
+        for offset, labels in offsets[:24]:
+            combo.addItem(f"{', '.join(labels)}   ({offset:.4f} Å⁻¹)", offset)
+            combo.addItem(f"{', '.join(labels)}   ({-offset:.4f} Å⁻¹)", -offset) \
+                if offset > 1e-9 else None
+
+    def _through_chosen(self, index: int):
+        offset = self.cont_through.itemData(index)
+        if offset is not None:
+            self.cont_offset.setValue(float(offset))
+
+    def plane_energies(self, plane, n: int = 161):
+        """The bands on ``plane`` (and its k⊥ window): ``(axis, energies)``,
+        kept until the plane changes -- a new energy only re-contours."""
+        from tools.crystal import planecut
+        from ui.common.jobs import run_blocking
+
+        window = self.cont_window.value()
+        key = (id(self.model), tuple(np.round(plane.normal, 9)),
+               tuple(np.round(plane.e1, 9)), round(plane.offset, 9),
+               round(plane.reach, 9), round(window, 9), n)
+        if self._plane_cache is not None and self._plane_cache[0] == key:
+            return self._plane_cache[1], self._plane_cache[2]
+        model = self.model
+        axis, energies = run_blocking(
+            self, "The bands on the plane",
+            lambda report: planecut.sample(model, plane, n=n, kz_window=window,
+                                           progress=report))
+        energies = self.alignment.apply(energies)
+        self._plane_cache = (key, axis, energies)
+        return axis, energies
+
+    def plane_overlays(self, energy: float, *, zone_colour="#888888"):
+        """The zone outlines and the contours at ``energy`` on the current
+        plane, as figure overlays (colours from the band table, or split by
+        the chosen weight), plus ``(axis, image or None)`` -- the integrated
+        intensity when there is a k⊥ window."""
+        from tools.crystal import planecut
+        from tools.output import figure as F
+
+        plane = self.current_plane()
+        axis, energies = self.plane_energies(plane)
+        out = []
+        for xs, ys in planecut.zone_outlines(self.model.reciprocal, plane):
+            out.append(F.Overlay(xs=list(map(float, xs)), ys=list(map(float, ys)),
+                                 color=zone_colour, width_pt=0.6, style="dashed",
+                                 name="Brillouin zone"))
+        weight = (self.weight_combo.currentText()
+                  if self.weight_combo.currentIndex() > 0 else None)
+        found = planecut.contours(energies, axis, energy)
+        bands = sorted({band for band, _xs, _ys in found})
+        self.cont_table.set_bands([(band, f"band {self.band_number(band)}")
+                                   for band in bands]) \
+            if bands != self.cont_table.bands else None
+        for band, xs, ys in found:
+            style = self.cont_table.style(band, bands.index(band))
+            if not style["visible"]:
+                continue
+            pieces = [(style["colour"], np.arange(len(xs)), "")]
+            if weight is not None:
+                w = self.model.weights_at(plane.points(xs, ys), weight)[band]
+                high = (w >= 0.5).astype(int)
+                pieces = []
+                for run in np.split(np.arange(len(xs)), np.flatnonzero(np.diff(high)) + 1):
+                    if run.size:
+                        end = min(run[-1] + 2, len(xs))
+                        pieces.append(("#2ca02c" if high[run[0]] else style["colour"],
+                                       np.arange(run[0], end),
+                                       f" ({weight})" if high[run[0]] else ""))
+            for colour, idx, tag in pieces:
+                if idx.size >= 2:
+                    out.append(F.Overlay(xs=list(map(float, xs[idx])),
+                                         ys=list(map(float, ys[idx])), color=colour,
+                                         width_pt=0.9,
+                                         name=f"band {self.band_number(band)}{tag}"))
+        image = (planecut.spectral_map(energies, energy, self.cont_width.value())
+                 if len(energies) > 1 else None)
+        return out, axis, image
+
+    def draw_contours(self, recompute: bool = True):
+        from ui.common.jobs import JobCancelled
+
+        view = self.cont_view
+        view.clear()
+        if self.model is None or isinstance(self.model, B.BandPath):
+            self.cont_label.setText("Contours need the bands everywhere: a band "
+                                    "grid or a Hamiltonian.")
+            return
+        if self.cont_through.count() == 0:
+            self._fill_through()
+        energy = self.cont_energy.value()
+        try:
+            overlays, axis, image = self.plane_overlays(energy)
+        except JobCancelled:
+            self.cont_label.setText("Cancelled.")
+            return
+        except ValueError as exc:
+            self.cont_label.setText(f"<b>Cannot draw them:</b> {exc}")
+            return
+        if image is not None:
+            item = pg.ImageItem(image)
+            step = axis[1] - axis[0]
+            item.setRect(pg.QtCore.QRectF(axis[0] - step / 2, axis[0] - step / 2,
+                                          axis[-1] - axis[0] + step,
+                                          axis[-1] - axis[0] + step))
+            item.setLookupTable(np.array([[255 - i, 255 - i, 255 - i]
+                                          for i in range(0, 200)], dtype=np.uint8))
+            view.addItem(item)
+        for o in overlays:
+            style = Qt.DashLine if o.style == "dashed" else Qt.SolidLine
+            view.addItem(pg.PlotDataItem(o.xs, o.ys, pen=pg.mkPen(
+                o.color, width=1.6 if o.name.startswith("band") else 0.8, style=style)))
+        reach = axis[-1]
+        view.setXRange(-reach, reach, padding=0.02)
+        view.setYRange(-reach, reach, padding=0.02)
+        plane = self.current_plane()
+        window = self.cont_window.value()
+        on = [p.label for p in self.named_points()
+              if abs(float(np.dot(p.k, plane.normal)) - plane.offset) < 1e-4]
+        self.cont_label.setText(
+            f"({' '.join(map(str, self.hkl()))}) plane at k⊥ = {plane.offset:.4f} Å⁻¹"
+            + (f", turned {self.cont_rotation.value():g}°"
+               if abs(self.cont_rotation.value()) > 1e-9 else "")
+            + (f", integrated over ±{window / 2:.3f} Å⁻¹ of k⊥" if window > 0 else "")
+            + (f"; it holds {', '.join(dict.fromkeys(on))}" if on else "")
+            + f". E - E_F = {energy:+.3f} eV."
+            + ("" if self.cont_table.bands else " No band reaches this energy here.")
+            + "<br><i>The zones are dashed grey. Step 3 puts contours over a "
+              "measured k-map; step 4 makes figures of them.</i>")
+        if self._zone_window is not None and self._zone_window.isVisible():
+            self._zone_window.set_plane(plane.normal, plane.offset, window, self.hkl())
+
+    def open_zone_window(self):
+        """The zone, in 3-D, with the contour page's plane in it."""
+        from tools.crystal.bz3d import wigner_seitz_cell
+        from ui.panels.fsview import ZoneWindow
+
+        try:
+            plane = self.current_plane()
+        except ValueError as exc:
+            self.cont_label.setText(str(exc))
+            return None
+        if self._zone_window is None or not self._zone_window.isVisible():
+            zone = wigner_seitz_cell(np.asarray(self.model.reciprocal, float))
+            self._zone_window = ZoneWindow(zone, self.named_points(), self)
+        self._zone_window.set_plane(plane.normal, plane.offset,
+                                    self.cont_window.value(), self.hkl())
+        self._zone_window.show()
+        self._zone_window.raise_()
+        return self._zone_window
+
+    # -- the 3-D Fermi surface ------------------------------------------------
+    def _fs_page(self):
+        from ui.panels.fsview import VIEWS, BandStyleTable, FermiSurfaceView
+
+        page = QWidget()
+        column = QHBoxLayout(page)
+        left = QVBoxLayout()
+        form = QFormLayout()
+        self.fs_energy = _spin(0.0, -20.0, 20.0, 3, " eV", 0.02)
+        self.fs_energy.setToolTip("E - E_F of the surface (0: the Fermi surface). "
+                                  "Enter draws it.")
+        self.fs_energy.editingFinished.connect(lambda: self._fs_energy_entered())
+        form.addRow("Energy E - E_F", self.fs_energy)
+        self.fs_detail = QComboBox()
+        self.fs_detail.addItems(["Coarse (fast)", "Medium", "Fine (slow)"])
+        self.fs_detail.setCurrentIndex(1)
+        self.fs_detail.setToolTip("How fine the surface's mesh is. A Hamiltonian "
+                                  "is also diagonalised on a finer grid -- "
+                                  "slower for many orbitals.")
+        form.addRow("Detail", self.fs_detail)
+        draw = QPushButton("Draw")
+        draw.setAutoDefault(False)
+        draw.clicked.connect(lambda: self.draw_fermi_surface())
+        form.addRow(draw)
+        left.addLayout(form)
+        left.addWidget(QLabel("Bands (colour -- the same for several to group "
+                              "pockets -- opacity, shown):"))
+        self.fs_table = BandStyleTable(self.band_looks, opacity=True)
+        self.fs_table.changed.connect(lambda: self.fs_view.update())
+        left.addWidget(self.fs_table)
+        look = QFormLayout()
+        self.fs_view_combo = QComboBox()
+        self.fs_view_combo.addItems(list(VIEWS))
+        self.fs_view_combo.activated.connect(
+            lambda *_: self.fs_view.set_view(self.fs_view_combo.currentText()))
+        look.addRow("View", self.fs_view_combo)
+        self.fs_zone = QCheckBox("The Brillouin zone")
+        self.fs_zone.setChecked(True)
+        self.fs_labels = QCheckBox("Names of its points")
+        self.fs_labels.setChecked(True)
+        for box in (self.fs_zone, self.fs_labels):
+            box.toggled.connect(lambda *_: self._fs_look())
+            look.addRow(box)
+        left.addLayout(look)
+        self.fs_label = QLabel("")
+        self.fs_label.setWordWrap(True)
+        left.addWidget(self.fs_label)
+        left.addStretch(1)
+        column.addLayout(left, 2)
+        right = QVBoxLayout()
+        self.fs_view = FermiSurfaceView()
+        self.fs_view.styles = self.band_looks
+        right.addWidget(self.fs_view, 1)
+        under = QHBoxLayout()
+        under.addWidget(QLabel("<i>drag to turn, wheel to zoom, double-click "
+                               "for the first view</i>"))
+        under.addStretch(1)
+        bigger = QPushButton("Open in its own window")
+        bigger.setAutoDefault(False)
+        bigger.setToolTip("The same surface, large, in a window of its own "
+                          "(with Save picture). Change the energy, detail or "
+                          "bands here, then open it again.")
+        bigger.clicked.connect(lambda: self.open_fs_window())
+        under.addWidget(bigger)
+        right.addLayout(under)
+        column.addLayout(right, 3)
+        return page
+
+    def _fs_energy_entered(self):
+        drawn = self._fs_drawn
+        if drawn is None or abs(drawn.energy - self.fs_energy.value()) > 1e-9:
+            self.draw_fermi_surface()
+
+    def open_fs_window(self):
+        """The Fermi surface drawn here, in a large window of its own."""
+        from ui.panels.fsview import FermiSurfaceWindow
+        from ui.viewers.windows import keep_alive
+
+        if self._fs_drawn is None and self.draw_fermi_surface() is None:
+            return None
+        name = os.path.basename(self.model_path) or "calculation"
+        window = FermiSurfaceWindow(
+            self.fs_view, f"3D Fermi surface — {name}, E - E_F = "
+                          f"{self._fs_drawn.energy:+.3f} eV")
+        keep_alive(window)
+        window.show()
+        return window
+
+    def _fs_look(self):
+        self.fs_view.show_zone = self.fs_zone.isChecked()
+        self.fs_view.show_labels = self.fs_labels.isChecked()
+        self.fs_view.update()
+
+    def zone_points(self):
+        """The zone's named points (one of each) in the calculation's frame:
+        ``[(label, k)]``."""
+        if self.params is None:
+            return []
+        try:
+            from tools.crystal.highsym import high_symmetry_points
+            from tools.crystal.planecut import to_model_frame
+
+            convert = to_model_frame(self.params, self.model.reciprocal)
+            return [(p.label, np.asarray(p.k) @ convert)
+                    for p in high_symmetry_points(self.params)]
+        except Exception:                                    # noqa: BLE001
+            return []
+
+    def draw_fermi_surface(self):
+        """Mesh the surfaces at the energy chosen (with a progress bar: a
+        Hamiltonian of many orbitals takes a while) and show them."""
+        from tools.crystal import fermisurface as FS
+        from ui.common.jobs import JobCancelled, run_blocking
+
+        if self.model is None or isinstance(self.model, B.BandPath):
+            self.fs_view.message = ("The 3D Fermi surface needs the bands "
+                                    "everywhere: a band grid or a Hamiltonian.")
+            self.fs_view.set_surface(None)
+            return None
+        n, sample = ((32, 20), (48, 28), (72, 36))[self.fs_detail.currentIndex()]
+        energy = self.fs_energy.value()
+        model = self.model
+        cached = self._fs_grid if (self._fs_grid is not None
+                                   and self._fs_grid[0] == sample) else None
+
+        def work(report):
+            grid = cached[1] if cached else FS.sampled(model, sample, report)
+            fine = FS.fermi_surface(grid, energy, n=n, progress=report)
+            coarse = FS.fermi_surface(grid, energy, n=24,
+                                      bands=[s.band for s in fine.surfaces])
+            return grid, fine, coarse
+
+        try:
+            grid, fine, coarse = run_blocking(self, "The 3D Fermi surface", work)
+        except JobCancelled:
+            self.fs_label.setText("Cancelled.")
+            return None
+        except (ValueError, MemoryError) as exc:
+            self.fs_label.setText(f"Could not draw it: {exc}")
+            return None
+        self._fs_grid = (sample, grid)
+        self._fs_drawn = fine
+        self.fs_table.set_bands([(s.band, f"band {self.band_number(s.band)}")
+                                 for s in fine.surfaces])
+        self.fs_view.message = "No band reaches this energy."
+        self.fs_view.set_surface(fine, coarse, self.zone_points())
+        self._fs_look()
+        count = sum(len(s.triangles) for s in fine.surfaces)
+        self.fs_label.setText(
+            f"E - E_F = {energy:+.3f} eV: {len(fine.surfaces)} band(s) "
+            f"cross it ({count} triangles)." if fine.surfaces else
+            f"No band reaches E - E_F = {energy:+.3f} eV.")
+        return fine
 
     def _enter_path(self):
         self._fill_sources()
@@ -571,10 +1446,17 @@ class BandsDialog(QDialog):
             view.getImageItem().setVisible(False)
         colour = self.line_colour.currentText()
         window = (self.e_lo.value(), self.e_hi.value())
-        for band, xs, ys in C.band_segments(distance, energies, ticks, window):
-            item = pg.PlotDataItem(xs, ys, pen=pg.mkPen(colour, width=1.5))
+        for band, xs, ys, pen_colour, wide in self.band_styles(
+                distance, energies, ticks, window, colour):
+            item = pg.PlotDataItem(xs, ys, pen=pg.mkPen(pen_colour,
+                                                        width=2.6 if wide else 1.5))
+            item.setZValue(2 if wide else 1)
             view.view.addItem(item)
             self._items.append(item)
+        chosen = sorted(self.highlighted(energies.shape[0], energies))
+        if chosen:
+            self.path_label.setText("Highlighted: " + ", ".join(
+                f"band {self.band_number(i)}" for i in chosen) + ".")
         if weights is not None:
             w = np.clip(np.asarray(weights, float), 0, 1)
             for band in range(energies.shape[0]):
@@ -711,6 +1593,13 @@ class BandsDialog(QDialog):
 
     def _enter_compare(self):
         self._fill_compare_list()
+        if not self.datasets:
+            self.compare_label.setText(
+                "<b>No measurement was selected</b>, so there is nothing to "
+                "compare: press Next for the figures of the calculation alone. "
+                "(To compare, select cuts or k-maps in the main window before "
+                "opening Calculated bands.)")
+            return
         self._compare_changed()
 
     def _compare_data(self):
@@ -799,33 +1688,35 @@ class BandsDialog(QDialog):
             plane = np.nanmean(np.asarray(scan.value, float)[:, :, keep], axis=2)
         return np.asarray(scan.x, float), np.asarray(scan.k, float), plane, energy
 
-    def map_contours(self, kx, ky, energy):
+    def map_contours(self, kx, ky, energy, options=None, align=True):
         """The calculation's contours at measured ``energy`` on the map's
-        grid: ``[(band, xs, ys)]`` (the inverse alignment taken first)."""
+        grid: ``[(band, xs, ys)]`` (the inverse alignment taken first);
+        on the k_z of step 3 unless ``options`` say (``{"kz": ...}``)."""
         if isinstance(self.model, B.BandPath):
             raise ValueError("a band structure along a path has no contours")
         calc_energy = (energy - self.alignment.shift) / self.alignment.z
-        options = self._kz_options()
+        options = options or self._kz_options()
         return B.contours(self.model, np.linspace(kx.min(), kx.max(), 161),
                           np.linspace(ky.min(), ky.max(), 161), calc_energy,
-                          rotation_deg=self.direction_box.value(), **options)
+                          rotation_deg=self.direction_box.value() if align else 0.0,
+                          **options)
 
-    def contour_points_k(self, xs, ys, energy):
+    def contour_points_k(self, xs, ys, energy, options=None, align=True):
         """3-D k (in the calculation's frame) of contour points drawn on a
         map's (k_x, k_y) at measured ``energy`` -- for their weights."""
-        c, s_ = (np.cos(np.deg2rad(-self.direction_box.value())),
-                 np.sin(np.deg2rad(-self.direction_box.value())))
+        angle = self.direction_box.value() if align else 0.0
+        c, s_ = (np.cos(np.deg2rad(-angle)), np.sin(np.deg2rad(-angle)))
         xs, ys = np.asarray(xs, float), np.asarray(ys, float)
         inplane = np.column_stack([c * xs - s_ * ys, s_ * xs + c * ys])
         calc_energy = (energy - self.alignment.shift) / self.alignment.z
-        options = self._kz_options()
+        options = options or self._kz_options()
         if "kz" in options:
             return np.column_stack([inplane, np.full(len(xs), options["kz"])])
         return B.kz_on_sphere(inplane, calc_energy, options["hv"],
                               options["inner_potential"], options["work_function"])
 
     def zone_overlays(self, x_range, y_range, colour="#d62728", style="dashed",
-                      width=0.6):
+                      width=0.6, align=True):
         """The in-plane Brillouin zones (the calculation's lattice, turned
         by the azimuth) over a (k_x, k_y) range, as overlays."""
         from tools.crystal.bz2d import tile_2d, wigner_seitz_cell_2d
@@ -834,7 +1725,7 @@ class BandsDialog(QDialog):
         if isinstance(self.model, B.BandPath):
             return []
         b = np.asarray(self.model.reciprocal, float)[:2, :2]
-        angle = np.deg2rad(self.direction_box.value())
+        angle = np.deg2rad(self.direction_box.value()) if align else 0.0
         turn = np.array([[np.cos(angle), -np.sin(angle)],
                          [np.sin(angle), np.cos(angle)]])
         g1, g2 = turn @ b[0], turn @ b[1]
@@ -852,7 +1743,8 @@ class BandsDialog(QDialog):
                 for p, q in edges.values()]
 
     def contour_overlays(self, kx, ky, energy, colours=("#d62728", "#2ca02c"),
-                         width=0.8, style="solid", threshold=0.5):
+                         width=0.8, style="solid", threshold=0.5, options=None,
+                         by_band=False):
         """The calculated contours at ``energy`` as overlays: in the first
         colour, or -- with a weight chosen in step 2 -- split where the
         chosen orbital's weight crosses ``threshold``, the parts above it in
@@ -862,12 +1754,25 @@ class BandsDialog(QDialog):
         weight = (self.weight_combo.currentText()
                   if self.weight_combo.currentIndex() > 0 else None)
         out = []
-        for band, xs, ys in self.map_contours(kx, ky, energy):
+        from ui.panels.fsview import BAND_COLOURS
+
+        # the calculation's own frame (no measured map's azimuth) when the
+        # kz is given: the contours alone
+        align = options is None
+        order = {}
+        for band, xs, ys in self.map_contours(kx, ky, energy, options, align):
+            if by_band and weight is None:
+                colour = BAND_COLOURS[order.setdefault(band, len(order)) % len(BAND_COLOURS)]
+                out.append(F.Overlay(xs=list(map(float, xs)), ys=list(map(float, ys)),
+                                     color=colour, width_pt=width, style=style,
+                                     name=f"band {self.band_number(band)}"))
+                continue
             xs, ys = np.asarray(xs, float), np.asarray(ys, float)
             if weight is None:
                 pieces = [(0, np.arange(xs.size))]
             else:
-                w = self.model.weights_at(self.contour_points_k(xs, ys, energy),
+                w = self.model.weights_at(self.contour_points_k(xs, ys, energy,
+                                                                options, align),
                                           weight)[band]
                 high = (w >= threshold).astype(int)
                 cuts = np.flatnonzero(np.diff(high)) + 1
@@ -884,7 +1789,7 @@ class BandsDialog(QDialog):
                                      ys=list(map(float, ys[idx])),
                                      color=colours[which], width_pt=width,
                                      style=style,
-                                     name=f"band {band + 1}"
+                                     name=f"band {self.band_number(band)}"
                                           + (f" ({weight})" if which else "")))
         return out
 
@@ -908,6 +1813,37 @@ class BandsDialog(QDialog):
             panel.overlays += self.zone_overlays(panel.x_range, panel.y_range,
                                                  colour="#d62728")
         panel.overlays += self.contour_overlays(kx, ky, energy, colours)
+        panel.data.sources = self.provenance([])
+        return panel
+
+    def panel_contours_alone(self, energy=0.0):
+        """The calculated contours at ``energy`` on the contour page's plane
+        -- (hkl), k⊥, the band colours chosen there -- the zones dashed; with
+        a k⊥ window, the integrated intensity under them. No measurement
+        needed: the calculation's own constant-energy map."""
+        from ui.panels.figure import panel_from_arrays
+        from ui.viewers.curves import curve_panel
+
+        if isinstance(self.model, B.BandPath):
+            raise ValueError("a band structure along a path has no contours: "
+                             "open a band grid or a Hamiltonian")
+        overlays, axis, image = self.plane_overlays(energy)
+        reach = float(axis[-1])
+        name = (f"calculation ({' '.join(map(str, self.hkl()))}) plane, k⊥ = "
+                f"{self.cont_offset.value():.3g} Å⁻¹, {energy:+.2f} eV")
+        labels = ("k (Å⁻¹)", "k (Å⁻¹)") if self.hkl() != (0, 0, 1) else \
+            ("k_x (Å⁻¹)", "k_y (Å⁻¹)")
+        if image is not None:
+            panel = panel_from_arrays(image, axis, axis, *labels, name,
+                                      colormap=self.colormap)
+        else:
+            panel = curve_panel([-reach, reach], [], x_label=labels[0],
+                                y_label=labels[1], name=name)
+            panel.data.x = np.array([-reach, reach])
+            panel.data.y = np.array([-reach, reach])
+        panel.x_range = panel.y_range = (-reach, reach)
+        panel.overlays += overlays
+        panel.title = "E_F" if abs(energy) < 1e-9 else f"E - E_F = {energy:g} eV"
         panel.data.sources = self.provenance([])
         return panel
 
@@ -986,61 +1922,117 @@ class BandsDialog(QDialog):
     def _step_output(self):
         page = QWidget()
         column = QVBoxLayout(page)
-        form = QFormLayout()
-        self.width_box = _spin(0.03, 0.001, 1.0, 3, " eV", 0.005)
-        self.width_box.setToolTip("Lorentzian half-width given to the "
-                                  "calculated bands to make a spectrum of them.")
-        form.addRow("Band width (HWHM)", self.width_box)
-        column.addLayout(form)
         group = QGroupBox("Figure-composer panels")
         g = QVBoxLayout(group)
         self.panel_boxes = {}
         for key, text in (("path", "Measurement along the path, calculation over it"),
                           ("path_calc", "Calculation alone along the path"),
-                          ("compare", "The compared cut or map, calculation over it")):
+                          ("compare", "The compared cut or map, calculation over it"),
+                          ("contours", "Calculated contours alone at the energies "
+                                       "below (k_z plane of step 2)"),
+                          ("fs", "The 3D Fermi surface, as drawn in step 2")):
             box = QCheckBox(text)
-            box.setChecked(True)
             g.addWidget(box)
             self.panel_boxes[key] = box
         series = QHBoxLayout()
-        self.series_box = QCheckBox("Constant-energy series at")
+        self.series_box = QCheckBox("Constant-energy series of the compared map at")
         self.series_box.setToolTip(
             "For a compared map: at each energy, the measured map with the "
             "zones dashed (top row) and the calculated contours alone "
             "(bottom row) -- coloured by the weight chosen in step 2.")
         self.series_energies = QLineEdit("0, -0.3, -0.6, -0.9")
         self.series_energies.setToolTip("Energies (eV, E - E_F), separated "
-                                        "by commas.")
+                                        "by commas -- for the series and the "
+                                        "contours alone.")
         series.addWidget(self.series_box)
         series.addWidget(self.series_energies, 1)
         g.addLayout(series)
-        compose = QPushButton("To figure composer...")
-        compose.clicked.connect(lambda: self.to_figure_composer())
-        g.addWidget(compose)
         column.addWidget(group)
+        form = QFormLayout()
+        self.width_box = _spin(0.03, 0.001, 1.0, 3, " eV", 0.005)
+        self.width_box.setToolTip("Lorentzian half-width given to the "
+                                  "calculated bands to make a spectrum of them.")
+        form.addRow("Band width (HWHM) of the saved spectrum", self.width_box)
+        map_range = QHBoxLayout()
+        self.map_lo = _spin(-1.0, -20.0, 20.0, 3, " eV", 0.1)
+        self.map_hi = _spin(0.2, -20.0, 20.0, 3, " eV", 0.1)
+        map_range.addWidget(self.map_lo)
+        map_range.addWidget(QLabel("to"))
+        map_range.addWidget(self.map_hi)
+        map_range.addStretch(1)
+        self.map_range_label = QLabel("Energies of the saved map")
+        form.addRow(self.map_range_label, map_range)
+        self._map_range_widgets = (self.map_lo, self.map_hi, self.map_range_label)
+        column.addLayout(form)
         buttons = QHBoxLayout()
-        spectrum = QPushButton("Calculation to list")
-        spectrum.setToolTip("The calculated bands as a spectrum (Lorentzians "
-                            "of the width set here), along the path -- or "
-                            "along the compared cut, on its own k grid -- as "
-                            "a new cut in the list.")
+        compose = QPushButton("To figure composer...")
+        compose.setAutoDefault(False)
+        compose.setToolTip("The panels ticked above, in a figure to arrange, "
+                           "label and export (PDF, PNG...).")
+        compose.clicked.connect(lambda: self.to_figure_composer())
+        buttons.addWidget(compose)
+        spectrum = QPushButton("Save calculation to main panel")
+        spectrum.setAutoDefault(False)
         spectrum.clicked.connect(lambda: self.spectrum_to_list())
         buttons.addWidget(spectrum)
+        self.save_button = spectrum
         buttons.addStretch(1)
         column.addLayout(buttons)
         self.output_label = QLabel("")
         self.output_label.setWordWrap(True)
         column.addWidget(self.output_label)
         column.addStretch(1)
-        text = ("The comparison as figures and data. <b>To figure "
-                "composer</b> makes the panels ticked: the measurement along "
-                "the path with the calculation over it, the calculation alone "
-                "(the points' names on its axis), and the compared cut or "
-                "map with its calculation -- arranged, labelled and exported "
-                "there like any panel. <b>Calculation to list</b> makes the "
-                "calculation a spectrum, so it opens in the viewers beside "
-                "the data or is subtracted from it.")
+        text = ("The figures and the data. Tick the panels to make and press "
+                "<b>To figure composer</b> -- arranged, labelled and exported "
+                "there like any panel. <b>Save calculation to main panel</b> "
+                "makes the calculation a spectrum in the list, so it opens in "
+                "the viewers beside the data or is subtracted from it. "
+                "<b>Close</b> (bottom right) closes this window -- it asks "
+                "first, and keeps your settings for next time.")
         return Step("Output", text, page)
+
+    def _output_defaults(self):
+        """Tick the panels that suit the goal and what was selected."""
+        if not hasattr(self, "panel_boxes"):
+            return
+        goal = self.goal()
+        everywhere = self.model is not None and not isinstance(self.model, B.BandPath)
+        maps = bool(self._maps())
+        wanted = {"path": goal == "dispersion" and maps,
+                  "path_calc": goal == "dispersion",
+                  "compare": bool(self.datasets) and goal != "fs",
+                  "contours": goal == "contours" and everywhere,
+                  "fs": goal == "fs" and everywhere}
+        for key, on in wanted.items():
+            self.panel_boxes[key].setChecked(on)
+        # what "save to the main panel" makes is what the main panel's
+        # viewers can open: a cut, or a constant-energy map -- not a surface
+        button = self.save_button
+        for widget in self._map_range_widgets:
+            widget.setVisible(goal == "contours")
+        if goal == "fs":
+            button.setText("Save calculation to main panel")
+            button.setEnabled(False)
+            button.setToolTip("The main panel's viewers open cuts and maps, not "
+                              "a 3-D surface: use To figure composer (or, in "
+                              "step 2, Open in its own window -> Save picture).")
+        elif goal == "contours":
+            button.setText("Save calculated map to main panel")
+            button.setEnabled(everywhere)
+            button.setToolTip("The calculated intensity on the plane of step 2 "
+                              "-- its (hkl), k⊥ and k⊥ window -- at every "
+                              "energy of the range set here (Lorentzians of the "
+                              "width set), as a k-map in the main panel's "
+                              "list: open it, slice it, compare it like a "
+                              "measured map.")
+        else:
+            button.setText("Save calculation to main panel")
+            button.setEnabled(self.model is not None)
+            button.setToolTip("The calculated bands as a spectrum (Lorentzians "
+                              "of the width set here), along the path -- or "
+                              "along the compared cut, on its own k grid -- as "
+                              "a new cut in the main panel's list, with the "
+                              "high-symmetry points' names kept.")
 
     # -- panels -----------------------------------------------------------
     def _overlays(self, distance, energies, ticks, window, colour, weights=None,
@@ -1048,10 +2040,13 @@ class BandsDialog(QDialog):
         from tools.output import figure as F
 
         out = []
-        for band, xs, ys in C.band_segments(distance, energies, ticks, window):
+        for band, xs, ys, line_colour, wide in self.band_styles(
+                distance, energies, ticks, window, colour):
             out.append(F.Overlay(xs=list(map(float, xs)), ys=list(map(float, ys)),
-                                 color=colour, width_pt=width,
-                                 name=f"band {band + 1}"))
+                                 color=line_colour, width_pt=width * (1.8 if wide else 1),
+                                 name=f"band {self.band_number(band)}"))
+        # highlighted bands on top
+        out.sort(key=lambda o: o.width_pt)
         if weights is not None:
             w = np.clip(np.asarray(weights, float), 0, 1)
             for band, row in enumerate(energies):
@@ -1186,7 +2181,35 @@ class BandsDialog(QDialog):
                 out += self.series_panels()
             except ValueError as exc:
                 problems.append(str(exc))
+        if self.panel_boxes["contours"].isChecked():
+            try:
+                out += [self.panel_contours_alone(e)
+                        for e in self.series_energies_list() or [0.0]]
+            except ValueError as exc:
+                problems.append(str(exc))
+        if self.panel_boxes["fs"].isChecked():
+            try:
+                out.append(self.panel_fermi_surface())
+            except ValueError as exc:
+                problems.append(str(exc))
         return out, problems
+
+    def panel_fermi_surface(self):
+        """The 3-D Fermi surface of step 2 as a picture panel."""
+        from tools.output import figure as nf
+        from ui.panels.figure import Panel, _qimage_array
+
+        if self._fs_drawn is None:
+            if self.draw_fermi_surface() is None:
+                raise ValueError("no 3D Fermi surface: draw it in step 2")
+        rgba = _qimage_array(self.fs_view.render_image(1400, 1200))
+        energy = self._fs_drawn.energy
+        panel = Panel(data=nf.picture_data(
+            rgba, f"Fermi surface at {energy:+.2f} eV" if abs(energy) > 1e-9
+            else "Fermi surface"))
+        panel.data.sources = self.provenance([])
+        panel.x_labels = panel.y_labels = False
+        return panel
 
     def series_energies_list(self):
         values = []
@@ -1279,11 +2302,60 @@ class BandsDialog(QDialog):
                           source_label=name, parameters=parameters, prefix="calc",
                           source_path=self.model_path)
 
+    def build_map(self):
+        """The calculation as a constant-energy map on the contour page's
+        plane: ``(k1, k2, E)``, Lorentzians of the band width about every
+        band, averaged over the k⊥ window."""
+        from ui.common.jobs import run_blocking
+
+        plane = self.current_plane()
+        axis, energies = self.plane_energies(plane)
+        lo, hi = sorted((self.map_lo.value(), self.map_hi.value()))
+        energy = np.arange(lo, hi + 0.005, 0.01)
+        width = self.width_box.value()
+        flat = energies.reshape(energies.shape[0], energies.shape[1], -1)
+        near = np.flatnonzero((flat.max((0, 2)) >= lo - 10 * width)
+                              & (flat.min((0, 2)) <= hi + 10 * width))
+        chosen = energies[:, near]
+
+        def work(report):
+            cube = np.empty((axis.size, axis.size, energy.size), dtype=np.float32)
+            for i, e in enumerate(energy):
+                weight = width / ((chosen - e) ** 2 + width ** 2) / np.pi
+                cube[:, :, i] = weight.sum(axis=1).mean(axis=0)
+                report((i + 1) / energy.size, "The calculated map")
+            return cube
+
+        cube = run_blocking(self, "The calculated map", work)
+        hkl = " ".join(map(str, self.hkl()))
+        parameters = {"calculation": os.path.basename(self.model_path),
+                      "plane_hkl": hkl, "k_perp": plane.offset,
+                      "in_plane_rotation_deg": self.cont_rotation.value(),
+                      "k_perp_window": self.cont_window.value(),
+                      "z": self.alignment.z, "shift_eV": self.alignment.shift,
+                      "width_eV": width}
+        taken = set(self._existing())
+        name, n = f"({hkl}) calculated map", 2
+        while name in taken:
+            name, n = f"({hkl}) calculated map {n}", n + 1
+        labels = ({"x": "kx (Å⁻¹)", "k": "ky (Å⁻¹)"} if self.hkl() == (0, 0, 1)
+                  else {"x": "k1 (Å⁻¹)", "k": "k2 (Å⁻¹)"})
+        labels["z"] = "E - E_F (eV)"
+        return MemoryData("k_map", (axis.copy(), axis.copy(), energy), cube, labels,
+                          source_label=name, parameters=parameters, prefix="calc",
+                          source_path=self.model_path)
+
     def spectrum_to_list(self):
-        if self.model is None:
+        from ui.common.jobs import JobCancelled
+
+        if self.model is None or self.goal() == "fs":
             return None
         try:
-            result = self.build_spectrum()
+            result = (self.build_map() if self.goal() == "contours"
+                      else self.build_spectrum())
+        except JobCancelled:
+            self.output_label.setText("Cancelled.")
+            return None
         except ValueError as exc:
             self.output_label.setText(f"<b>Could not make it:</b> {exc}")
             return None
