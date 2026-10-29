@@ -36,13 +36,39 @@ Enter in a field never presses a button.
   left out and saving to the main panel is greyed (it made a path cut);
   for contours it saves a calculated k-map on the plane, at a range of
   energies.
+- **No console window to close by mistake, and errors kept in a file**
+  (`ARPES viewer.pyw`, `tools/runtime/console.py`,
+  `tools/runtime/errorlog.py`, `ui/common/crashguard.py`). On Windows a
+  double-clicked `ARPES_viewer.py` came with a console whose close button
+  closed the program. `ARPES viewer.pyw` starts it with `pythonw` (no
+  console; output to `~/.arpes_viewer/launcher.log`, a message box on a
+  failed start), and a `.py` double-clicked all the same hides the console
+  opened for it alone (one a command prompt owns is left). What the console
+  would show of an error now goes by itself to
+  `error_logs/errors_<date>_<time>.txt` in the program's folder, made only
+  when an error comes (a warning before it is kept as context). And an
+  exception escaping a button's handler no longer aborts the program --
+  PyQt5's default with no `sys.excepthook` of the program's own, checked:
+  exit 134 -- it is written there, said once in a message, and the program
+  carries on. The main panel's foot, that message and the README say to
+  upload the file with a bug report or paste its text: **Open the error
+  logs**, **Copy the newest error log**.
 - **Enter in a field takes the value, everywhere** (`ui/common/enterkeys.py`).
   Typing an energy in the Fermi-surface step and pressing Enter pressed Next:
   a Qt dialog passes Enter on from a spin box or line edit to its default
   button. An application filter now stops it at the window once the field
   has taken the value, in every dialog of the program (Qt's own file,
   message, input and colour dialogs keep Enter = OK); a focused button still
-  answers Enter.
+  answers Enter. It first decided by where the focus was, and so missed the
+  contour page's in-plane rotation: the value started a computation whose
+  progress window took the focus, and Enter then pressed Next. It no longer
+  looks at the focus -- Enter that reaches a dialog is always stopped -- and a
+  window that redraws only on a button names that redraw (`enter_redraws`):
+  the Brillouin-zone tool's Plot, a viewer's selection-box Refresh, the
+  core-level zoom's Show. Every field was checked by a probe run over the
+  test suite: those listening to nothing are parameters of an explicit action
+  (an output name, an export size, a fit's range), where Enter just takes the
+  value.
 - **Calculated bands, as an experimentalist meets it** (`ui/panels/bands.py`,
   `ui/panels/bandfinder.py`, `ui/panels/fsview.py`,
   `tools/crystal/fermisurface.py`). Step 1 now starts from *what you want to

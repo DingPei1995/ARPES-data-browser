@@ -100,6 +100,24 @@ Puis, depuis le dossier `ARPES_viewer` :
 python ARPES_viewer.py
 ```
 
+**Sous Windows, double-cliquez `ARPES viewer.pyw`** dans le dossier du
+programme, et non `ARPES_viewer.py` : Windows lance un `.pyw` avec
+`pythonw`, sans fenêtre de console noire -- la fermer par erreur fermait le
+programme. (Un `.py` double-cliqué malgré tout cache désormais la console
+ouverte pour lui seul ; lancé depuis une invite de commande, il la garde.)
+Les messages du programme vont dans `~/.arpes_viewer/launcher.log` ; s'il
+s'arrête sur une erreur, une fenêtre montre la fin de ce journal.
+
+**Les erreurs sont gardées dans un fichier texte.** Ce que la console
+afficherait en cas d'erreur -- l'erreur et sa trace -- est enregistré de
+lui-même dans **`error_logs/errors_<date>_<heure>.txt` du dossier du
+programme** (dans `~/.arpes_viewer/error_logs` si ce dossier n'est pas
+accessible en écriture), seulement quand une erreur survient. Une fenêtre le
+signale et le programme **continue** au lieu de se fermer. Avec un rapport
+de bug, **téléversez ce fichier** (dans GitHub Issues : glissez-le dans la
+zone de texte) **ou collez son texte** -- le pied du panneau principal offre
+**Copy the newest error log** et **Open the error logs**.
+
 **Sur Mac, pas besoin du Terminal :** double-cliquez **`ARPES viewer.app`**
 dans le dossier du programme (glissez-la dans le Dock pour l'y garder). Elle
 trouve le Python qui a les paquets ci-dessus -- le même que `python3` dans le

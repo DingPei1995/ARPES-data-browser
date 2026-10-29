@@ -95,6 +95,24 @@ Then, from the `ARPES_viewer` folder:
 python ARPES_viewer.py
 ```
 
+**On Windows, double-click `ARPES viewer.pyw`** in the program's folder,
+not `ARPES_viewer.py`: Windows runs a `.pyw` with `pythonw`, which opens no
+black console window -- closing that window by mistake used to close the
+program with it. (A `.py` double-clicked all the same now hides the console
+it was given; one started from a command prompt keeps its console.) The
+program's messages go to `~/.arpes_viewer/launcher.log`; if it stops with an
+error, a message box shows the end of that log.
+
+**Errors are kept as a text file.** Whatever the console would show when
+something goes wrong -- the error and its traceback -- is saved by itself in
+**`error_logs/errors_<date>_<time>.txt` in the program's folder** (in
+`~/.arpes_viewer/error_logs` if that folder cannot be written), only when an
+error happens. A message says so, and the program **keeps running** instead
+of closing. With a bug report, **upload that file** (on GitHub Issues: drag
+it into the text box) **or paste its text** — the main panel's foot has
+**Copy the newest error log** (its text to the clipboard) and **Open the
+error logs** (the folder).
+
 **On a Mac you do not need Terminal to start it:** double-click
 **`ARPES viewer.app`** in the program's folder (drag it to the Dock to keep
 it there). It finds the Python that has the packages above -- the same one
@@ -1306,8 +1324,11 @@ repeated scans, Detector corrections), it **asks before closing** — the last
 step's Close sits where Next was, so a quick double click no longer loses the
 work; the title bar's close and Esc ask too. **Enter in a field takes its
 value** (and redraws what depends on it) — in every window of the program it
-never presses Next, Close or any other button; only a button that has the
-focus answers Enter. What you set is **kept**: the window opens as you left
+never presses Next, Close or any other button, whatever the value set going
+(even a computation with a progress bar); only a button that has the focus
+answers Enter. Where a window redraws only on a button — the Brillouin-zone
+tool's **Plot**, a viewer's selection-box **Refresh**, the core-level zoom's
+**Show** — Enter in its fields does that redraw, and nothing else. What you set is **kept**: the window opens as you left
 it (**Restore defaults** at the bottom left starts afresh).
 
 **1. The calculation.** First say **what you want to see**:

@@ -4160,6 +4160,8 @@ class ImagePanel(QWidget):
         self.ratio_cb.toggled.connect(self._on_ratio_changed)
         self.ratio_spin.valueChanged.connect(self._on_ratio_changed)
         self.refresh_button.clicked.connect(self._on_refresh_clicked)
+        # Enter in a corner field applies the box, as Refresh does
+        self.selection_widget.enter_redraws = self._on_refresh_clicked
         if self.curves is not None:
             for widget in self._curve_widgets():
                 widget.setVisible(False)

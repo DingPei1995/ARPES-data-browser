@@ -188,13 +188,22 @@ class Ui_MainWindow:
             f"<b>{version.title()}</b><br>"
             f"Bug reports, questions and the latest version: "
             f"<a href=\"{version.REPOSITORY}\">{version.REPOSITORY}</a>"
-            f" (bugs: <a href=\"{version.REPOSITORY}/issues\">Issues</a>)",
+            f" (bugs: <a href=\"{version.REPOSITORY}/issues\">Issues</a>)<br>"
+            f"With a bug report, upload the error log (attach the file) or "
+            f"paste its text: <a href=\"errors:open\">Open the error logs</a>"
+            f" · <a href=\"errors:copy\">Copy the newest error log</a>",
             self.centralwidget)
         self.AboutLabel.setWordWrap(True)
-        self.AboutLabel.setOpenExternalLinks(True)
+        self.AboutLabel.setOpenExternalLinks(False)
+        self.AboutLabel.linkActivated.connect(
+            lambda link: about_link(link, MainWindow))
         self.AboutLabel.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
         self.AboutLabel.setToolTip(
-            "Please give this version number when reporting a bug.")
+            "Please give this version number when reporting a bug. Errors are "
+            "saved by themselves in error_logs/ in the program's folder: "
+            "upload that file with the report (GitHub Issues: drag it into "
+            "the text box), or copy its text and paste it there or into an "
+            "e-mail.")
         menu_layout.addWidget(self.AboutLabel)
 
         self.statusbar = QtWidgets.QStatusBar(MainWindow)
@@ -619,3 +628,38 @@ class InfoWindow(QtWidgets.QWidget):
         self.ExportMetaButton = QtWidgets.QPushButton("Export metadata (.csv)")
         self.ExportMetaButton.setToolTip("Write the metadata table to CSV.")
         layout.addWidget(self.ExportMetaButton)
+
+
+def about_link(link: str, window=None):
+    """A link of the main panel's foot: the error logs (open their folder,
+    or copy the newest one's text to paste into a bug report), else a web
+    page."""
+    from PyQt5.QtCore import QUrl
+    from PyQt5.QtGui import QDesktopServices
+    from PyQt5.QtWidgets import QApplication
+
+    from tools.runtime import errorlog
+
+    def say(text):
+        bar = window.statusBar() if window is not None else None
+        if bar is not None:
+            bar.showMessage(text, 12000)
+
+    if link == "errors:open":
+        folder = errorlog.log_folder()
+        if folder:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+            say(f"Error logs: {folder}")
+        return folder
+    if link == "errors:copy":
+        path = errorlog.newest()
+        if not path:
+            say("No error log yet: nothing has gone wrong.")
+            return ""
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            QApplication.clipboard().setText(handle.read())
+        say(f"Copied {path} -- paste it into the bug report "
+            "(or attach the file itself).")
+        return path
+    QDesktopServices.openUrl(QUrl(link))
+    return link

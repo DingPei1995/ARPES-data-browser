@@ -1311,6 +1311,9 @@ class ZoomWindow(QMainWindow):
         apply_button = QPushButton("Show")
         apply_button.clicked.connect(lambda: self.set_range(
             self.lo_box.value(), self.hi_box.value()))
+        # Enter in From / to shows the range, as Show does
+        self.enter_redraws = lambda: self.set_range(self.lo_box.value(),
+                                                    self.hi_box.value())
         row.addWidget(apply_button)
         row.addSpacing(12)
         self.log_scale = QCheckBox("Log counts")

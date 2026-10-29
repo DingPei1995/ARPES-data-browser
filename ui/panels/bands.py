@@ -1146,6 +1146,8 @@ class BandsDialog(QDialog):
         self.fs_detail.setToolTip("How fine the surface's mesh is. A Hamiltonian "
                                   "is also diagonalised on a finer grid -- "
                                   "slower for many orbitals.")
+        self.fs_detail.activated.connect(
+            lambda *_: self.draw_fermi_surface() if self._fs_drawn is not None else None)
         form.addRow("Detail", self.fs_detail)
         draw = QPushButton("Draw")
         draw.setAutoDefault(False)
