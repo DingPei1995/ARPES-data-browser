@@ -1,7 +1,10 @@
 # How to cite ARPES viewer: read by GitHub ("Cite this repository") and by
 # Zenodo when it archives a release. The DOI is Zenodo's concept DOI: it
-# stands for all versions and resolves to the latest.
-cff-version: 1.2.0
+# stands for all versions and resolves to the latest. The licence is the
+# SPDX id Zenodo maps to its own entry, so each archived release carries it
+# rather than Zenodo's default (CC BY 4.0, which would allow commercial use).
+cff-license: PolyForm-Noncommercial-1.0.0
+version: 1.2.0
 message: "If you use ARPES viewer for a paper, please cite it as below."
 type: software
 title: "ARPES viewer"
