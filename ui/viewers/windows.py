@@ -97,14 +97,18 @@ def close_child_windows(owner):
     """
     from PyQt5 import sip
 
-    # Asked afresh after every close: closing one window can delete others
-    # (its own children, a popup) that a list taken once would still hold --
-    # and a C++ object deleted under a wrapper made by findChildren is not
-    # always caught as a RuntimeError: touching it can crash the program.
+    # Only dialogs and main windows -- what a viewer opens -- and the type
+    # test done by Qt itself (findChildren with a class), not on every child
+    # widget: asking for every QWidget handed Python wrappers of Qt's own
+    # internal widgets (popup containers, tooltips), which Qt deletes without
+    # telling Python, and touching one of those crashed the program now and
+    # then. Asked afresh after every close, since closing one window can
+    # delete another.
     done = set()
     while True:
         try:
-            pending = [child for child in owner.findChildren(QWidget)
+            candidates = owner.findChildren(QDialog) + owner.findChildren(QMainWindow)
+            pending = [child for child in candidates
                        if sip.unwrapinstance(child) not in done
                        and child.isWindow() and child.isVisible()]
         except RuntimeError:          # the owner itself is gone

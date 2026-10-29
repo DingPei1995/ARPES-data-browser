@@ -53,11 +53,14 @@ Enter in a field never presses a button.
   detection to the list, the tight-binding fit, cube resampling. Rotating a
   3-D view and painting figures stay on the GUI thread (a bar would
   interrupt the drag; painting is Qt's).
-- **A crash closing a viewer** (`ui/viewers/windows.py`). Closing a window's
-  child windows walked a list taken once; a close could delete another
-  child under it, and touching that one crashed the program (seen once in
-  five full test runs). The children are now asked for afresh after each
-  close.
+- **A crash closing a viewer** (`ui/viewers/windows.py`, `ARPES_viewer.py`).
+  Closing a viewer closed its child windows by asking Qt for *every* child
+  widget and testing each: that handed Python wrappers of Qt's own internal
+  widgets (popup containers, tooltips), which Qt deletes without telling
+  Python, and touching a stale one crashed the program -- now and then (two
+  full test runs in ten). Only dialogs and main windows are asked for now,
+  the type test done by Qt, afresh after every close; closing the program
+  touches only those kinds of top-level window too.
 - **No console window to close by mistake, and errors kept in a file**
   (`ARPES viewer.pyw`, `tools/runtime/console.py`,
   `tools/runtime/errorlog.py`, `ui/common/crashguard.py`). On Windows a

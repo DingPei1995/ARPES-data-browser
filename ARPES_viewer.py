@@ -2704,8 +2704,11 @@ def _close_viewers_quietly():
     windows = _open_viewer_windows() + list(viewer_windows_module._DETACHED)
     # Figures, stack plots and dialogs opened without a parent are top-level
     # windows of their own, and would keep the program running too.
+    # (only windows of the program's own kinds: Qt's internal top-level
+    # widgets -- popups, tooltips -- are not touched, see close_child_windows)
     windows += [w for w in QApplication.topLevelWidgets()
-                if w is not win and w.isVisible() and w not in windows]
+                if isinstance(w, (QMainWindow, QDialog)) and w is not win
+                and w.isVisible() and w not in windows]
     for window in windows:
         try:
             window.close()
