@@ -35,6 +35,11 @@ Enter in a field never presses a button.
   Ding Pei's personal work, developed from Ding Pei's own earlier code with
   no institutional funding, with Ding Pei's testing on real experimental
   data and the feedback from it, and the implementation assisted by Claude.
+  Some of its ideas were inspired by the data-processing programs of the
+  Chen Group at the University of Oxford. `CITATION.cff` gives the
+  reference for GitHub's *Cite this repository* and for Zenodo. The request
+  to discuss AI-related papers first is a request, not a condition of use:
+  the licence decides what is permitted.
 
 - **Calculated bands: the plane, the cell, the bands' looks**
   (`tools/crystal/planecut.py`, `ui/panels/bands.py`, `ui/panels/fsview.py`).

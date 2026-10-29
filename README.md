@@ -13,20 +13,23 @@ reporting a bug, and upload the error log with the report ([below](#bug-reports)
 > (synchrotrons and similar user facilities) only -- formats of individual
 > laboratories' own set-ups are not supported. If you use this program for
 > a paper on ARPES experiments, please cite this repository in its
-> references (<https://github.com/DingPei1995/ARPES-data-browser>). A paper
-> related to AI that uses this program or its code **must** first be
-> discussed with the author by e-mail. For collaborations, or
+> references (<https://github.com/DingPei1995/ARPES-data-browser>; GitHub's
+> *Cite this repository* gives the reference). If you write a paper related
+> to AI that uses this program or its code, please discuss it with the
+> author by e-mail first. For collaborations, or
 > questions about the details, contact
 > [ding.pei@synchrotron-soleil.fr](mailto:ding.pei@synchrotron-soleil.fr).
 >
 > **Licence and authorship.** Copyright (c) 2026 Ding Pei. Licensed under
 > the [PolyForm Noncommercial License 1.0.0](LICENSE.md); see also
 > [NOTICE](NOTICE). This is the author's personal work, developed from the
-> author's own earlier code; no institution funded it. The requirements, design
-> decisions, trade-offs, physics, the testing on real experimental data
-> and the feedback from it (drawing on
-> [Phys. Rev. B 103, 245121 (2021)](https://doi.org/10.1103/PhysRevB.103.245121) and
-> [Phys. Rev. B 95, 125126 (2017)](https://doi.org/10.1103/PhysRevB.95.125126)),
+> author's own earlier code; no institution funded it. Some of its ideas
+> were inspired by the ARPES data-processing programs of the author's
+> former group, the [Chen Group at the University of Oxford](https://www.arpes.org.uk).
+> The requirements, design decisions, trade-offs, physics, the testing on
+> real experimental data and the feedback from it (drawing on
+> [Phys. Rev. B 103, 245121 (2021)](https://doi.org/10.1103/PhysRevB.103.245121)
+> and [Phys. Rev. B 95, 125126 (2017)](https://doi.org/10.1103/PhysRevB.95.125126)),
 > and the review and acceptance of every change are Ding Pei's; the
 > implementation was assisted by Claude (Anthropic), credited as co-author
 > in the commits.

@@ -7,7 +7,7 @@ recorded under the current version's CHANGELOG entry. A small change moves
 only the last number (1.1.0 -> 1.1.1); new tools move the middle one
 (1.1.1 -> 1.2.0). Keep UPDATED current, and the
 version in ``ARPES viewer.app/Contents/Info.plist`` (the macOS launcher)
-the same as VERSION -- a test checks it.
+and the version and date in ``CITATION.cff`` the same -- tests check them.
 """
 VERSION = "1.2.1"
 UPDATED = "2026-10-29"

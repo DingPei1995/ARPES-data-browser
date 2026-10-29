@@ -34,3 +34,10 @@ def test_the_changelog_opens_on_the_current_version():
     with open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8") as f:
         first = next(line for line in f if line.startswith("## "))
     assert re.match(rf"## {re.escape(version.VERSION)} — {version.UPDATED}", first)
+
+
+def test_the_citation_file_states_the_current_version():
+    with open(os.path.join(ROOT, "CITATION.cff"), encoding="utf-8") as f:
+        text = f.read()
+    assert re.search(rf"^version: {re.escape(version.VERSION)}$", text, re.M)
+    assert re.search(rf"^date-released: {version.UPDATED}$", text, re.M)
