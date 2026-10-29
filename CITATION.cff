@@ -1,0 +1,25 @@
+# How to cite ARPES viewer: read by GitHub ("Cite this repository") and by
+# Zenodo when it archives a release. Add the Zenodo concept DOI under
+# `identifiers` once the first archived release has one.
+cff-version: 1.2.0
+message: "If you use ARPES viewer for a paper, please cite it as below."
+type: software
+title: "ARPES viewer"
+abstract: >-
+  A Python/PyQt5 program for angle-resolved photoemission (ARPES) data:
+  browse the measurements of a beamtime, convert to momentum, cut, fit,
+  process, compare with band-structure calculations, and lay the results
+  out as publication figures.
+authors:
+  - family-names: Pei
+    given-names: Ding
+version: 1.2.1
+date-released: 2026-10-29
+repository-code: "https://github.com/DingPei1995/ARPES-data-browser"
+url: "https://pypi.org/project/arpes-viewer/"
+keywords:
+  - ARPES
+  - photoemission
+  - synchrotron
+  - band structure
+  - Fermi surface
