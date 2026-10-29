@@ -5,7 +5,11 @@
 `version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
 (<https://github.com/DingPei1995/ARPES-data-browser>). Please quote it when
-reporting a bug.
+reporting a bug, and **upload the error log** with the report: the program
+saves what went wrong by itself in `error_logs/errors_<date>_<time>.txt` in
+its folder -- attach that file (on GitHub Issues, drag it into the text
+box), or copy its text and paste it in (the main panel's foot has **Copy the
+newest error log** and **Open the error logs**).
 
 > **Terms of use.** This program is for **non-commercial use only**
 > (academic research and teaching); any commercial use is not permitted.
@@ -49,6 +53,15 @@ python ARPES_viewer.py
 ```
 
 Needs Python 3.9+, PyQt5, pyqtgraph, numpy, h5py, scipy.
+
+**On Windows, double-click `ARPES viewer.pyw`** (in this folder): it starts
+the program with no console window to close by mistake (its output goes to
+`~/.arpes_viewer/launcher.log`). A double-clicked `ARPES_viewer.py` hides
+the console Windows opened for it; one started from a command prompt keeps
+it. **Errors** -- what the console would show -- are saved by themselves in
+`error_logs/errors_<date>_<time>.txt` in this folder, and the program keeps
+running through them. With a bug report, upload that file or paste its text
+(the main panel's foot: **Copy the newest error log**).
 
 **On a Mac, double-click `ARPES viewer.app`** (in this folder) instead. It
 finds a Python that has the packages -- the one `python3` is in Terminal,
@@ -397,8 +410,10 @@ named for what they do (they were *Combine data*, *Data operations* and
 - **Smooth / derivative...** -- the filters that bring out bands: smoothing,
   derivatives, curvature, backgrounds, symmetrisation.
 
-At the foot of the panel: the version and its date, and the link to GitHub
-for bug reports and updates.
+At the foot of the panel: the version and its date, the link to GitHub for
+bug reports and updates, and the error logs -- **Open the error logs** (the
+folder) and **Copy the newest error log** (its text to the clipboard): upload
+the file with a bug report, or paste the text.
 
 The menu only offers what fits the selection. An entry is greyed out when
 the selected dataset is the wrong kind (a stack plot needs a cut, the 3-D

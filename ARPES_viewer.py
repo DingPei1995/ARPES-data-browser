@@ -2766,7 +2766,17 @@ def DumpUIWidgets(values):
 
 
 if __name__ == "__main__":
+    # Windows, a double-clicked .py: hide the console opened for it alone,
+    # which closed the program when closed by mistake (ARPES viewer.pyw opens
+    # none) -- see tools/runtime/console.py
+    from tools.runtime import console
+    console.hide_own_console()
     app = QApplication(sys.argv)
+    # errors are kept in error_logs/ beside this file, and do not close the
+    # program -- see ui/common/crashguard.py
+    from ui.common import crashguard
+    from version import VERSION as _VERSION
+    crashguard.install(os.path.dirname(os.path.abspath(__file__)), _VERSION)
     # The same widget style on every system (Fusion on macOS, whose native
     # buttons do not fit the tool panel) -- see ui/common/platform_style.py.
     from ui.common import platform_style

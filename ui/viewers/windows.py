@@ -2574,6 +2574,8 @@ class BrillouinZoneDialog(QDialog):
             "Work out the zone from these settings and draw it on the "
             "contour. Nothing is drawn until this is pressed.")
         self.plot_button.clicked.connect(self.plot)
+        # Enter in any of its fields redraws -- never anything else
+        self.enter_redraws = self.plot
         self.clear_button = QPushButton("Clear overlay")
         self.clear_button.setToolTip("Remove the drawn zone(s) from the contour.")
         self.clear_button.clicked.connect(self._clear_overlay)
