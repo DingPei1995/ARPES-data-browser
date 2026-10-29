@@ -259,16 +259,24 @@ class RidgeDialog(QDialog):
         self.preview.report(f"{len(result.points)} ridge points")
         return result
 
-    def compute(self, data):
-        """``(ridge values, points)`` for a whole dataset."""
+    def settings(self):
+        """The window's settings, read once (on the GUI thread)."""
+        return {"sigmas": (self.sigma_x.value(), self.sigma_y.value()),
+                "options": self.options(),
+                "hold": PLANES[self.plane_combo.currentIndex()][1]}
+
+    def compute(self, data, settings=None):
+        """``(ridge values, points)`` for a whole dataset. Touches no widget
+        when ``settings`` are given, so it can run off the GUI thread."""
+        settings = settings or self.settings()
         values = self._values(data)
         axes, _labels = self._axes_labels(data)
-        sigmas = (self.sigma_x.value(), self.sigma_y.value())
+        sigmas = settings["sigmas"]
         if data.kind == "cut":
-            result = RD.ridges(values, axes[0], axes[1], *sigmas, **self.options())
+            result = RD.ridges(values, axes[0], axes[1], *sigmas, **settings["options"])
             return result.strength, result.points
-        hold = PLANES[self.plane_combo.currentIndex()][1]
-        return RD.ridge_cube(values, axes, hold, sigmas, **self.options())
+        return RD.ridge_cube(values, axes, settings["hold"], sigmas,
+                             **settings["options"])
 
     def _name(self, base):
         taken = set(self._existing())
@@ -279,9 +287,27 @@ class RidgeDialog(QDialog):
         return name
 
     def results_to_list(self):
+        from ui.common.jobs import JobCancelled, busy, run_blocking
+
         made = []
-        for name, data in self.datasets:
-            values, points = self.compute(data)
+        datasets = list(self.datasets)
+        settings = self.settings()
+
+        def work(report):
+            out = []
+            for index, (name, data) in enumerate(datasets):
+                report(index / len(datasets),
+                       f"Ridges of {name} ({index + 1} of {len(datasets)})")
+                out.append(self.compute(data, settings))
+            return out
+
+        try:
+            # a ridge search through every plane of a map: the slow part
+            computed = (work(lambda *_a: None) if busy()
+                        else run_blocking(self, "Ridge detection", work))
+        except JobCancelled:
+            return []
+        for (name, data), (values, points) in zip(datasets, computed):
             axes, _labels = self._axes_labels(data)
             options = self.options()
             parameters = {"sigma_x": self.sigma_x.value(),

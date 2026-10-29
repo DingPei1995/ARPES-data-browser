@@ -544,19 +544,24 @@ class TightBindingDialog(QDialog):
         options = {}
         if self.hold_t1.isChecked():
             options["t1"] = self.hold_value.value()
+        from ui.common.jobs import busy_work
+
         try:
             if self.fit_azimuth.isChecked() and self.k_points.shape[1] >= 2:
                 base = TB.rotate(self.lattice_vectors(), -self.azimuth.value())
-                model = TB.fit_azimuth(self.k_points, self.energies, base,
-                                       self.n_shells.value(),
-                                       around=self.azimuth.value(),
-                                       span=self.azimuth_span.value(), **options)
+                # a fit at every azimuth of the span: the slow one
+                model = busy_work(self, "Fitting, the azimuth refined",
+                                  TB.fit_azimuth, self.k_points, self.energies,
+                                  base, self.n_shells.value(),
+                                  around=self.azimuth.value(),
+                                  span=self.azimuth_span.value(), **options)
                 self.azimuth.blockSignals(True)
                 self.azimuth.setValue(model.azimuth_deg)
                 self.azimuth.blockSignals(False)
             else:
-                model = TB.fit(self.k_points, self.energies, self.lattice_vectors(),
-                               self.n_shells.value(), **options)
+                model = busy_work(self, "Fitting", TB.fit, self.k_points,
+                                  self.energies, self.lattice_vectors(),
+                                  self.n_shells.value(), **options)
                 model.azimuth_deg = self.azimuth.value()
         except (ValueError, np.linalg.LinAlgError) as exc:
             self.fit_label.setText(f"<b>Could not fit:</b> {exc}")

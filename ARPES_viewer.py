@@ -923,10 +923,13 @@ def save_selected(path=None, fmt=None):
     if not path.lower().endswith(extension):
         path += extension
 
-    QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-    try:
-        payload, problems, saved_keys = [], [], []
-        for key in keys:
+    payload, problems, saved_keys = [], [], []
+
+    def gather(report):
+        # reading every dataset to be written: the slow half of a save
+        for index, key in enumerate(keys):
+            report(0.5 * index / len(keys), f"Reading {label_for(key)} "
+                                            f"({index + 1} of {len(keys)})")
             item, problem = _dataset_for_saving(key)
             if item is not None:
                 payload.append(item)
@@ -936,20 +939,32 @@ def save_selected(path=None, fmt=None):
             if problem:
                 problems.append(problem)
         if not payload:
-            QMessageBox.warning(win, "Save",
-                                "Nothing could be saved:\n" + "\n".join(problems))
-            return
+            return None
         if fmt == "nxs":
-            entries = save_dataset(path, payload)
+            def progress(done, total, label):
+                report(0.5 + 0.5 * done / max(total, 1),
+                       f"Writing {label or os.path.basename(path)} "
+                       f"({min(done + 1, total)} of {total})")
+            return save_dataset(path, payload, progress=progress)
+        from tools.output import igor
+        report(None, f"Writing {os.path.basename(path)}")
+        return igor.write_datasets(path, payload, fmt)
+
+    try:
+        if nxs_jobs.busy():                     # another job: here, as before
+            outcome = gather(lambda *_a, **_k: None)
         else:
-            from tools.output import igor
-            written = igor.write_datasets(path, payload, fmt)
+            outcome = nxs_jobs.run_blocking(win, f"Saving {os.path.basename(path)}",
+                                            gather, cancellable=False)
     except Exception as exc:
         traceback.print_exc()
         QMessageBox.warning(win, "Save", f"Could not write the file:\n{exc}")
         return
-    finally:
-        QApplication.restoreOverrideCursor()
+    if not payload:
+        QMessageBox.warning(win, "Save",
+                            "Nothing could be saved:\n" + "\n".join(problems))
+        return
+    entries = written = outcome
 
     if fmt == "nxs":
         _rebind_saved_rows(saved_keys, path, entries)
@@ -1901,7 +1916,15 @@ def open_volume_view(mode: str = "slices"):
             win, "3D view",
             "The 3-D views need a cube: a Map or a converted k-map.")
         return None
-    x, k, z, cube = data.angle_cube
+    try:
+        # the whole cube is read here: the slow part of a big map
+        x, k, z, cube = nxs_jobs.busy_work(
+            win, f"Reading {label_for(key)}",
+            lambda: (lambda c: c[:3] + (np.asarray(c[3]),))(data.angle_cube))
+    except Exception as exc:                                # noqa: BLE001
+        data.close()
+        QMessageBox.warning(win, "3D view", str(exc))
+        return None
     scan = data.scan
     labels = (scan.labels.get("x", "x"), scan.labels.get("k", "y"),
               scan.labels.get("z", "z"))
@@ -2192,8 +2215,9 @@ def combine_selected(ask=None, dialog_hook=None):
             role, axis_name, unit, values = dialog.axis()
             label = unique_name(f"{names[order[0]]} + {len(names) - 1} "
                                 f"[{axis_name or 'stack'}]")
-            result = combined_dataset(datasets, order, role, axis_name, unit,
-                                      values, label)
+            result = nxs_jobs.busy_work(win, "Stacking the datasets",
+                                        combined_dataset, datasets, order, role,
+                                        axis_name, unit, values, label)
         else:
             plan = dialog.join_plan()
             if not isinstance(plan, dict):
@@ -2201,8 +2225,10 @@ def combine_selected(ask=None, dialog_hook=None):
                 return None
             label = unique_name(f"{names[order[0]]} + {len(names) - 1} "
                                 f"[joined]")
-            result = joined_dataset(datasets, order, dialog.join_axis(),
-                                    dialog.overlap(), label)
+            result = nxs_jobs.busy_work(win, "Joining the datasets",
+                                        joined_dataset, datasets, order,
+                                        dialog.join_axis(), dialog.overlap(),
+                                        label)
             if plan["notes"]:
                 ui.statusbar.showMessage(" ".join(plan["notes"]))
     finally:

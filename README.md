@@ -1244,6 +1244,21 @@ CASSIOPEE folder: all of it runs on a worker thread with a progress bar that
 moves and a Cancel that works. One job at a time, because HDF5 here is not
 thread-safe. A job that finishes within 400 ms never shows a dialog.
 
+Every operation that can take long on a big dataset or a slow computer
+shows one, so the program is never silently busy: reading a whole map into
+memory (browsing, a slice figure, the 3-D views), map and cut k conversion,
+the FS correction of a map, an arbitrary cut, data operations (truncate,
+normalise, compress), stacking or joining datasets, saving (`.nxs`, Igor),
+ridge detection, the tight-binding fit, the fits along a cut and of the
+Fermi edge, smoothing and the other processing, k_z conversion, de-gridding,
+detector corrections, summing repeats, and in Calculated bands reading a
+calculation, the bands on a plane, the calculated map and the 3-D Fermi
+surface. A step that cannot say how far it is (one big read, one solver
+call) shows a moving bar and the seconds it has taken. A value entered
+while such a step runs (the progress window takes the focus) is not lost and
+starts nothing on top of it: the step runs again once it is done, with the
+latest values.
+
 ---
 
 ## Adding a beamline

@@ -113,6 +113,14 @@ it into the text box) **or paste its text** — the main panel's foot has
 **Copy the newest error log** (its text to the clipboard) and **Open the
 error logs** (the folder).
 
+**Long operations show a progress bar.** Anything that can take more than a
+moment on a big dataset or a slow computer — reading a whole map, k
+conversion, FS correction, arbitrary cuts, data operations, joining
+datasets, saving, ridge detection, the fits, and in Calculated bands reading
+a calculation, the plane's bands and the 3-D Fermi surface — shows a
+progress window after 0.4 s: a bar that moves, the seconds taken, and Cancel
+where the step can stop. The program is working, not frozen.
+
 **On a Mac you do not need Terminal to start it:** double-click
 **`ARPES viewer.app`** in the program's folder (drag it to the Dock to keep
 it there). It finds the Python that has the packages above -- the same one

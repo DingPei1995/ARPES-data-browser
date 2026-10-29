@@ -58,6 +58,7 @@ from tools.crystal import compare as C
 from tools.crystal import last_crystal
 from tools.crystal.lattice import LatticeParams
 from ui.common.screen import fits_screen
+from ui.common.jobs import one_at_a_time
 from ui.common.stepper import Step, Stepper, guard_window
 from ui.viewers.widgets import (MemoryData, apply_colormap, fit_frame_view,
                                 plain_image_view, show_frame)
@@ -218,6 +219,7 @@ class BandsDialog(QDialog):
         self._which = None
         self._fs_grid = None
         self._fs_drawn = None
+        self._fs_energy_asked = None
         self.params = None
         self.alignment = B.Alignment()
         self._items = []
@@ -564,6 +566,7 @@ class BandsDialog(QDialog):
             + f".<br>It can show: <b>{shows}</b>.")
         self._fs_grid = None
         self._fs_drawn = None
+        self._fs_energy_asked = None
         self.weight_combo.blockSignals(True)
         self.weight_combo.clear()
         self.weight_combo.addItem("(one colour)")
@@ -630,6 +633,7 @@ class BandsDialog(QDialog):
             lattice = primitive_vectors(params)
         self.model.reciprocal = B.reciprocal_of(lattice)
         self._fs_grid = self._fs_drawn = self._plane_cache = None
+        self._fs_energy_asked = None
         self._show_cell(params_of_lattice(lattice, params.space_group))
         self._crystal_changed()
 
@@ -1055,6 +1059,7 @@ class BandsDialog(QDialog):
                  if len(energies) > 1 else None)
         return out, axis, image
 
+    @one_at_a_time
     def draw_contours(self, recompute: bool = True):
         from ui.common.jobs import JobCancelled
 
@@ -1198,8 +1203,10 @@ class BandsDialog(QDialog):
         return page
 
     def _fs_energy_entered(self):
-        drawn = self._fs_drawn
-        if drawn is None or abs(drawn.energy - self.fs_energy.value()) > 1e-9:
+        # drawn, or being drawn, at this energy already: nothing to do
+        # (editingFinished comes again when the progress window takes the focus)
+        if self._fs_energy_asked is None or \
+                abs(self._fs_energy_asked - self.fs_energy.value()) > 1e-9:
             self.draw_fermi_surface()
 
     def open_fs_window(self):
@@ -1237,6 +1244,7 @@ class BandsDialog(QDialog):
         except Exception:                                    # noqa: BLE001
             return []
 
+    @one_at_a_time
     def draw_fermi_surface(self):
         """Mesh the surfaces at the energy chosen (with a progress bar: a
         Hamiltonian of many orbitals takes a while) and show them."""
@@ -1250,6 +1258,7 @@ class BandsDialog(QDialog):
             return None
         n, sample = ((32, 20), (48, 28), (72, 36))[self.fs_detail.currentIndex()]
         energy = self.fs_energy.value()
+        self._fs_energy_asked = energy
         model = self.model
         cached = self._fs_grid if (self._fs_grid is not None
                                    and self._fs_grid[0] == sample) else None
@@ -1265,9 +1274,11 @@ class BandsDialog(QDialog):
             grid, fine, coarse = run_blocking(self, "The 3D Fermi surface", work)
         except JobCancelled:
             self.fs_label.setText("Cancelled.")
+            self._fs_energy_asked = None
             return None
         except (ValueError, MemoryError) as exc:
             self.fs_label.setText(f"Could not draw it: {exc}")
+            self._fs_energy_asked = None
             return None
         self._fs_grid = (sample, grid)
         self._fs_drawn = fine
