@@ -36,6 +36,19 @@ Enter in a field never presses a button.
   left out and saving to the main panel is greyed (it made a path cut);
   for contours it saves a calculated k-map on the plane, at a range of
   energies.
+- **A shorter README, with the technical detail beside the code**
+  (`README.md`, `loader/README.md`, `ui/README.md`, `tools/README.md`,
+  `tools/momentum/README.md`, `tools/spectra/README.md`,
+  `tools/processing/README.md`, `tools/output/README.md`, `docs/DEVELOPER.md`).
+  The README repeated much of the user guide; it is now 180 lines instead of
+  1480: the terms of use, a worked case -- example figure 1 of the guide,
+  built from the files to the exported figure by `devtools/figure_tests.py`,
+  every step plain Python an AI agent can drive -- what the program does,
+  starting it, bug reports, and links. It says plainly that the figure is
+  made from synthetic data: an invented toy model, no published data or
+  literature used. The technical sections moved verbatim, every line
+  checked, into a reference in the folder of the code they describe; the
+  guides' links follow them.
 - **A progress bar for every long step, and no second job on top of the
   first** (`ui/common/jobs.py`). Enter in the 3-D Fermi surface's energy
   failed with "another operation is already running" (reported from a
