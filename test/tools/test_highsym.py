@@ -12,12 +12,12 @@ import collections
 import numpy as np
 import pytest
 
-from tools.crystal.bz3d import (face_planes, tile_and_cut, plane_basis,
+from arpes_viewer.tools.crystal.bz3d import (face_planes, tile_and_cut, plane_basis,
                                 plane_cut, wigner_seitz_cell)
-from tools.crystal.highsym import (equivalent_points, high_symmetry_points,
+from arpes_viewer.tools.crystal.highsym import (equivalent_points, high_symmetry_points,
                                    lattice_variant, plane_offsets,
                                    points_in_frame, points_on_plane)
-from tools.crystal.lattice import (LatticeParams, conventional_vectors,
+from arpes_viewer.tools.crystal.lattice import (LatticeParams, conventional_vectors,
                                    primitive_vectors, reciprocal_vectors)
 
 R166 = LatticeParams(5.416, 5.416, 13.413, 90, 90, 120, space_group=166)
@@ -175,8 +175,8 @@ def qapp():
 
 
 def test_the_dialog_offers_and_applies_the_offsets(qapp):
-    from ui.viewers import windows as W
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers import windows as W
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     k = np.linspace(-1.2, 1.2, 41)
     data = MemoryData("k_map", (k, k, np.linspace(-0.5, 0.1, 7)),
                       np.random.default_rng(0).random((41, 41, 7)) + 1,
@@ -213,8 +213,8 @@ def test_the_dialog_offers_and_applies_the_offsets(qapp):
 
 
 def _k_map_contour():
-    from ui.viewers import windows as W
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers import windows as W
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     k = np.linspace(-1.2, 1.2, 21)
     data = MemoryData("k_map", (k, k, np.linspace(-0.5, 0.1, 5)),
                       np.ones((21, 21, 5)), {"x": "kx", "y": "ky", "z": "E"},

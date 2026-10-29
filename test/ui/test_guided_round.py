@@ -6,8 +6,8 @@ import pytest
 
 from PyQt5.QtWidgets import QApplication
 
-from ui.viewers.widgets import MemoryData
-import tools.processing.process as P
+from arpes_viewer.ui.viewers.widgets import MemoryData
+import arpes_viewer.tools.processing.process as P
 
 
 @pytest.fixture(scope="module")
@@ -36,7 +36,7 @@ def test_a_smooth_step_tags_the_result_and_its_descendants():
 
 
 def test_no_smooth_first_tip_on_smoothed_data(app):
-    from ui.panels.process import ProcessDialog
+    from arpes_viewer.ui.panels.process import ProcessDialog
     raw = ProcessDialog([("k", _cut())], start="curvature")
     assert not raw.smoothed and raw.curv_smooth_x.value() > 0
     smoothed = _cut(P.record_step({}, P.Step("smooth", {})))
@@ -51,8 +51,8 @@ def test_no_smooth_first_tip_on_smoothed_data(app):
 
 
 def test_the_guided_fit_walks_to_a_fitted_series(app):
-    import tools.spectra.peaks as PK
-    from ui.panels.fit import FitPanel
+    import arpes_viewer.tools.spectra.peaks as PK
+    from arpes_viewer.ui.panels.fit import FitPanel
     panel = FitPanel(_cut(), "k")
     panel.show()
     guide = panel.start_guide()
@@ -85,7 +85,7 @@ def test_the_guided_fit_walks_to_a_fitted_series(app):
 def test_the_wheel_scrolls_a_scrolling_fit_panel(app):
     from PyQt5.QtCore import QPoint, QPointF, Qt
     from PyQt5.QtGui import QWheelEvent
-    from ui.panels.fit import FitPanel
+    from arpes_viewer.ui.panels.fit import FitPanel
     panel = FitPanel(_cut(), "k")
     panel.resize(900, 300)                      # too short: the panel scrolls
     panel.show()

@@ -19,7 +19,11 @@ import os
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKAGES = ("loader", "tools", "ui", "devtools")
+PACKAGES = ("arpes_viewer.loader", "arpes_viewer.tools", "arpes_viewer.ui", "devtools")
+
+
+def _folder(package):
+    return os.path.join(ROOT, *package.split("."))
 
 
 def _python_files():
@@ -136,7 +140,7 @@ def test_every_module_imports_cleanly():
     for package in PACKAGES:
         if package == "devtools":
             continue              # needs spglib / the lab's .mat file
-        for info in pkgutil.walk_packages([os.path.join(ROOT, package)],
+        for info in pkgutil.walk_packages([_folder(package)],
                                           prefix=f"{package}."):
             name = info.name
             try:
@@ -154,8 +158,8 @@ def test_the_qt_free_packages_really_are():
     offenders = []
     for path in _python_files():
         relative = os.path.relpath(path, ROOT)
-        if not (relative.startswith("loader" + os.sep)
-                or relative.startswith("tools" + os.sep)):
+        if not (relative.startswith(os.path.join("arpes_viewer", "loader") + os.sep)
+                or relative.startswith(os.path.join("arpes_viewer", "tools") + os.sep)):
             continue
         tree = _parse(path)
         for node in ast.walk(tree):
@@ -171,9 +175,9 @@ def test_the_qt_free_packages_really_are():
 
 
 def _package_folders():
-    for package in PACKAGES + ("test",):
-        yield package
-        for folder, dirs, files in os.walk(os.path.join(ROOT, package)):
+    for package in ("arpes_viewer",) + PACKAGES + ("test",):
+        yield os.path.relpath(_folder(package), ROOT)
+        for folder, dirs, files in os.walk(_folder(package)):
             dirs[:] = sorted(d for d in dirs if d != "__pycache__")
             for d in dirs:
                 yield os.path.relpath(os.path.join(folder, d), ROOT)

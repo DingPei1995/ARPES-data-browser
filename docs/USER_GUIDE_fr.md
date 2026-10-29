@@ -16,8 +16,8 @@ onglets **Basic**, **Advanced** et **Calculation**, puis les figures — pour
 finir par deux figures construites pas à pas dans le composeur de figures.
 Le contexte technique de chaque étape (formules, résultats des tests, choix
 de conception) se trouve dans les références techniques à côté du code —
-[lecture des données](../loader/README.md), [les fenêtres](../ui/README.md),
-[analyse](../tools/README.md) — et dans le [CHANGELOG](../CHANGELOG.md), en
+[lecture des données](../arpes_viewer/loader/README.md), [les fenêtres](../arpes_viewer/ui/README.md),
+[analyse](../arpes_viewer/tools/README.md) — et dans le [CHANGELOG](../CHANGELOG.md), en
 anglais.
 
 Toutes les captures ont été prises sur le programme en fonctionnement, avec
@@ -1871,7 +1871,7 @@ qu'affichées et la mesure dont elles proviennent.
   (énergie de photon − travail de sortie).
 - **Un fichier est mal lu** — choisissez explicitement le lecteur dans la
   fenêtre de chargement, et voyez *Assumptions worth knowing about* dans la
-  [référence technique de la lecture](../loader/README.md#assumptions-worth-knowing-about)
+  [référence technique de la lecture](../arpes_viewer/loader/README.md#assumptions-worth-knowing-about)
   (ordre des axes dans les fichiers SOLEIL).
 - **Le curseur est lent sur une grande carte** — une carte lue à la demande
   dans son fichier se recoupe en environ 0,1 s par fenêtre, si bien que les

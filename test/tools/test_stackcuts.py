@@ -7,8 +7,8 @@ import os
 import numpy as np
 import pytest
 
-from tools.processing import stackcuts as S
-from ui.launcher.list_actions import availability
+from arpes_viewer.tools.processing import stackcuts as S
+from arpes_viewer.ui.launcher.list_actions import availability
 
 ANGLE = np.linspace(-10, 10, 21)
 ENERGY = np.linspace(-0.5, 0.1, 31)
@@ -76,7 +76,7 @@ def app():
 
 
 def test_dialog_order_and_values(app):
-    from ui.panels.stackcuts import CombineCutsDialog
+    from arpes_viewer.ui.panels.stackcuts import CombineCutsDialog
     dialog = CombineCutsDialog(["a", "b", "c"], reorder=True)
     dialog.role.setCurrentIndex(dialog.role.findData("gate_voltage"))
     assert dialog.unit.text() == "V"
@@ -99,7 +99,7 @@ def test_dialog_order_and_values(app):
 def _list_cuts(launcher, monkeypatch, cuts):
     from PyQt5 import QtCore
     from PyQt5.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers.widgets import MemoryData
 
     class _UI:
         FilePathListWidget = QListWidget()
@@ -124,7 +124,7 @@ def _list_cuts(launcher, monkeypatch, cuts):
 
 
 def test_launcher_combines_in_a_chosen_order(app, monkeypatch):
-    import ARPES_viewer as av
+    import arpes_viewer.app as av
     _list_cuts(av, monkeypatch, [cut("T10", 10), cut("T20", 20), cut("T30", 30)])
 
     def run(dialog):
@@ -147,7 +147,7 @@ def test_launcher_combines_in_a_chosen_order(app, monkeypatch):
 
 
 def test_launcher_photon_energy_series_is_a_kz_map(app, monkeypatch):
-    import ARPES_viewer as av
+    import arpes_viewer.app as av
     _list_cuts(av, monkeypatch, [cut("a"), cut("b", 1)])
 
     def run(dialog):
@@ -162,7 +162,7 @@ def test_launcher_photon_energy_series_is_a_kz_map(app, monkeypatch):
 
 
 def test_launcher_offers_join_when_cuts_cannot_be_stacked(app, monkeypatch):
-    import ARPES_viewer as av
+    import arpes_viewer.app as av
     seen = {}
     _list_cuts(av, monkeypatch, [cut("a", 1), cut("b", 3, energy=ENERGY[:-3])])
 
@@ -179,7 +179,7 @@ def test_launcher_offers_join_when_cuts_cannot_be_stacked(app, monkeypatch):
 
 
 def test_launcher_joins_cuts_split_in_energy(app, monkeypatch):
-    import ARPES_viewer as av
+    import arpes_viewer.app as av
     low, high = ENERGY[:16], ENERGY[12:]
     _list_cuts(av, monkeypatch, [cut("low", 1, energy=low),
                                  cut("high", 3, energy=high)])
@@ -207,7 +207,7 @@ def test_mixed_kinds_cannot_be_combined():
 def _list_maps(launcher, monkeypatch, maps, kind="kz_map", label="kz map"):
     from PyQt5 import QtCore
     from PyQt5.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers.widgets import MemoryData
 
     class _UI:
         FilePathListWidget = QListWidget()
@@ -236,7 +236,7 @@ def _list_maps(launcher, monkeypatch, maps, kind="kz_map", label="kz map"):
 
 
 def test_launcher_joins_a_kz_map_taken_in_two_runs(app, monkeypatch):
-    import ARPES_viewer as av
+    import arpes_viewer.app as av
     _list_maps(av, monkeypatch, [("run2", np.arange(80.0, 101.0, 2), 5.0),
                                  ("run1", np.arange(40.0, 82.0, 2), 1.0)])
 
@@ -259,7 +259,7 @@ def test_launcher_joins_a_kz_map_taken_in_two_runs(app, monkeypatch):
 
 
 def test_join_engine_resamples_and_reports_gaps():
-    from tools.processing import combine as C
+    from arpes_viewer.tools.processing import combine as C
     k, e = np.linspace(-5, 5, 11), np.linspace(-1, 0, 21)
     a, b = np.arange(0.0, 10.0), np.arange(12.0, 15.0)
     axes, values, plan = C.join([((a, k, e), np.ones((10, 11, 21))),
@@ -274,10 +274,10 @@ def test_join_engine_resamples_and_reports_gaps():
 
 
 def test_combined_map_survives_a_save(app, tmp_path):
-    from loader import session as nxs_session
-    from loader.nxs_file import load_soleil_nxs, save_dataset
-    from ui.panels.stackcuts import combined_dataset
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.loader import session as nxs_session
+    from arpes_viewer.loader.nxs_file import load_soleil_nxs, save_dataset
+    from arpes_viewer.ui.panels.stackcuts import combined_dataset
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     cuts = [(n, MemoryData("cut", axes, v, labels, source_label=n))
             for n, axes, v, labels in (cut("a"), cut("b", 1))]
     data = combined_dataset(cuts, [1, 0], "gate_voltage", "Gate", "V",

@@ -13,8 +13,8 @@ varies by nearly an order of magnitude across it.
 import numpy as np
 import pytest
 
-from tools.momentum import kzmap
-from tools.spectra.fermi import fermi_edge_model, fit_fermi_edge
+from arpes_viewer.tools.momentum import kzmap
+from arpes_viewer.tools.spectra.fermi import fermi_edge_model, fit_fermi_edge
 
 
 TEMPERATURE = 25.0

@@ -10,8 +10,8 @@
 本指南按照工具面板的顺序，配合截图介绍程序的功能：先是入门（安装、载入数据、
 主窗口与各查看窗口），然后依次是 **Basic**、**Advanced**、**Calculation** 三个
 标签页，再是作图——最后用作图器一步步完成两张论文图。每一步背后的技术细节（公式、测试结果、
-设计取舍）见代码旁的技术参考——[读取数据](../loader/README.md)、[窗口](../ui/README.md)、
-[分析](../tools/README.md)——以及 [CHANGELOG](../CHANGELOG.md)（英文）。
+设计取舍）见代码旁的技术参考——[读取数据](../arpes_viewer/loader/README.md)、[窗口](../arpes_viewer/ui/README.md)、
+[分析](../arpes_viewer/tools/README.md)——以及 [CHANGELOG](../CHANGELOG.md)（英文）。
 
 所有截图都来自实际运行的程序，所用数据是 `devtools/demo_data.py` 生成的模拟
 数据，因此没有实验数据也可以跟着操作一遍（见[用演示数据试用](#2-用演示数据试用)）。
@@ -1464,7 +1464,7 @@ composer...** → (a) 所在的图。
 - **对 E − E_F 的 cut 做 k 转换**——能量偏移会根据费米拟合自动填好；如果是用其他
   方式平移的能量轴，请在 *Energy offset* 中填入 E_F 对应的动能（光子能量 − 功函数）。
 - **文件被误读**——在载入窗口中手动指定读取器，并参阅
-  [读取数据技术参考](../loader/README.md#assumptions-worth-knowing-about)中的
+  [读取数据技术参考](../arpes_viewer/loader/README.md#assumptions-worth-knowing-about)中的
   *Assumptions worth knowing about*（SOLEIL 文件的轴顺序）。
 - **在大 map 上拖动光标卡顿**——从文件惰性读取的 map 每个窗口重新切片约需 0.1 s，
   因此其他窗口会等鼠标停下再更新；map 读入内存后即可实时跟随。

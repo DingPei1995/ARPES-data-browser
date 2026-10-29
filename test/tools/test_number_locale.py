@@ -18,7 +18,7 @@ SCRIPT = """
 from PyQt5.QtCore import QLocale
 from PyQt5.QtWidgets import QApplication, QDoubleSpinBox
 assert QLocale.system().decimalPoint() == ",", QLocale.system().name()
-import ARPES_viewer  # noqa: F401
+import arpes_viewer.app  # noqa: F401
 app = QApplication([])
 box = QDoubleSpinBox()
 box.setDecimals(3)

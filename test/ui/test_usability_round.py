@@ -28,8 +28,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt5")
 from PyQt5.QtWidgets import QApplication                      # noqa: E402
 
-from ui.viewers.widgets import MemoryData  # noqa: E402
-from ui.viewers import windows as W  # noqa: E402
+from arpes_viewer.ui.viewers.widgets import MemoryData  # noqa: E402
+from arpes_viewer.ui.viewers import windows as W  # noqa: E402
 
 SLIT = np.linspace(-12, 12, 61)
 EKIN = np.linspace(54.6, 55.7, 45)
@@ -110,7 +110,7 @@ def test_the_readout_label_stays_inside_the_plot(app):
 
 
 def test_previews_choose_equal_axes_for_matching_units(app):
-    from ui.panels.process import PreviewPair
+    from arpes_viewer.ui.panels.process import PreviewPair
     pair = PreviewPair()
     pair.set_labels("Angle, deflector (deg)", "Angle, slit (deg)")
     assert pair.aspect.currentText() == "Equal axes"
@@ -123,7 +123,7 @@ def test_previews_choose_equal_axes_for_matching_units(app):
 
 
 def test_the_fit_panel_builds_cleanly(app, monkeypatch):
-    from ui.panels.fit import FitPanel
+    from arpes_viewer.ui.panels.fit import FitPanel
     errors = []
     monkeypatch.setattr(sys, "excepthook", lambda *exc: errors.append(exc))
     k = np.linspace(-1, 1, 61)
@@ -137,7 +137,7 @@ def test_the_fit_panel_builds_cleanly(app, monkeypatch):
 
 
 def test_no_name_repeated_in_a_row_label():
-    import ARPES_viewer as av
+    import arpes_viewer.app as av
     saved = dict(av.loaded_items)
     try:
         av.loaded_items.clear()
@@ -153,7 +153,7 @@ def test_no_name_repeated_in_a_row_label():
 @pytest.mark.parametrize("lo, hi, target", [(-15, 15, 2), (0.31, 0.38, 2),
                                             (54.6, 55.72, 2), (-1, 1, 1)])
 def test_an_axis_always_gets_at_least_two_tick_labels(lo, hi, target):
-    from tools.output.export import tick_values
+    from arpes_viewer.tools.output.export import tick_values
     values, step = tick_values(lo, hi, target)
     assert values.size >= 2
     assert np.all((values >= lo - 1e-9) & (values <= hi + 1e-9))
@@ -161,7 +161,7 @@ def test_an_axis_always_gets_at_least_two_tick_labels(lo, hi, target):
 
 
 def test_a_wide_x_label_is_moved_in_rather_than_cut_off():
-    from ui.panels.figure import FigurePainter
+    from arpes_viewer.ui.panels.figure import FigurePainter
     centre = FigurePainter.label_centre
     assert centre(50.0, 20.0, 100.0) == 50.0              # fits: left alone
     assert centre(95.0, 20.0, 100.0) == 90.0              # right edge: moved in
@@ -185,8 +185,8 @@ def test_a_kz_map_cut_names_its_slider_in_ev(app):
 def test_a_confirmed_close_deletes_the_autosaved_copies(tmp_path, monkeypatch):
     """The launcher side: only once ``clean_close`` is set does the way out
     delete the session's folder, together with recovered copies in the list."""
-    import ARPES_viewer as av
-    from loader.session import SessionStore
+    import arpes_viewer.app as av
+    from arpes_viewer.loader.session import SessionStore
     crashed = SessionStore(root=str(tmp_path))
     item = {"name": "r", "kind": "cut", "axes": (SLIT, EKIN), "labels": {},
             "value": np.ones((SLIT.size, EKIN.size)), "info": {}, "motors": {}}

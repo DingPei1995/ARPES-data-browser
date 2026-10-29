@@ -7,8 +7,8 @@ from PyQt5.QtCore import QPoint, QTimer
 from PyQt5.QtWidgets import (QApplication, QDialogButtonBox, QLabel,
                              QMessageBox, QPushButton)
 
-from ui.viewers import windows as W
-from ui.viewers.widgets import MemoryData
+from arpes_viewer.ui.viewers import windows as W
+from arpes_viewer.ui.viewers.widgets import MemoryData
 
 SLIT = np.linspace(-10, 10, 21)
 EKIN = np.linspace(54, 56, 31)
@@ -22,8 +22,8 @@ def app():
 
 @pytest.fixture
 def launcher(app, monkeypatch):
-    import ARPES_viewer as av
-    from ui.launcher import main_window as main_window_ui
+    import arpes_viewer.app as av
+    from arpes_viewer.ui.launcher import main_window as main_window_ui
     monkeypatch.setattr(av, "loaded_items", {})
     win = av._MainWindow()
     ui = main_window_ui.Ui_MainWindow()
@@ -164,9 +164,9 @@ def _set_up_log(lv, folder, name, template, keep=False, then=None):
 def test_the_log_is_set_up_once_then_one_click_logs(launcher, tmp_path,
                                                     monkeypatch):
     import csv
-    from tools.output import explog as EL
+    from arpes_viewer.tools.output import explog as EL
     lv = launcher
-    monkeypatch.setattr("ui.panels.explog.excel_conventions",
+    monkeypatch.setattr("arpes_viewer.ui.panels.explog.excel_conventions",
                         lambda: (",", "."))
     _select(lv, "m")
 
@@ -202,7 +202,7 @@ def test_the_log_is_set_up_once_then_one_click_logs(launcher, tmp_path,
         dialog.add_blank()
         dialog.table.selectRow(3)
         dialog.move_column(-3)
-    monkeypatch.setattr("ui.panels.explog.QMessageBox.question",
+    monkeypatch.setattr("arpes_viewer.ui.panels.explog.QMessageBox.question",
                         lambda *a, **k: QMessageBox.Yes)
     _set_up_log(lv, tmp_path, "beamtime", None, then=add_notes)
     with open(tmp_path / "beamtime.csv", encoding="utf-8-sig") as handle:
@@ -213,7 +213,7 @@ def test_the_log_is_set_up_once_then_one_click_logs(launcher, tmp_path,
 
 
 def test_the_first_click_asks_for_the_format(launcher, tmp_path, monkeypatch):
-    from tools.output import explog as EL
+    from arpes_viewer.tools.output import explog as EL
     lv = launcher
     _select(lv, "c")
     asked = []
@@ -254,7 +254,7 @@ def test_a_filter_button_opens_its_own_tab(launcher):
 
 
 def test_close_ends_every_button_row(app):
-    from ui.viewers.widgets import ButtonRow, add_button
+    from arpes_viewer.ui.viewers.widgets import ButtonRow, add_button
     row = ButtonRow()
     add_button(row, "Close", QDialogButtonBox.RejectRole)
     row = ButtonRow()
@@ -343,7 +343,7 @@ def test_degrid_is_a_tool_for_cuts_and_angle_maps(launcher):
 
 def test_degrid_says_why_not_for_a_map_in_momentum(app, monkeypatch):
     from PyQt5.QtWidgets import QMessageBox
-    from ui.panels.degrid import open_degrid
+    from arpes_viewer.ui.panels.degrid import open_degrid
     said = []
     monkeypatch.setattr(QMessageBox, "information",
                         staticmethod(lambda parent, title, text, *a: said.append(text)))
@@ -393,7 +393,7 @@ def test_fermi_fit_and_kz_alignment_are_tools(launcher):
 
 
 def test_settings_are_remembered_per_size(tmp_path):
-    from tools.runtime import remembered
+    from arpes_viewer.tools.runtime import remembered
     assert remembered.recall("t", (3, 4)) is None
     remembered.remember("t", (3, 4), {"a": 1.5})
     remembered.remember("t", (5, 4), {"a": 2.0})
@@ -494,7 +494,7 @@ def test_a_k_cut_is_not_converted_again(launcher):
 
 
 def test_kz_conversion_remembers(app, monkeypatch):
-    from ui.panels import kzconv
+    from arpes_viewer.ui.panels import kzconv
     hv = np.linspace(30, 60, 7)
     rng = np.random.default_rng(2)
     data = MemoryData("kz_map", (hv, SLIT, EKIN),
@@ -567,7 +567,7 @@ def test_a_brillouin_zone_becomes_part_of_the_dataset(launcher, tmp_path):
     assert state and state["layers"]
 
     # and its exports can draw it
-    from ui.viewers.widgets import ExportDialog
+    from arpes_viewer.ui.viewers.widgets import ExportDialog
     export = ExportDialog(viewer.view, ExportDialog.TAB_AXES)
     assert export.eps_zone.isVisibleTo(export)
     path = str(tmp_path / "axes.eps")
@@ -590,8 +590,8 @@ def test_a_brillouin_zone_becomes_part_of_the_dataset(launcher, tmp_path):
 
 def test_a_tall_dialog_scrolls_and_keeps_its_buttons(app):
     from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QScrollArea
-    from ui.common.screen import fit_to_screen
-    from ui.viewers.widgets import ButtonRow, add_button
+    from arpes_viewer.ui.common.screen import fit_to_screen
+    from arpes_viewer.ui.viewers.widgets import ButtonRow, add_button
     dialog = QDialog()
     layout = QVBoxLayout(dialog)
     for i in range(80):
@@ -613,7 +613,7 @@ def test_the_tall_tool_windows_fit_the_screen(app):
     """The windows found taller than a laptop screen open no taller than
     the screen, and can be made shorter still."""
     from PyQt5.QtWidgets import QScrollArea
-    import tools.spectra.fermi as F
+    import arpes_viewer.tools.spectra.fermi as F
     energy = np.linspace(55.0, 56.0, 120)
     cut = MemoryData("cut", (SLIT, energy),
                      100 * F.fermi_function(energy, 55.6, 20.0)[None, :]
@@ -632,7 +632,7 @@ def test_the_tall_tool_windows_fit_the_screen(app):
 
 def test_the_slice_series_figure_is_a_tool(launcher, monkeypatch):
     from PyQt5.QtWidgets import QDialog
-    from ui.panels import figure
+    from arpes_viewer.ui.panels import figure
     lv = launcher
     _select(lv, "m")
     assert lv.ui.ToolButtons["slicefig"].text() == "Slice series figure..."
@@ -664,8 +664,8 @@ def test_tool_buttons_fit_and_do_not_overlap_in_fusion(app, monkeypatch):
     """macOS runs the launcher in Fusion (its native buttons overlapped in
     the tool panel); there every tool button keeps its full height, sits
     clear of its neighbours, and the panel is wide enough for its label."""
-    from ui.common import platform_style
-    from ui.launcher import main_window as main_window_ui
+    from arpes_viewer.ui.common import platform_style
+    from arpes_viewer.ui.launcher import main_window as main_window_ui
     from PyQt5.QtWidgets import QMainWindow
     old_style = app.style().objectName()
     monkeypatch.setattr(platform_style, "IS_MACOS", True)
@@ -694,7 +694,7 @@ def test_tool_buttons_fit_and_do_not_overlap_in_fusion(app, monkeypatch):
 def test_modifier_key_is_named_for_the_platform(monkeypatch):
     import importlib
     import sys
-    from ui.common import platform_style
+    from arpes_viewer.ui.common import platform_style
     monkeypatch.setattr(sys, "platform", "darwin")
     assert importlib.reload(platform_style).MOD_KEY == "⌘"
     monkeypatch.setattr(sys, "platform", "win32")
@@ -704,10 +704,10 @@ def test_modifier_key_is_named_for_the_platform(monkeypatch):
 def test_keep_recording_logs_each_file_added_to_the_list(launcher, tmp_path,
                                                          monkeypatch):
     import csv
-    from loader.nxs_file import save_dataset
-    from tools.output import explog as EL
+    from arpes_viewer.loader.nxs_file import save_dataset
+    from arpes_viewer.tools.output import explog as EL
     lv = launcher
-    monkeypatch.setattr("ui.panels.explog.excel_conventions",
+    monkeypatch.setattr("arpes_viewer.ui.panels.explog.excel_conventions",
                         lambda: (";", ","))
     monkeypatch.setattr(lv, "exp_log_keep_recording", False)
     _select(lv, "c")

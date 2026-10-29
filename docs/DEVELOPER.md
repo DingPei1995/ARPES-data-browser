@@ -1,28 +1,33 @@
 # For developers: the layout of the code, and the tests
 
-Where everything is and how it is tested. The technical references sit beside the code: [loader](../loader/README.md) · [ui](../ui/README.md) · [tools](../tools/README.md).
+Where everything is and how it is tested. The technical references sit beside the code: [loader](../arpes_viewer/loader/README.md) · [ui](../arpes_viewer/ui/README.md) · [tools](../arpes_viewer/tools/README.md).
 
 ## Layout of the code
 
 ```
-ARPES_viewer.py      the launcher: the dataset list, and everything it opens
-version.py           the version number and date shown in the launcher
+ARPES_viewer.py      the launcher in a checkout: runs arpes_viewer.app.main
+ARPES viewer.pyw     the Windows launcher (no console window)
 ARPES viewer.app/    the macOS launcher: double-click to start   (bash)
-loader/              reading data in, and keeping it              (no Qt)
-  beamlines/         one reader per beamline
-  formats/           what several readers share: NeXus layouts, Scienta SES
-tools/               the algorithms                               (no Qt)
-  momentum/          angle and photon energy to momentum
-  crystal/           lattices, space groups, Brillouin zones
-  processing/        2-D / 3-D operations, combining, de-gridding
-  spectra/           EDCs/MDCs, spin, fits, core levels
-  output/            export, the figure model, colormaps
-  runtime/           memory, system stand-ins
-ui/                  the windows                                  (Qt)
-  launcher/          the main window, the Loader window, the list's menu
-  viewers/           the per-dataset viewers and their widgets
-  panels/            the tool windows a viewer opens
-  common/            long jobs, messages, the GC guard
+pyproject.toml       the package for pip: `pip install arpes-viewer`
+arpes_viewer/        the package itself
+  app.py             the main window: the dataset list, and everything it opens
+  version.py         the version number and date shown in the launcher
+  __main__.py        `python -m arpes_viewer`
+  loader/            reading data in, and keeping it              (no Qt)
+    beamlines/       one reader per beamline
+    formats/         what several readers share: NeXus layouts, Scienta SES
+  tools/             the algorithms                               (no Qt)
+    momentum/        angle and photon energy to momentum
+    crystal/         lattices, space groups, Brillouin zones
+    processing/      2-D / 3-D operations, combining, de-gridding
+    spectra/         EDCs/MDCs, spin, fits, core levels
+    output/          export, the figure model, colormaps
+    runtime/         memory, system stand-ins, the error logs
+  ui/                the windows                                  (Qt)
+    launcher/        the main window, the Loader window, the list's menu
+    viewers/         the per-dataset viewers and their widgets
+    panels/          the tool windows a viewer opens
+    common/          long jobs, messages, the GC guard
 devtools/            one-off generators, run by hand
 docs/                the user guides (en, zh, fr), their screenshots and PDFs
 test/                the tests: loaders/, tools/, ui/ and the code checks
@@ -36,8 +41,8 @@ subpackages group modules by what they are for.
 
 | File | Role |
 |---|---|
-| `ARPES_viewer.py` | The launcher: the dataset list, the session folder, and the wiring between them. Run this. |
-| **`loader/`** | |
+| `arpes_viewer/app.py` | The main window: the dataset list, the session folder, and the wiring between them. `main()` starts it; `ARPES_viewer.py`, `python -m arpes_viewer` and the `arpes-viewer` command all call it. |
+| **`arpes_viewer/loader/`** | |
 | `registry.py` | Which beamline wrote a file and who reads it, plus the load-time axis order and scanned-axis role. |
 | `nxs_file.py` | The SOLEIL parser, the saved format's reader and writer, `NxsScan`, the axis-slot table, and the lazy arrays that keep a measurement on disk. Start here. |
 | `native.py` | This program's own saved format -- detected, never chosen. |
@@ -54,7 +59,7 @@ subpackages group modules by what they are for.
 | `beamlines/maxiv.py`, `beamlines/ape.py` | MAX IV Bloch and Elettra APE (SES). Bloch is also the fallback for any SES file no other beamline claims. |
 | `beamlines/bessy.py`, `beamlines/solaris.py` | BESSY One Cube / One Square and SOLARIS URANOS (SES), told apart by the header's `Location` and `Instrument`. |
 | `beamlines/sgm4.py` | ASTRID2 SGM4 `.h5` files, read lazily. Ported from peaks. |
-| **`tools/`** | |
+| **`arpes_viewer/tools/`** | |
 | `momentum/kspace.py`, `momentum/cutk.py` | Angle-to-momentum conversion, for a map and for a single cut, and the rotation read off a picked direction. |
 | `momentum/kzmap.py` | Calibrating a photon-energy scan against its own Fermi edges: fit per spectrum, align, crop, normalise. |
 | `momentum/kzconv.py` | The k_z conversion: the analytic forward and inverse maps, the resampling, and the inner-potential scan. |
@@ -80,7 +85,7 @@ subpackages group modules by what they are for.
 | `output/igor.py` | Igor Pro export: `.itx` text and `.ibw` binary waves with scaling, units and notes. |
 | `output/explog.py` | The experiment log: its format, each dataset's row (scanned ranges included), continuing a CSV log after its last record, and reformatting it in place. |
 | `runtime/memory.py`, `runtime/system.py` | Memory use, and the stand-ins for the lab's `tools_packages`. |
-| **`ui/`** | |
+| **`arpes_viewer/ui/`** | |
 | `launcher/main_window.py` | The launcher window's layout. |
 | `launcher/loader_dialog.py` | The Load-data window: files, reader, axis options. |
 | `launcher/list_actions.py` | Which right-click entries and tool-panel buttons of the main list fit a selection (by kind and row count), Qt-free. |

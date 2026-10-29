@@ -15,8 +15,8 @@ import zipfile
 import numpy as np
 import pytest
 
-from loader import registry
-from loader.formats import ses
+from arpes_viewer.loader import registry
+from arpes_viewer.loader.formats import ses
 from test.loaders.test_maxiv_loader import _cube, _write_ibw
 
 NA, NE = 5, 6

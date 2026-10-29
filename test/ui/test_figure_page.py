@@ -9,7 +9,7 @@ from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt5.QtGui import QImage, QMouseEvent
 from PyQt5.QtWidgets import QApplication
 
-import tools.output.figure as nf
+import arpes_viewer.tools.output.figure as nf
 
 
 @pytest.fixture(scope="module")
@@ -36,7 +36,7 @@ def _drag(canvas, start_mm, end_mm):
 
 
 def _panel():
-    from ui.panels.figure import panel_from_arrays
+    from arpes_viewer.ui.panels.figure import panel_from_arrays
     k = np.linspace(-1, 1, 60)
     energy = np.linspace(-0.5, 0.1, 50)
     kk, ee = np.meshgrid(k, energy, indexing="ij")
@@ -46,7 +46,7 @@ def _panel():
 
 @pytest.fixture
 def window(app):
-    from ui.panels.figure import FigureWindow
+    from arpes_viewer.ui.panels.figure import FigureWindow
     window = FigureWindow([], "blank")
     window.resize(1300, 820)
     window.show()
@@ -151,7 +151,7 @@ def test_a_picture_fills_a_slot_with_its_shape(window, tmp_path):
 
 
 def test_old_callers_still_get_a_grid(app):
-    from ui.panels.figure import FigureWindow
+    from arpes_viewer.ui.panels.figure import FigureWindow
     window = FigureWindow([_panel(), _panel(), _panel()], "grid")
     assert not window.figure.free
     window.add_panels([_panel()])

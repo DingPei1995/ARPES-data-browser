@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from PyQt5.QtWidgets import QApplication
 
-from tools.crystal import tightbinding as TB
-from ui.launcher.list_actions import availability
-from ui.viewers.widgets import MemoryData
+from arpes_viewer.tools.crystal import tightbinding as TB
+from arpes_viewer.ui.launcher.list_actions import availability
+from arpes_viewer.ui.viewers.widgets import MemoryData
 
 
 
@@ -21,8 +21,8 @@ def app():
 
 @pytest.fixture
 def launcher(app, monkeypatch):
-    import ARPES_viewer as av
-    from ui.launcher import main_window as main_window_ui
+    import arpes_viewer.app as av
+    from arpes_viewer.ui.launcher import main_window as main_window_ui
     monkeypatch.setattr(av, "loaded_items", {})
     win = av._MainWindow()
     ui = main_window_ui.Ui_MainWindow()
@@ -117,7 +117,7 @@ def test_save_writes_igor_text_and_keeps_the_rows(launcher, tmp_path):
 
 # -- the windows -----------------------------------------------------------------
 def test_sum_repeats_window_walks_through_its_steps(app):
-    from ui.panels.repeats import RepeatsDialog
+    from arpes_viewer.ui.panels.repeats import RepeatsDialog
     rng = np.random.default_rng(1)
     base = 100 + 50 * np.exp(-np.linspace(-1, 1, 40)[:, None] ** 2 / 0.1)
     scans = [(f"s{i}", _cut(f"s{i}", rng.poisson(base * np.ones((40, 61)))
@@ -138,7 +138,7 @@ def test_sum_repeats_window_walks_through_its_steps(app):
 
 
 def test_sum_repeats_refuses_two_kinds(app):
-    from ui.panels.repeats import RepeatsDialog
+    from arpes_viewer.ui.panels.repeats import RepeatsDialog
     cube = MemoryData("map", (np.arange(2.0), np.arange(3.0), np.arange(4.0)),
                       np.ones((2, 3, 4)), {}, source_label="m")
     with pytest.raises(ValueError):
@@ -146,7 +146,7 @@ def test_sum_repeats_refuses_two_kinds(app):
 
 
 def test_ridge_window_lists_ridge_images_and_saves_points(app, tmp_path):
-    from ui.panels.ridge import RidgeDialog
+    from arpes_viewer.ui.panels.ridge import RidgeDialog
     k = np.linspace(-0.6, 0.6, 121)
     e = np.linspace(-0.4, 0.05, 91)
     kk, ee = np.meshgrid(k, e, indexing="ij")
@@ -162,7 +162,7 @@ def test_ridge_window_lists_ridge_images_and_saves_points(app, tmp_path):
 
 
 def test_detector_window_corrects_a_map(app):
-    from ui.panels.detector import DetectorDialog
+    from arpes_viewer.ui.panels.detector import DetectorDialog
     x = np.linspace(-15, 15, 61)
     y = np.linspace(50, 52, 41)
     frame = np.ones((61, 41))
@@ -181,13 +181,13 @@ def test_detector_window_corrects_a_map(app):
 
 
 def test_detector_window_refuses_data_off_the_detector(app):
-    from ui.panels.detector import DetectorDialog
+    from arpes_viewer.ui.panels.detector import DetectorDialog
     with pytest.raises(ValueError, match="cannot be corrected"):
         DetectorDialog(("c", _cut(info={"kcut.gamma": 0.0})))
 
 
 def test_tight_binding_window_traces_fits_and_lists_a_model(app, tmp_path):
-    from ui.panels.tightbinding import TightBindingDialog
+    from arpes_viewer.ui.panels.tightbinding import TightBindingDialog
     dialog = TightBindingDialog(("km", _k_map()))
     dialog.a2.setValue(3.5)
     dialog.b2.setValue(3.5)
@@ -208,7 +208,7 @@ def test_tight_binding_window_traces_fits_and_lists_a_model(app, tmp_path):
 
 
 def test_tight_binding_from_a_file_alone(app, tmp_path):
-    from ui.panels.tightbinding import TightBindingDialog
+    from arpes_viewer.ui.panels.tightbinding import TightBindingDialog
     vectors = TB.lattice_2d(3.0, 3.0, 120)
     model = TB.TBFit(vectors, TB.shells(vectors, 1), 0.0, [-0.5], 0, [0], 0, 0,
                      False)
@@ -230,7 +230,7 @@ def test_tight_binding_from_a_file_alone(app, tmp_path):
 
 def test_tight_binding_takes_the_brillouin_zone_crystal(app, tmp_path, monkeypatch):
     import json
-    from ui.panels.tightbinding import TightBindingDialog
+    from arpes_viewer.ui.panels.tightbinding import TightBindingDialog
     monkeypatch.setenv("ARPES_VIEWER_CONFIG_DIR", str(tmp_path))
     (tmp_path / "brillouin_zone.json").write_text(json.dumps(
         {"mode": "2d", "a2": 2.46, "b2": 2.46, "gamma2": 120.0,
@@ -243,7 +243,7 @@ def test_tight_binding_takes_the_brillouin_zone_crystal(app, tmp_path, monkeypat
 
 def test_crystal_window_reads_a_cif_draws_a_plane_and_exports(app, tmp_path):
     from test.tools.test_new_analysis import NACL_CIF
-    from ui.panels.crystal import CrystalDialog
+    from arpes_viewer.ui.panels.crystal import CrystalDialog
     cif = tmp_path / "nacl.cif"
     cif.write_text(NACL_CIF, encoding="utf-8")
     dialog = CrystalDialog()
@@ -269,7 +269,7 @@ def test_crystal_window_reads_a_cif_draws_a_plane_and_exports(app, tmp_path):
 
 
 def test_crystal_window_typed_in_and_centred(app):
-    from ui.panels.crystal import CrystalDialog
+    from arpes_viewer.ui.panels.crystal import CrystalDialog
     dialog = CrystalDialog()
     dialog.space_group.setValue(229)          # Im-3m: body centred
     assert len(dialog.structure.atoms) == 2

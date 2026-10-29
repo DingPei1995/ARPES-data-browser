@@ -7,9 +7,9 @@ and the array together.
 import numpy as np
 import pytest
 
-import loader.registry as L
-from loader.nxs_file import NxsScan
-from loader.session import SessionStore
+import arpes_viewer.loader.registry as L
+from arpes_viewer.loader.nxs_file import NxsScan
+from arpes_viewer.loader.session import SessionStore
 
 
 @pytest.fixture()

@@ -10,7 +10,7 @@ from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import (QApplication, QCheckBox, QDialog, QDoubleSpinBox,
                              QMainWindow, QPushButton, QVBoxLayout, QWidget)
 
-from ui.common import enterkeys
+from arpes_viewer.ui.common import enterkeys
 
 
 @pytest.fixture(scope="module")
@@ -36,7 +36,7 @@ def _dialog(slow=False):
     changed = []
     spin.valueChanged.connect(changed.append)
     if slow:
-        from ui.common.jobs import run_blocking
+        from arpes_viewer.ui.common.jobs import run_blocking
 
         spin.valueChanged.connect(lambda _v: run_blocking(
             dialog, "long", lambda report: time.sleep(0.7)))
@@ -89,8 +89,8 @@ def test_a_window_that_names_its_redraw_gets_it(app):
 def test_the_rotation_of_the_contour_plane_does_not_press_next(app, tmp_path):
     import numpy as np
 
-    from tools.crystal import bandfiles
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.tools.crystal import bandfiles
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     a = 3.3
     lattice = np.array([[a, 0, 0], [-a / 2, a * np.sqrt(3) / 2, 0], [0, 0, 6.0]])
@@ -124,8 +124,8 @@ def test_enter_in_the_fermi_surface_energy_draws_once_without_an_error(
 
     import numpy as np
 
-    from tools.crystal import bands as B
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.tools.crystal import bands as B
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     errors = []
     monkeypatch.setattr(sys, "excepthook", lambda *a: errors.append(a))
@@ -155,7 +155,7 @@ def test_enter_in_the_fermi_surface_energy_draws_once_without_an_error(
         return real(self, k)
 
     monkeypatch.setattr(B.WannierModel, "energies", slow)
-    from tools.crystal import fermisurface as FS
+    from arpes_viewer.tools.crystal import fermisurface as FS
 
     real_surface = FS.fermi_surface
 
@@ -196,7 +196,7 @@ def test_enter_in_the_fermi_surface_energy_draws_once_without_an_error(
 def test_busy_work_runs_off_the_gui_thread_and_never_refuses(app):
     import threading
 
-    from ui.common import jobs
+    from arpes_viewer.ui.common import jobs
 
     gui = threading.get_ident()
     where = jobs.busy_work(None, "a long step",

@@ -1,0 +1,550 @@
+"""
+tools/momentum/kspace.py
+========================
+Angle-to-momentum conversion for ARPES Maps, ported from the beamline's
+``k_space_conversion_demo.m`` (its 3-D branch -- the one that handles a
+deflector Map; k_z is not covered here, and the single-Cut case
+lives in ``tools.momentum.cutk``, which builds on the conventions below).
+
+Physics, straight from the .m file
+---------------------------------
+A photoelectron leaving the sample along the angles (theta, phi) has an
+in-plane momentum whose *direction* is the unit vector::
+
+    kx0 = sin(theta) * cos(phi)
+    ky0 = sin(phi)
+    kz0 = cos(theta) * cos(phi)
+
+(that really is a unit vector: cos^2(phi) * 1 + sin^2(phi) = 1), and whose
+*length* depends only on the kinetic energy::
+
+    |k| = sqrt(2 m_e E) / hbar
+
+Because direction and length separate like that, a whole Map converts as one
+direction field scaled per energy slice -- which is what makes the inversion
+in :func:`convert_map` cheap.
+
+Sample orientation enters as a rotation ``R = Rz @ Rx @ Ry`` built from the
+theta offset, the phi offset and the sample azimuth, transcribed from the
+.m file including its sign conventions (theta and the azimuth are negated
+"just for user's habit"; phi is not).
+
+Units: this module works in **inverse angstroms**. The .m file divided by
+``k_unit = pi / lattice_constant`` to express momenta in units of pi/a, so
+its lattice-constant box has no counterpart here -- ``K0_PER_SQRT_EV`` below
+is the same constant with ``k_unit = 1e10 m^-1`` instead, i.e. the familiar
+0.5123 * sqrt(E[eV]) A^-1.
+
+How the resampling differs from the .m file, and why
+---------------------------------------------------
+The .m file goes forwards: it maps the measured angle grid into k, builds a
+Delaunay triangulation of those scattered points, interpolates onto a
+padded unit grid (``ceil(N*1.1)``), then ``interp2``-s once per energy.
+
+Here the mapping is inverted instead. For a target ``(kx, ky)`` at energy
+``E`` the emission angles that produced it are recovered in closed form::
+
+    u = (kx, ky, sqrt(1 - kx^2 - ky^2)) / |k(E)|     # unit direction
+    v = R^T u                                        # undo the sample rotation
+    phi   = arcsin(v_y)
+    theta = arctan2(v_x, v_z)
+
+so each output point is read straight from the measured, *regular* angle
+grid by ordinary bilinear interpolation. No triangulation, no padding
+factor, and the result is the exact inverse of the forward map rather than a
+piecewise-linear approximation of it. :func:`convert_map_forward_reference`
+implements the .m file's forward-and-scatter route so the tests can check
+the two against each other.
+
+An output grid coarser than the measurement is averaged rather than
+sampled: each angle plane is box-averaged over one output pixel's
+footprint before it is read, and fewer energy points are bin averages
+(:mod:`tools.momentum.rebin`). At the measured sampling nothing changes.
+
+Points with ``kx^2 + ky^2 > |k|^2`` are outside the light cone and points
+whose angles fall outside the measured range were never recorded; both come
+back as NaN rather than as extrapolated values.
+"""
+from __future__ import annotations
+
+import numpy as np
+
+from arpes_viewer.tools.momentum import rebin
+
+# sqrt(2 m_e e) * 2 pi / h, divided by 1e10 m^-1 per A^-1.
+# The .m file's constants: ce=1.6021892e-19, me=9.109534e-31, h=6.626176e-34.
+_CE = 1.6021892e-19
+_ME = 9.109534e-31
+_H = 6.626176e-34
+K0_PER_SQRT_EV = np.sqrt(2.0 * _ME * _CE) * 2.0 * np.pi / _H / 1e10  # ~0.5123
+
+
+def rotation_matrix(theta_offset_deg: float, phi_offset_deg: float,
+                    azimuth_deg: float = 0.0) -> np.ndarray:
+    """``R = Rz @ Rx @ Ry`` exactly as the .m file builds it, including its
+    sign conventions: theta and the azimuth are negated ("negative sign is
+    just for user's habit"), phi is not.
+
+    These are the numbers as typed into the MATLAB dialog's boxes. They are
+    **not** the angles of the point that lands at the k-space origin -- see
+    :func:`origin_rotation`, which is what this program's GUI uses.
+
+    Note MATLAB's ``[a', b', c']`` builds a matrix from *columns*, so e.g.
+    its ``rx`` has ``-sin`` at (3,2) and ``+sin`` at (2,3) -- the transpose
+    of the textbook form. That is reproduced here.
+    """
+    theta = -np.deg2rad(theta_offset_deg)
+    phi = np.deg2rad(phi_offset_deg)
+    azimuth = -np.deg2rad(azimuth_deg)
+
+    rx = np.array([[1.0, 0.0, 0.0],
+                   [0.0, np.cos(phi), np.sin(phi)],
+                   [0.0, -np.sin(phi), np.cos(phi)]])
+    ry = np.array([[np.cos(theta), 0.0, -np.sin(theta)],
+                   [0.0, 1.0, 0.0],
+                   [np.sin(theta), 0.0, np.cos(theta)]])
+    rz = np.array([[np.cos(azimuth), np.sin(azimuth), 0.0],
+                   [-np.sin(azimuth), np.cos(azimuth), 0.0],
+                   [0.0, 0.0, 1.0]])
+    return rz @ rx @ ry
+
+
+def origin_rotation(theta_origin_deg: float, phi_origin_deg: float,
+                    azimuth_deg: float = 0.0) -> np.ndarray:
+    """Rotation that sends the emission direction ``(theta, phi)`` to normal
+    emission, i.e. puts that point at the k-space origin.
+
+    This is the sense the GUI works in: the user picks the point that should
+    become k = (0, 0) on the constant-energy contour, and its own angles are
+    what the boxes show.
+
+    It differs from :func:`rotation_matrix` by a sign on both angles. The .m
+    file's text boxes take the opposite convention, so its ``theta offset``
+    and ``phi offset`` are the negatives of the numbers used here -- worth
+    knowing when comparing against a MATLAB conversion of the same scan.
+    Verified in the tests: the picked angles come back as k = (0, 0) to
+    machine precision, which is not true of the raw .m convention.
+    """
+    return rotation_matrix(-theta_origin_deg, -phi_origin_deg, azimuth_deg)
+
+
+def k0_of_energy(energy_eV) -> np.ndarray:
+    """Momentum magnitude |k| in A^-1 for a kinetic energy in eV."""
+    energy = np.asarray(energy_eV, dtype=float)
+    return K0_PER_SQRT_EV * np.sqrt(np.clip(energy, 0.0, None))
+
+
+def angle_grid_to_directions(theta_deg, phi_deg, R: np.ndarray):
+    """Unit momentum directions for every point of the angle grid.
+
+    Returns ``(kx1, ky1)``, each shaped ``(len(theta), len(phi))`` and
+    dimensionless: multiply by ``k0_of_energy(E)`` for that energy's plane.
+    """
+    theta = np.deg2rad(np.asarray(theta_deg, dtype=float))[:, None]
+    phi = np.deg2rad(np.asarray(phi_deg, dtype=float))[None, :]
+
+    kx0 = np.sin(theta) * np.cos(phi)
+    ky0 = np.broadcast_to(np.sin(phi), (theta.size, phi.size))
+    kz0 = np.cos(theta) * np.cos(phi)
+
+    kx1 = R[0, 0] * kx0 + R[0, 1] * ky0 + R[0, 2] * kz0
+    ky1 = R[1, 0] * kx0 + R[1, 1] * ky0 + R[1, 2] * kz0
+    return kx1, ky1
+
+
+def _scaled_range(values: np.ndarray, k0_min: float, k0_max: float):
+    """Range of ``values * k0`` over the whole energy span.
+
+    The .m file takes its lower bound only from the lowest-energy plane and
+    its upper bound only from the highest, which is wrong whenever the
+    direction field spans zero: the most negative kx comes from the *highest*
+    energy. Both endpoints are scanned here instead.
+    """
+    lo_candidates = (values.min() * k0_min, values.min() * k0_max)
+    hi_candidates = (values.max() * k0_min, values.max() * k0_max)
+    return float(min(lo_candidates)), float(max(hi_candidates))
+
+
+def k_extent(theta_deg, phi_deg, energy_eV, *, theta_offset_deg: float = 0.0,
+             phi_offset_deg: float = 0.0, azimuth_deg: float = 0.0,
+             energy_offset_eV: float = 0.0):
+    """The (kx, ky) box :func:`convert_map` would produce for these settings.
+
+    Split out of the conversion so the dialog can answer "how many points is
+    that?" before anything is converted -- asking for a resolution in A^-1
+    only means something once the extent is known.
+    """
+    energy = np.asarray(energy_eV, dtype=float) + float(energy_offset_eV)
+    R = origin_rotation(theta_offset_deg, phi_offset_deg, azimuth_deg)
+    kx1, ky1 = angle_grid_to_directions(theta_deg, phi_deg, R)
+    k0 = k0_of_energy(energy)
+    positive = k0[k0 > 0]
+    if positive.size == 0:
+        raise ValueError("no positive kinetic energies to convert")
+    k0_min, k0_max = float(positive.min()), float(positive.max())
+    kx_lo, kx_hi = _scaled_range(kx1, k0_min, k0_max)
+    ky_lo, ky_hi = _scaled_range(ky1, k0_min, k0_max)
+    return kx_lo, kx_hi, ky_lo, ky_hi
+
+
+def points_to_azimuth(points) -> float:
+    """The smallest sample rotation that stands a picked direction upright.
+
+    Give it two points on the constant-energy contour and it returns the
+    rotation that makes the line through them vertical (along ky); give it
+    one and the line is taken from the origin to that point, since that is
+    the only line a single point defines.
+
+    **Two points define a line, not an arrow.** Which of them was clicked
+    first, and which side of the origin they sit on, are not things the
+    sample knows about -- so the answer must not depend on either, and the
+    result is folded to (-90, 90]. Standing a direction along +ky and along
+    -ky are the same alignment of the same axis, and they differ by exactly
+    the 180 degrees that folding removes; what is left is the smaller of the
+    two turns, clockwise or anticlockwise.
+
+    Before this was folded that far, clicking the same pair in the other
+    order gave a rotation 180 degrees away -- a perfectly plausible number,
+    and one that converts the map upside down.
+
+    A high-symmetry direction picked off a Fermi surface is exactly what
+    this is for: pick two points along it, and the converted map comes out
+    with that direction up the ky axis.
+    """
+    pts = [(float(x), float(y)) for x, y in points]
+    if not pts:
+        raise ValueError("pick at least one point")
+    if len(pts) == 1:
+        dx, dy = pts[0]
+    else:
+        dx, dy = pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]
+    if abs(dx) < 1e-12 and abs(dy) < 1e-12:
+        raise ValueError("the two points are the same -- they define no direction")
+    # The sample rotation this program applies turns the data by -azimuth in
+    # the (kx, ky) plane, so standing a direction at `angle` upright takes
+    # 90 - angle. (Verified against a real conversion in test_kspace.)
+    angle = np.degrees(np.arctan2(dy, dx))
+    rotation = 90.0 - angle
+    return _fold_to_right_angle(rotation)
+
+
+def _fold_to_right_angle(rotation: float, tol: float = 1e-9) -> float:
+    """Fold a rotation into (-90, 90], the range of an undirected line.
+
+    Written the way it is so that a tie lands on +90 rather than -90: a
+    quarter turn one way and a quarter turn the other are equally small, and
+    picking the same one every time beats picking whichever the modulo
+    happened to give.
+
+    The tie needs the tolerance, not just the choice of interval. A
+    horizontal line wants exactly a quarter turn, and ``arctan2`` returns it
+    as 90 plus or minus a part in 1e14 depending on the sign of a sine that
+    should have been zero -- which lands on opposite ends of a half-open
+    interval. So a result within ``tol`` of the boundary is pulled to +90,
+    and the same picked line gives the same number every time.
+    """
+    folded = -((-float(rotation) + 90.0) % 180.0 - 90.0)
+    if abs(folded + 90.0) < tol or abs(folded - 90.0) < tol:
+        return 90.0
+    return float(folded) + 0.0      # normalise -0.0, which prints as "-0.000"
+
+
+def result_dtype(dtype) -> np.dtype:
+    """What a resampled cube is stored as, given the measurement's dtype.
+
+    Counts that arrived as float32 (or as integers float32 holds exactly)
+    come back as float32: the interpolation is done in float64 plane by
+    plane, but keeping the whole converted cube at double precision only
+    doubled its memory and its file, for digits the measurement never had.
+    """
+    dtype = np.dtype(dtype)
+    if (np.issubdtype(dtype, np.floating) and dtype.itemsize <= 4) or \
+            (np.issubdtype(dtype, np.integer) and dtype.itemsize <= 2):
+        return np.dtype(np.float32)
+    return np.dtype(np.float64)
+
+
+#: What a converted cube can be stored as. float16 is the default the dialog
+#: offers: a converted map is for looking at, cutting and fitting, and its
+#: relative step of 2^-11 (0.05 %) is far below the counting noise of any
+#: real point (1 % already needs 10^4 counts), so it halves the memory and
+#: the file for no visible or fitted difference.
+PRECISIONS = ("float16", "float32")
+
+#: float16's largest finite value. Interpolation only ever takes weighted
+#: averages, so a converted cube never exceeds its source's extremes, and
+#: this is the whole overflow test.
+FLOAT16_MAX = 65504.0
+#: Below this peak magnitude the weak parts of a map (a thousandth of the
+#: peak) would fall under float16's smallest normal number (6.1e-5) and lose
+#: digits -- a map normalised to tiny numbers, say. Such a map is kept in
+#: float32 instead.
+FLOAT16_MIN_PEAK = 0.0625
+
+
+def float16_holds(lo: float, hi: float) -> bool:
+    """Whether values spanning ``[lo, hi]`` survive float16 storage: no
+    overflow, and a peak large enough that its weak tail keeps its digits.
+    An all-NaN range (nothing measured) is trivially fine."""
+    if not (np.isfinite(lo) and np.isfinite(hi)):
+        return True
+    peak = max(abs(float(lo)), abs(float(hi)))
+    return FLOAT16_MIN_PEAK <= peak <= FLOAT16_MAX
+
+
+def storage_dtype(cube, precision: str = None) -> np.dtype:
+    """The dtype a converted cube is written as.
+
+    ``precision=None`` keeps the old rule (:func:`result_dtype`, following
+    the measurement); ``"float32"`` and ``"float16"`` ask for that. float16
+    is only granted when the data fit it (:func:`float16_holds`) -- anything
+    else comes back as float32, and the caller can tell from the dtype.
+    """
+    cube = np.asarray(cube)
+    if precision is None:
+        return result_dtype(cube.dtype)
+    if precision not in PRECISIONS:
+        raise ValueError(f"precision must be one of {PRECISIONS}, not {precision!r}")
+    if precision == "float32":
+        return np.dtype(np.float32)
+    with np.errstate(invalid="ignore"):
+        lo, hi = np.nanmin(cube), np.nanmax(cube)
+    return np.dtype(np.float16 if float16_holds(lo, hi) else np.float32)
+
+
+def _resample_energy(cube: np.ndarray, energy: np.ndarray, n_energy: int):
+    """Resample the cube along its energy axis.
+
+    Fewer points than measured (a step more than ``rebin.REDUCTION_THRESHOLD``
+    times the measured one) are *bin averages* (:func:`rebin.bin_average`):
+    each output point stands for every channel in its bin, so no counts are
+    thrown away. Otherwise -- as many points or more -- the cube is
+    interpolated linearly.
+
+    Vectorised: every spectrum shares the same sample and target energies,
+    so the bracketing indices and weights are worked out once and applied to
+    the whole cube, rather than one ``np.interp`` per (theta, phi) spectrum
+    -- a hundred thousand Python-level calls on a real map.
+    """
+    if n_energy is None or n_energy == energy.size:
+        return cube, energy
+    if n_energy < 2:
+        raise ValueError("n_energy must be at least 2")
+    target = np.linspace(float(energy[0]), float(energy[-1]), int(n_energy))
+    measured_step = abs(float(energy[-1] - energy[0])) / max(energy.size - 1, 1)
+    target_step = abs(float(target[1] - target[0]))
+    if measured_step > 0 and rebin.is_reduction(target_step / measured_step):
+        return (rebin.bin_average(cube, energy, target, axis=2,
+                                  dtype=result_dtype(cube.dtype)), target)
+    # interp needs an ascending sample axis
+    order = np.argsort(energy)
+    src_e = energy[order]
+    upper = np.clip(np.searchsorted(src_e, target, side="right"), 1, src_e.size - 1)
+    lower = upper - 1
+    gap = src_e[upper] - src_e[lower]
+    weight = np.where(gap > 0, (target - src_e[lower]) / np.where(gap > 0, gap, 1.0), 0.0)
+    weight = np.clip(weight, 0.0, 1.0)
+    out = np.empty(cube.shape[:2] + (target.size,), dtype=result_dtype(cube.dtype))
+    for j in range(target.size):        # one energy plane at a time: no
+        a = cube[:, :, order[lower[j]]]     # full-size temporaries
+        b = cube[:, :, order[upper[j]]]
+        out[:, :, j] = (1.0 - weight[j]) * a + weight[j] * b
+    return out, target
+
+
+def convert_map(theta_deg, phi_deg, energy_eV, cube, *,
+                theta_offset_deg: float = 0.0,
+                phi_offset_deg: float = 0.0,
+                azimuth_deg: float = 0.0,
+                energy_offset_eV: float = 0.0,
+                n_kx: int = 100, n_ky: int = 100,
+                n_energy: int = None,
+                precision: str = None,
+                progress=None):
+    """Convert an angle-space Map cube to a regular (kx, ky, E) grid.
+
+    ``cube`` is ``(theta, phi, E)`` -- for a deflector Map that is
+    (deflector angle, angle along slit, energy), matching both the .m file's
+    ``data.value`` layout and this program's own.
+
+    ``theta_offset_deg`` / ``phi_offset_deg`` place the k-space origin: give
+    them the angles of the point that should become (0, 0), which is what
+    picking a point on the constant-energy contour does. (The .m file's text
+    boxes use the opposite sign for these two -- see :func:`origin_rotation`.)
+
+    ``n_kx`` / ``n_ky`` / ``n_energy`` set the output grid size, so the
+    result can be coarser or finer than the measurement. ``n_energy=None``
+    keeps the original energy sampling.
+
+    ``precision`` is ``"float16"`` or ``"float32"`` for the stored result
+    (see :func:`storage_dtype`; float16 falls back to float32 when the
+    values do not fit it), or None to follow the measurement's dtype. The
+    interpolation itself is always done in float64.
+
+    Returns ``(kx, ky, energy, cube_k)`` with ``cube_k`` shaped
+    ``(n_kx, n_ky, n_energy)`` and NaN wherever the target point was not
+    measured.
+    """
+    from scipy.ndimage import map_coordinates
+
+    theta_deg = np.asarray(theta_deg, dtype=float)
+    phi_deg = np.asarray(phi_deg, dtype=float)
+    energy = np.asarray(energy_eV, dtype=float) + float(energy_offset_eV)
+    # Kept in its own dtype: each energy plane is promoted to float64 as it
+    # is used, rather than the whole cube up front (twice a float32 map's
+    # size in memory, for no gain in the result).
+    cube = np.asarray(cube)
+
+    if cube.shape != (theta_deg.size, phi_deg.size, energy.size):
+        raise ValueError(
+            f"cube shape {cube.shape} does not match axes "
+            f"(theta={theta_deg.size}, phi={phi_deg.size}, E={energy.size})")
+    if n_kx < 2 or n_ky < 2:
+        raise ValueError("n_kx and n_ky must be at least 2")
+
+    cube, energy = _resample_energy(cube, energy, n_energy)
+
+    R = origin_rotation(theta_offset_deg, phi_offset_deg, azimuth_deg)
+    kx1, ky1 = angle_grid_to_directions(theta_deg, phi_deg, R)
+
+    k0 = k0_of_energy(energy)
+    positive = k0[k0 > 0]
+    if positive.size == 0:
+        raise ValueError("no positive kinetic energies to convert")
+    k0_min, k0_max = float(positive.min()), float(positive.max())
+
+    kx_lo, kx_hi = _scaled_range(kx1, k0_min, k0_max)
+    ky_lo, ky_hi = _scaled_range(ky1, k0_min, k0_max)
+    kx_grid = np.linspace(kx_lo, kx_hi, int(n_kx))
+    ky_grid = np.linspace(ky_lo, ky_hi, int(n_ky))
+
+    KX, KY = np.meshgrid(kx_grid, ky_grid, indexing="ij")
+    Rt = R.T
+
+    # The angle axes must ascend for the interpolator; remember the order so
+    # the cube can be presented the same way.
+    t_order = np.argsort(theta_deg, kind="stable")
+    p_order = np.argsort(phi_deg, kind="stable")
+    theta_sorted = theta_deg[t_order]
+    phi_sorted = phi_deg[p_order]
+    ascending = (np.array_equal(t_order, np.arange(t_order.size))
+                 and np.array_equal(p_order, np.arange(p_order.size)))
+    t_index = np.arange(theta_sorted.size, dtype=float)
+    p_index = np.arange(phi_sorted.size, dtype=float)
+
+    out = np.full((int(n_kx), int(n_ky), energy.size), np.nan,
+                  dtype=storage_dtype(cube, precision))
+    def angles(kx, ky, k):
+        """Emission angles (deg) of momenta ``(kx, ky)`` at ``|k| = k``."""
+        kx_u, ky_u = kx / k, ky / k
+        kz_u = np.sqrt(np.clip(1.0 - kx_u ** 2 - ky_u ** 2, 0.0, None))
+        vx = Rt[0, 0] * kx_u + Rt[0, 1] * ky_u + Rt[0, 2] * kz_u
+        vy = Rt[1, 0] * kx_u + Rt[1, 1] * ky_u + Rt[1, 2] * kz_u
+        vz = Rt[2, 0] * kx_u + Rt[2, 1] * ky_u + Rt[2, 2] * kz_u
+        return (np.degrees(np.arctan2(vx, vz)),
+                np.degrees(np.arcsin(np.clip(vy, -1.0, 1.0))))
+
+    # The measured sampling of each angle axis: its mean step, which is the
+    # step for the regular axes a Map has.
+    theta_step = (theta_sorted[-1] - theta_sorted[0]) / max(theta_sorted.size - 1, 1)
+    phi_step = (phi_sorted[-1] - phi_sorted[0]) / max(phi_sorted.size - 1, 1)
+
+    def footprint(k):
+        """How many measured (theta, phi) steps one output step spans at
+        ``|k| = k``, per angle axis.
+
+        Both sides of an output pixel are mapped back into angles at the
+        middle of the grid, and each angle axis takes the *larger* of the
+        two projections, not their sum. A sample rotation turns the pixel
+        against the angle axes, and the sum would add a sliver of the
+        coarse side to the fine one -- at 2 degrees, a fifth of a 0.2 deg
+        deflector step lands on a 0.045 deg slit step and would have the
+        slit direction averaged at the measured sampling. The larger
+        projection follows whichever output axis runs along that angle
+        axis, so a quarter turn still swaps them correctly."""
+        cx, cy = 0.5 * (kx_grid[0] + kx_grid[-1]), 0.5 * (ky_grid[0] + ky_grid[-1])
+        dx, dy = 0.5 * (kx_grid[1] - kx_grid[0]), 0.5 * (ky_grid[1] - ky_grid[0])
+        t, p = angles(np.array([cx - dx, cx + dx, cx, cx]),
+                      np.array([cy, cy, cy - dy, cy + dy]), k)
+        return (max(abs(t[1] - t[0]), abs(t[3] - t[2])) / theta_step if theta_step > 0 else 0.0,
+                max(abs(p[1] - p[0]), abs(p[3] - p[2])) / phi_step if phi_step > 0 else 0.0)
+
+    for m in range(energy.size):
+        if k0[m] <= 0:
+            continue                      # no momentum to speak of at E<=0
+        radial = (KX / k0[m]) ** 2 + (KY / k0[m]) ** 2
+        inside = radial <= 1.0            # outside is beyond the light cone
+        if not inside.any():
+            continue
+
+        theta_q, phi_q = angles(KX, KY, k0[m])
+
+        # Bilinear interpolation on the (possibly unevenly spaced) angle
+        # grid: each angle is turned into a fractional index by the same
+        # piecewise-linear map along its own axis, and the plane is then
+        # sampled at those indices. That is the same arithmetic as a linear
+        # RegularGridInterpolator, without building one per energy slice.
+        source = cube[:, :, m]
+        if not ascending:
+            source = source[np.ix_(t_order, p_order)]
+        source = np.asarray(source, dtype=float)
+        # A grid coarser than the measurement averages over each output
+        # pixel instead of picking the samples nearest its centre.
+        source = rebin.box_filter(source, footprint(k0[m]))
+        tq, pq = theta_q[inside], phi_q[inside]
+        reach = ((tq >= theta_sorted[0]) & (tq <= theta_sorted[-1])
+                 & (pq >= phi_sorted[0]) & (pq <= phi_sorted[-1]))
+        values = map_coordinates(
+            source, [np.interp(tq, theta_sorted, t_index),
+                     np.interp(pq, phi_sorted, p_index)],
+            order=1, mode="nearest", prefilter=False)
+        values[~reach] = np.nan
+        plane = np.full(KX.shape, np.nan)
+        plane[inside] = values
+        out[:, :, m] = plane
+
+        if progress is not None:
+            progress(m + 1, energy.size)
+
+    return kx_grid, ky_grid, energy, out
+
+
+def convert_map_forward_reference(theta_deg, phi_deg, energy_eV, cube, *,
+                                  theta_offset_deg: float = 0.0,
+                                  phi_offset_deg: float = 0.0,
+                                  azimuth_deg: float = 0.0,
+                                  energy_offset_eV: float = 0.0,
+                                  n_kx: int = 100, n_ky: int = 100):
+    """The .m file's own route -- forward-map the angle grid, then scatter
+    interpolate -- kept as a cross-check for :func:`convert_map`.
+
+    Slower and blurrier (it is piecewise-linear over a triangulation of the
+    mapped points rather than an exact inverse), so it is used by the tests
+    and not by the application.
+    """
+    from scipy.interpolate import LinearNDInterpolator
+
+    theta_deg = np.asarray(theta_deg, dtype=float)
+    phi_deg = np.asarray(phi_deg, dtype=float)
+    energy = np.asarray(energy_eV, dtype=float) + float(energy_offset_eV)
+    cube = np.asarray(cube, dtype=float)
+
+    R = origin_rotation(theta_offset_deg, phi_offset_deg, azimuth_deg)
+    kx1, ky1 = angle_grid_to_directions(theta_deg, phi_deg, R)
+    k0 = k0_of_energy(energy)
+    k0_min, k0_max = float(k0.min()), float(k0.max())
+
+    kx_lo, kx_hi = _scaled_range(kx1, k0_min, k0_max)
+    ky_lo, ky_hi = _scaled_range(ky1, k0_min, k0_max)
+    kx_grid = np.linspace(kx_lo, kx_hi, int(n_kx))
+    ky_grid = np.linspace(ky_lo, ky_hi, int(n_ky))
+    KX, KY = np.meshgrid(kx_grid, ky_grid, indexing="ij")
+
+    pts = np.stack([kx1.ravel(), ky1.ravel()], axis=-1)
+    out = np.full((int(n_kx), int(n_ky), energy.size), np.nan)
+    for m in range(energy.size):
+        if k0[m] <= 0:
+            continue
+        interp = LinearNDInterpolator(pts * k0[m], cube[:, :, m].ravel())
+        out[:, :, m] = interp(KX, KY)
+    return kx_grid, ky_grid, energy, out

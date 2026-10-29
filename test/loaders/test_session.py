@@ -8,9 +8,9 @@ import os
 import numpy as np
 import pytest
 
-from loader.nxs_file import (save_dataset, load_soleil_nxs, LazyArray,
+from arpes_viewer.loader.nxs_file import (save_dataset, load_soleil_nxs, LazyArray,
                             NATIVE_FORMAT_VERSION)
-from loader.session import SessionStore, MemoryBudget, scan_to_dict
+from arpes_viewer.loader.session import SessionStore, MemoryBudget, scan_to_dict
 
 
 def _arpes_cube(shape=(20, 30, 16), dtype=np.float32):
@@ -103,7 +103,7 @@ def test_a_version_1_file_still_reads(tmp_path):
     """Files written before the format changed must keep opening: uncompressed,
     float64, no shuffle -- the reader must not depend on any of that."""
     import h5py
-    from loader.nxs_file import NATIVE_ATTR, NATIVE_FORMAT_ATTR
+    from arpes_viewer.loader.nxs_file import NATIVE_ATTR, NATIVE_FORMAT_ATTR
     path = str(tmp_path / "old.nxs")
     cube = _arpes_cube(dtype=np.float64)
     with h5py.File(path, "w") as f:
@@ -167,7 +167,7 @@ def test_bytes_on_disk_counts_what_was_written(store):
 
 
 def test_scan_to_dict_round_trips_a_cut(store):
-    from loader.nxs_file import NxsScan
+    from arpes_viewer.loader.nxs_file import NxsScan
     scan = NxsScan(kind="cut")
     scan.x, scan.y = np.arange(10.0), np.arange(12.0)
     scan.value = np.random.default_rng(1).random((10, 12))
@@ -180,7 +180,7 @@ def test_scan_to_dict_round_trips_a_cut(store):
 
 
 def test_scan_to_dict_refuses_a_kind_it_cannot_describe():
-    from loader.nxs_file import NxsScan
+    from arpes_viewer.loader.nxs_file import NxsScan
     with pytest.raises(ValueError, match="plain axes"):
         scan_to_dict("unsupported", NxsScan(kind="unsupported"), "x")
 
@@ -222,14 +222,14 @@ def test_budget_discard_and_clear():
 
 # -- the operations log ---------------------------------------------------------
 def test_every_store_is_logged(store):
-    from loader.session import read_log
+    from arpes_viewer.loader.session import read_log
     path = store.store(_map_item("logged one"))
     rows = read_log(store.root)
     assert any(row[2].strip() == "STORE" and row[4] == path for row in rows), rows
 
 
 def test_saving_a_dataset_logs_it_and_removes_the_working_copy(store):
-    from loader.session import read_log
+    from arpes_viewer.loader.session import read_log
     path = store.store(_map_item("done with"))
     store.released(path, "/home/me/results.nxs::done with")
     assert not os.path.exists(path)
@@ -239,7 +239,7 @@ def test_saving_a_dataset_logs_it_and_removes_the_working_copy(store):
 
 
 def test_discard_says_why_in_the_log(store):
-    from loader.session import read_log
+    from arpes_viewer.loader.session import read_log
     path = store.store(_map_item())
     store.discard(path, reason="removed from the list")
     rows = [row for row in read_log(store.root) if row[2].strip() == "DISCARD"]
@@ -249,7 +249,7 @@ def test_discard_says_why_in_the_log(store):
 def test_the_log_survives_a_corrupted_tail(store):
     """A crash mid-write leaves a half line. The log is consulted *after* a
     crash, so it has to read back anyway."""
-    from loader.session import read_log
+    from arpes_viewer.loader.session import read_log
     store.store(_map_item("good"))
     with open(store.log_path, "a", encoding="utf-8") as handle:
         handle.write("this line was cut off mid-wr")
@@ -268,13 +268,13 @@ def test_retention_is_three_days():
     """Long enough to come back on Monday for Friday's crash is not the
     trade any more: a copy that matters is saved, and one that is still here
     after three days is one nobody came back for."""
-    from loader.session import KEEP_DAYS
+    from arpes_viewer.loader.session import KEEP_DAYS
     assert KEEP_DAYS == 3
 
 
 # -- finding what a crash left behind -------------------------------------------
 def test_leftovers_lists_another_sessions_datasets(tmp_path):
-    from loader.session import leftover_sessions
+    from arpes_viewer.loader.session import leftover_sessions
     crashed = SessionStore(root=str(tmp_path))
     crashed.store(_map_item("half-finished"))
     fresh = SessionStore(root=str(tmp_path))
@@ -314,7 +314,7 @@ def test_leftovers_are_newest_first(tmp_path):
 
 def test_pruning_records_what_it_removed(tmp_path):
     import time as _time
-    from loader.session import read_log
+    from arpes_viewer.loader.session import read_log
     old = SessionStore(root=str(tmp_path))
     old.store(_map_item())
     os.utime(old.folder, (_time.time() - 10 * 86400,) * 2)
@@ -331,7 +331,7 @@ def test_a_four_dimensional_spatial_scan_keeps_all_four_axes(store):
     own copy of the axis table and that copy was wrong. Everything now reads
     loader.nxs_file.AXIS_SLOTS, so there is one place for this to be right.
     """
-    from loader.nxs_file import NxsScan
+    from arpes_viewer.loader.nxs_file import NxsScan
     scan = NxsScan(kind="spem_4d")
     scan.x = np.linspace(0, 1, 4)        # spatial x
     scan.y = np.linspace(0, 2, 5)        # spatial y
@@ -356,7 +356,7 @@ def test_a_four_dimensional_spatial_scan_keeps_all_four_axes(store):
     ("spem_1d", 3), ("spem_4d", 4),
 ])
 def test_every_kind_has_one_axis_slot_per_dimension(kind, n_axes):
-    from loader.nxs_file import axis_slots
+    from arpes_viewer.loader.nxs_file import axis_slots
     assert len(axis_slots(kind, "array")) == n_axes
     assert len(axis_slots(kind, "constructor")) == n_axes
     # the two orders are permutations of each other, never different sets
@@ -368,7 +368,7 @@ def test_every_kind_has_an_energy_axis():
     out, so a kind added to the table gets one for free -- which is the
     point, since the two panels that used to carry their own copy would
     otherwise refuse to shift a new kind's energy axis."""
-    from loader.nxs_file import AXIS_SLOTS, energy_slot
+    from arpes_viewer.loader.nxs_file import AXIS_SLOTS, energy_slot
     for kind in AXIS_SLOTS:
         if kind == "mdc":
             continue                           # the one kind without one
@@ -386,22 +386,22 @@ def test_the_cube_kinds_are_exactly_the_three_axis_cubes():
     """CUBE_KINDS is what the viewers, the 3-D view and the processing
     panels branch on. It has to stay in step with the axis table, or a kind
     gets a window and no processing, or the reverse."""
-    from loader.nxs_file import AXIS_SLOTS, CUBE_KINDS
+    from arpes_viewer.loader.nxs_file import AXIS_SLOTS, CUBE_KINDS
     for kind in CUBE_KINDS:
         assert AXIS_SLOTS[kind]["array"] == ("x", "k", "z"), kind
     assert set(CUBE_KINDS) == {"map", "k_map", "kz_map", "kz_map_k"}
 
 
 def test_every_kind_has_a_name_a_person_can_read():
-    from loader.nxs_file import AXIS_SLOTS, KIND_LABELS
+    from arpes_viewer.loader.nxs_file import AXIS_SLOTS, KIND_LABELS
     for kind in AXIS_SLOTS:
         assert KIND_LABELS.get(kind), kind
 
 
 def test_the_derived_tables_match_the_authority():
-    from loader.nxs_file import AXIS_SLOTS
-    from tools.processing.dataops import ARRAY_AXES, CONSTRUCTOR_AXES
-    from loader.registry import _axis_slots
+    from arpes_viewer.loader.nxs_file import AXIS_SLOTS
+    from arpes_viewer.tools.processing.dataops import ARRAY_AXES, CONSTRUCTOR_AXES
+    from arpes_viewer.loader.registry import _axis_slots
     assert ARRAY_AXES == {k: v["array"] for k, v in AXIS_SLOTS.items()}
     assert CONSTRUCTOR_AXES == {k: v["constructor"] for k, v in AXIS_SLOTS.items()}
     for kind in AXIS_SLOTS:
@@ -409,7 +409,7 @@ def test_the_derived_tables_match_the_authority():
 
 
 def test_memory_data_fills_the_slots_the_table_names():
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     data = MemoryData("spem_4d",
                       (np.arange(4.), np.arange(5.), np.arange(6.), np.arange(7.)),
                       np.zeros((5, 4, 6, 7)), {}, source_label="s")
@@ -420,7 +420,7 @@ def test_memory_data_fills_the_slots_the_table_names():
 
 
 def test_memory_data_rejects_the_wrong_number_of_axes():
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     with pytest.raises(ValueError, match="takes 3 axes"):
         MemoryData("map", (np.arange(4.), np.arange(5.)), np.zeros((4, 5)), {},
                    source_label="s")
@@ -430,7 +430,7 @@ def test_a_session_folder_from_before_the_rename_is_still_found(tmp_path, monkey
     """The program used to be called NxsLoader and kept its sessions
     elsewhere. Upgrading must not be a way to lose a crashed session's work,
     so the old location is still looked in."""
-    from loader import session as S
+    from arpes_viewer.loader import session as S
     legacy_root = tmp_path / "old" / "sessions"
     legacy_root.mkdir(parents=True)
     old = SessionStore(root=str(legacy_root))
@@ -448,18 +448,18 @@ def test_a_file_saved_by_the_old_program_still_opens(tmp_path):
     """The marker attributes inside a saved file keep their original names
     on purpose: renaming them would make every file anyone has already saved
     unrecognisable."""
-    from loader.nxs_file import NATIVE_ATTR, NATIVE_FORMAT_ATTR
+    from arpes_viewer.loader.nxs_file import NATIVE_ATTR, NATIVE_FORMAT_ATTR
     assert NATIVE_ATTR == "nxsloader_kind"
     assert NATIVE_FORMAT_ATTR == "nxsloader_format"
     store = SessionStore(root=str(tmp_path))
     path = store.store(_map_item("written now"))
-    from loader import registry
+    from arpes_viewer.loader import registry
     assert registry.detect(path).name == "This program's own format"
 
 
 # -- a normal close deletes the working copies; only a crash keeps them --------
 def test_finish_deletes_this_sessions_folder(tmp_path):
-    from loader.nxs_file import HANDLES
+    from arpes_viewer.loader.nxs_file import HANDLES
     store = SessionStore(root=str(tmp_path))
     path = store.store(_map_item())
     HANDLES.acquire(path)                       # a viewer still reading it
@@ -501,7 +501,7 @@ def test_pruning_sweeps_the_legacy_folder_too(tmp_path, monkeypatch):
     """Folders from before the rename are offered back at every start, so
     they have to age out as well or they are offered for ever."""
     import time as _time
-    from loader import session as session_module
+    from arpes_viewer.loader import session as session_module
     root, legacy = tmp_path / "new", tmp_path / "legacy"
     old = legacy / "20200101-000000-1"
     old.mkdir(parents=True)
@@ -515,7 +515,7 @@ def test_pruning_sweeps_the_legacy_folder_too(tmp_path, monkeypatch):
 
 def test_a_folder_that_could_not_be_deleted_is_not_counted(tmp_path, monkeypatch):
     import time as _time
-    from loader import session as session_module
+    from arpes_viewer.loader import session as session_module
     old = SessionStore(root=str(tmp_path))
     old.store(_map_item())
     os.utime(old.folder, (_time.time() - 10 * 86400,) * 2)

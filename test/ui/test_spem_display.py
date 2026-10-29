@@ -18,11 +18,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt5")
 from PyQt5.QtWidgets import QApplication                          # noqa: E402
 
-from loader.nxs_file import (antares_spatial_orientation, load_soleil_nxs,  # noqa: E402
+from arpes_viewer.loader.nxs_file import (antares_spatial_orientation, load_soleil_nxs,  # noqa: E402
                              _antares_stage)
-from tools.runtime import memory as memory_tools  # noqa: E402
-from ui.viewers.widgets import NxsData, MemoryData  # noqa: E402
-from ui.viewers import windows as W  # noqa: E402
+from arpes_viewer.tools.runtime import memory as memory_tools  # noqa: E402
+from arpes_viewer.ui.viewers.widgets import NxsData, MemoryData  # noqa: E402
+from arpes_viewer.ui.viewers import windows as W  # noqa: E402
 
 
 @pytest.fixture(scope="module")

@@ -3,7 +3,7 @@
 enough to grey an entry out, and a tooltip that says which row and why."""
 import pytest
 
-from ui.launcher.list_actions import availability, kind_of, RULES
+from arpes_viewer.ui.launcher.list_actions import availability, kind_of, RULES
 
 CUT, MAP, KZ, KMAP, SPIN, EDC, SPEM, BAD = (
     ("c", "Cut"), ("m", "Map"), ("kz", "kz map"), ("k", "k-map"),

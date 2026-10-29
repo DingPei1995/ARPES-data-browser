@@ -3,7 +3,7 @@ edge each coordinate axis is drawn on, where it starts, and cropping a
 lazy cube before it is read."""
 import numpy as np
 
-import tools.processing.volume as V
+import arpes_viewer.tools.processing.volume as V
 
 BOUNDS = [(-10.0, 10.0), (-5.0, 5.0), (54.0, 56.0)]
 

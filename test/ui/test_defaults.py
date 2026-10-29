@@ -21,8 +21,8 @@ import os
 import numpy as np
 import pytest
 
-from tools.processing import combine as C
-from tools.processing.dataops import normalise_presets, self_normalize
+from arpes_viewer.tools.processing import combine as C
+from arpes_viewer.tools.processing.dataops import normalise_presets, self_normalize
 
 DEFL = np.linspace(-8, 8, 33)
 SLIT = np.linspace(-12, 12, 61)
@@ -77,7 +77,7 @@ def app():
 
 
 def _cut():
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     rng = np.random.default_rng(7)
     edge = 1.0 / (np.exp((EKIN - EF) / 0.01) + 1.0)
     values = rng.random((SLIT.size, EKIN.size)) * 0.1 + 1 + 10 * edge
@@ -87,7 +87,7 @@ def _cut():
 
 
 def _map(kind="map"):
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     rng = np.random.default_rng(3)
     cube = rng.random((DEFL.size, SLIT.size, EKIN.size)) + 1
     return MemoryData(kind, (DEFL, SLIT, EKIN), cube,
@@ -96,7 +96,7 @@ def _map(kind="map"):
 
 
 def test_the_normalise_tab_starts_on_each_edc_of_a_cut(app):
-    from ui.viewers.windows import DataOperationsDialog
+    from arpes_viewer.ui.viewers.windows import DataOperationsDialog
     dialog = DataOperationsDialog([("c", _cut())])
     assert [c.isChecked() for c in dialog.norm_checks] == [False, True]
     assert "EDC" in dialog.norm_preset.currentText()
@@ -108,7 +108,7 @@ def test_the_normalise_tab_starts_on_each_edc_of_a_cut(app):
 
 
 def test_the_normalise_tab_starts_on_each_cut_of_a_map(app):
-    from ui.viewers.windows import DataOperationsDialog
+    from arpes_viewer.ui.viewers.windows import DataOperationsDialog
     for kind in ("map", "kz_map"):
         dialog = DataOperationsDialog([("m", _map(kind))])
         assert [c.isChecked() for c in dialog.norm_checks] == [False, True, True]
@@ -122,7 +122,7 @@ def test_the_normalise_tab_starts_on_each_cut_of_a_map(app):
 
 
 def test_the_3d_panel_starts_with_a_smoothing_that_does_something(app):
-    from ui.panels.volume import VolumeProcessDialog
+    from arpes_viewer.ui.panels.volume import VolumeProcessDialog
     dialog = VolumeProcessDialog([("m", _map())])
     assert dialog.plane_width_u.value() > 0 and dialog.plane_width_v.value() > 0
     texts = [dialog.plane_operation.itemText(i)
@@ -138,7 +138,7 @@ def test_the_3d_panel_starts_with_a_smoothing_that_does_something(app):
 
 
 def test_the_2d_panel_mirrors_k_and_finds_the_fermi_level(app):
-    from ui.panels.process import ProcessDialog
+    from arpes_viewer.ui.panels.process import ProcessDialog
     dialog = ProcessDialog([("c", _cut())])
     assert dialog.sym_angle.value() == 90.0
     assert dialog.sym_cx.value() == 0.0
@@ -147,7 +147,7 @@ def test_the_2d_panel_mirrors_k_and_finds_the_fermi_level(app):
 
 
 def test_the_map_conversion_keeps_the_measured_angles(app):
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers import windows as W
     window = W.ContourWindow(_map(), "m", "gray", False)
     dialog = W.KConversionDialog(window)
     assert dialog.nkx_box.value() == DEFL.size
@@ -161,7 +161,7 @@ def test_the_map_conversion_keeps_the_measured_angles(app):
 
 
 def test_the_map_conversion_stores_float16_unless_asked_otherwise(app):
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers import windows as W
     window = W.ContourWindow(_map(), "m", "gray", False)
     dialog = W.KConversionDialog(window)
     from PyQt5.QtWidgets import QLabel

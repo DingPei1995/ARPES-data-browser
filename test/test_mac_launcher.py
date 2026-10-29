@@ -9,8 +9,7 @@ import subprocess
 
 import pytest
 
-import version
-
+from arpes_viewer import version
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "ARPES viewer.app", "Contents")
 

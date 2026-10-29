@@ -18,9 +18,9 @@ import pytest
 from scipy import optimize
 from scipy.interpolate import RegularGridInterpolator
 
-from tools.momentum import kspace, kzconv
-from tools.spectra import peaks
-from tools.momentum.cutk import convert_cut
+from arpes_viewer.tools.momentum import kspace, kzconv
+from arpes_viewer.tools.spectra import peaks
+from arpes_viewer.tools.momentum.cutk import convert_cut
 
 
 def _reference_convert_map(theta, phi, energy, cube, **kw):
@@ -183,7 +183,7 @@ def test_no_precision_keeps_following_the_measurement():
 
 
 # -- reducing conversions average instead of picking samples ---------------
-from tools.momentum import rebin
+from arpes_viewer.tools.momentum import rebin
 
 
 def test_box_kernel_covers_its_width():

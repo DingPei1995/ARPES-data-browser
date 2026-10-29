@@ -2,7 +2,7 @@
 
 **Version 1.2.1** (last modified 29 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
-`version.py` and is shown in the main window's title bar and at its foot,
+`arpes_viewer/version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
 (<https://github.com/DingPei1995/ARPES-data-browser>). Please quote it when
 reporting a bug, and upload the error log with the report ([below](#bug-reports)).
@@ -18,6 +18,18 @@ reporting a bug, and upload the error log with the report ([below](#bug-reports)
 > discussed with the author by e-mail. For collaborations, or
 > questions about the details, contact
 > [ding.pei@synchrotron-soleil.fr](mailto:ding.pei@synchrotron-soleil.fr).
+>
+> **Licence and authorship.** Copyright (c) 2026 Ding Pei. Licensed under
+> the [PolyForm Noncommercial License 1.0.0](LICENSE.md); see also
+> [NOTICE](NOTICE). This is the author's personal work, developed from the
+> author's own earlier code; no institution funded it. The requirements, design
+> decisions, trade-offs, physics, the testing on real experimental data
+> and the feedback from it (drawing on
+> [Phys. Rev. B 103, 245121 (2021)](https://doi.org/10.1103/PhysRevB.103.245121) and
+> [Phys. Rev. B 95, 125126 (2017)](https://doi.org/10.1103/PhysRevB.95.125126)),
+> and the review and acceptance of every change are Ding Pei's; the
+> implementation was assisted by Claude (Anthropic), credited as co-author
+> in the commits.
 
 A Python/PyQt5 program for ARPES data: browse the measurements of a
 beamtime, open them in their own windows, convert to momentum, cut, fit,
@@ -66,8 +78,8 @@ run, without a screen:
 
 | Step | In the program | In code |
 |---|---|---|
-| 1. Raw data | the beamline files, as the main panel lists them | `loader.registry.load(path, entry)` |
-| 2. To momentum | the Γ-plane Fermi-surface map → k-map | `tools.momentum.kspace.convert_map(...)` |
+| 1. Raw data | the beamline files, as the main panel lists them | `arpes_viewer.loader.registry.load(path, entry)` |
+| 2. To momentum | the Γ-plane Fermi-surface map → k-map | `arpes_viewer.tools.momentum.kspace.convert_map(...)` |
 | 3. The calculation | **Calculated bands**: a Wannier Hamiltonian; Z and the shift fitted on a cut | `BandsDialog.open_file(...)`, `.fit_alignment()` |
 | 4. Measured vs calculated | constant-energy maps over the calculated contours, coloured by orbital weight (b) | `BandsDialog.series_panels(...)` |
 | 5. 3-D views | the notched cube (a), the stacked contours (c) | `VolumeWindow(...).figure_panel()` |
@@ -84,7 +96,7 @@ python devtools/figure_tests.py out_png/ out_afig/
 In the step 3 fit it recovers what was built into the demo calculation
 (Z = 0.798 ± 0.001 and a shift of −49.8 ± 0.4 meV, against 0.8 and −50 meV).
 
-**Why an AI agent can drive it.** The computations live in `tools/`,
+**Why an AI agent can drive it.** The computations live in `arpes_viewer/tools/`,
 free of any user interface; the windows can run off-screen
 (`QT_QPA_PLATFORM=offscreen`) and be driven call by call as a user drives
 them; each step is documented in the [user guide](docs/USER_GUIDE_en.md)
@@ -136,7 +148,19 @@ papers related to AI.
 
 ## Installing and starting
 
-Needs Python 3.9+, PyQt5, pyqtgraph, numpy, h5py, scipy.
+Needs Python 3.9+. With pip, which installs PyQt5, pyqtgraph, numpy,
+h5py and scipy with it:
+
+```
+pip install arpes-viewer
+arpes-viewer
+```
+
+(`python -m arpes_viewer` does the same; for the latest, unreleased
+version: `pip install git+https://github.com/DingPei1995/ARPES-data-browser`.)
+Installed this way, the error logs go to `~/.arpes_viewer/error_logs/`.
+
+From a downloaded copy of this repository, with those packages installed:
 
 ```
 python ARPES_viewer.py
@@ -159,7 +183,7 @@ python ARPES_viewer.py
 ## Bug reports
 
 The program saves what went wrong by itself, in
-`error_logs/errors_<date>_<time>.txt` in its folder, and keeps running. With
+`error_logs/errors_<date>_<time>.txt` in its folder (in `~/.arpes_viewer/` when installed with pip), and keeps running. With
 a bug report on [GitHub Issues](https://github.com/DingPei1995/ARPES-data-browser/issues),
 **upload that file** (drag it into the text box) **or paste its text** -- the
 main panel's foot has **Copy the newest error log** and **Open the error
@@ -177,18 +201,18 @@ logs** -- and give the version number.
 - **What changed, and why**: [CHANGELOG.md](CHANGELOG.md).
 - **Technical references**, beside the code they describe -- the formulas,
   the file layouts, the assumptions and the tests behind each step:
-  - [Reading data](loader/README.md) -- every facility's files, the data
+  - [Reading data](arpes_viewer/loader/README.md) -- every facility's files, the data
     kinds, adding a beamline, the assumptions the formats force;
-  - [The windows](ui/README.md) -- the main panel, the viewers, autosave
+  - [The windows](arpes_viewer/ui/README.md) -- the main panel, the viewers, autosave
     and recovery, long operations;
-  - [Analysis](tools/README.md) -- what each tool does and what it assumes;
+  - [Analysis](arpes_viewer/tools/README.md) -- what each tool does and what it assumes;
     the tools ported from the MATLAB programs;
-  - [Momentum conversion](tools/momentum/README.md) -- k conversion, k_z
+  - [Momentum conversion](arpes_viewer/tools/momentum/README.md) -- k conversion, k_z
     maps;
-  - [Spectra](tools/spectra/README.md) -- core levels, curves, curve fits,
+  - [Spectra](arpes_viewer/tools/spectra/README.md) -- core levels, curves, curve fits,
     spin;
-  - [Processing](tools/processing/README.md) -- de-gridding, cut
+  - [Processing](arpes_viewer/tools/processing/README.md) -- de-gridding, cut
     arithmetic;
-  - [Figures, export and the experiment log](tools/output/README.md);
+  - [Figures, export and the experiment log](arpes_viewer/tools/output/README.md);
   - [For developers](docs/DEVELOPER.md) -- the layout of the code, and the
     tests (`python -m pytest`).

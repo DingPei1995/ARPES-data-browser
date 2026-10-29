@@ -3,8 +3,8 @@ spin polarisation -- and the pieces they rely on elsewhere."""
 import numpy as np
 import pytest
 
-from tools.spectra import curves as C
-from tools.spectra import spin as S
+from arpes_viewer.tools.spectra import curves as C
+from arpes_viewer.tools.spectra import spin as S
 
 
 # ==========================================================================
@@ -208,7 +208,7 @@ def test_summary_mentions_what_matters():
 # Elsewhere
 # ==========================================================================
 def test_steepest_drop_finds_the_edge_beside_a_band():
-    from tools.spectra.fermi import steepest_drop, fermi_edge_model
+    from arpes_viewer.tools.spectra.fermi import steepest_drop, fermi_edge_model
     e = np.linspace(-0.3, 0.15, 91)
     band = 0.8 * np.exp(-((e + 0.05) / 0.04) ** 2)
     i = fermi_edge_model(e, 0.0, 30.0, 0.02, 1.0, 0.0, 0.1, 0.0) * (1 + band)
@@ -216,7 +216,7 @@ def test_steepest_drop_finds_the_edge_beside_a_band():
 
 
 def test_curve_kinds_in_the_tables():
-    from loader.nxs_file import CURVE_KINDS, AXIS_SLOTS, KIND_LABELS, energy_slot
+    from arpes_viewer.loader.nxs_file import CURVE_KINDS, AXIS_SLOTS, KIND_LABELS, energy_slot
     for kind in CURVE_KINDS:
         assert AXIS_SLOTS[kind]["array"] == ("x", "y")
         assert kind in KIND_LABELS
@@ -224,7 +224,7 @@ def test_curve_kinds_in_the_tables():
 
 
 def test_stack_panel_extent_is_the_data_range():
-    import tools.output.figure as F
+    import arpes_viewer.tools.output.figure as F
     panel = F.Panel(data=F.PanelData(array=np.full((2, 2), np.nan),
                                      x=np.array([17.0, 17.8]),
                                      y=np.array([0.0, 1.0]), kind="stack"))

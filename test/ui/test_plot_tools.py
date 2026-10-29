@@ -16,8 +16,8 @@ def app():
 
 
 def _cut_window():
-    from ui.viewers import windows as W
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers import windows as W
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     data = MemoryData("cut", (np.linspace(-10, 10, 41), np.linspace(-1, 0.2, 61)),
                       np.random.default_rng(0).random((41, 61)),
                       {"x": "Angle (deg)", "y": "E - E_F (eV)"},
@@ -27,7 +27,7 @@ def _cut_window():
 
 def test_viewer_plot_tools_draw_edit_and_remove_guides(app):
     import pyqtgraph as pg
-    from ui.viewers.plot_tools import open_plot_tools, guides_of
+    from arpes_viewer.ui.viewers.plot_tools import open_plot_tools, guides_of
     window = _cut_window()
     assert window.plot_tools_button.text() == "Plot tools"
     dialog = open_plot_tools(window)
@@ -70,7 +70,7 @@ def test_viewer_plot_tools_draw_edit_and_remove_guides(app):
 
 
 def test_guides_are_drawn_on_the_exported_image(app):
-    from ui.viewers.plot_tools import Guide, draw_guides
+    from arpes_viewer.ui.viewers.plot_tools import Guide, draw_guides
     blank = np.zeros((50, 100, 4), dtype=np.uint8)
     blank[..., 3] = 255
     out = draw_guides(blank, [Guide("vertical", x=0.5, color="#ff0000",
@@ -81,7 +81,7 @@ def test_guides_are_drawn_on_the_exported_image(app):
 
 
 def test_frozen_slice_names_figure_composer_apart_from_plot_tools(app):
-    from ui.viewers.widgets import FrameWindow
+    from arpes_viewer.ui.viewers.widgets import FrameWindow
     window = FrameWindow("t", np.ones((5, 6)), np.arange(5.0), np.arange(6.0))
     assert window.plot_tools_button.text() == "Plot tools"
     assert window.figure_button.text() == "Figure composer..."

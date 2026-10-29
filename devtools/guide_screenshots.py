@@ -101,15 +101,15 @@ def main():
     app = QApplication(sys.argv[:1])
     # The virtual screen is 800 x 600; the windows are shown as they open
     # on a real one.
-    from ui.common import screen
+    from arpes_viewer.ui.common import screen
     screen.LIMIT_TO_SCREEN = False
     _quiet_message_boxes()
     app.setFont(QFont("DejaVu Sans", 9))
-    from ui.common import gcguard
+    from arpes_viewer.ui.common import gcguard
     gcguard.install(app)
 
-    import ARPES_viewer as av
-    from ui.launcher import main_window as main_window_ui
+    import arpes_viewer.app as av
+    from arpes_viewer.ui.launcher import main_window as main_window_ui
     from devtools import demo_data
 
     data_dir = os.path.join(_HOME, "demo_data")
@@ -190,9 +190,9 @@ class Shots:
         sys.path.insert(0, os.path.join(HERE, "devtools"))
         import paper_figures as P
         import figure_tests as T
-        from ui.panels.crystal import CrystalDialog
-        from ui.panels.figure import open_figure_file
-        from ui.panels.volume import VolumeWindow
+        from arpes_viewer.ui.panels.crystal import CrystalDialog
+        from arpes_viewer.ui.panels.figure import open_figure_file
+        from arpes_viewer.ui.panels.volume import VolumeWindow
 
         folder = self.data_dir
         datasets = P.converted(folder)
@@ -266,7 +266,7 @@ class Shots:
         return window
 
     def loader(self):
-        from ui.launcher.loader_dialog import LoaderDialog
+        from arpes_viewer.ui.launcher.loader_dialog import LoaderDialog
         dialog = LoaderDialog(self.av.win, self.data_dir)
         dialog.set_paths([p for p in self.paths if "map" in p or "cuts" in p])
         shot(dialog, "loader_dialog", (640, 720))
@@ -280,8 +280,8 @@ class Shots:
         window.close()
 
     def exp_log(self):
-        from tools.output import explog as EL
-        from ui.panels.explog import ExpLogFormatDialog
+        from arpes_viewer.tools.output import explog as EL
+        from arpes_viewer.ui.panels.explog import ExpLogFormatDialog
         self._select("FS_map_hv60")
         dialog = ExpLogFormatDialog(
             self.av.win, entries=self.av._log_entries, load=self.av._log_load,
@@ -397,7 +397,7 @@ class Shots:
         shot(self.k_cut, "cut_in_k", (1000, 760))
 
     def mdc_fit(self):
-        from tools.spectra import peaks as PK
+        from arpes_viewer.tools.spectra import peaks as PK
         self._select("Gamma_cut_LH [E-Ef] [k]")
         panel = self.av.open_curve_fit("mdc")       # the tool panel's route
         pump()
@@ -655,7 +655,7 @@ class Shots:
             window = [w for w in QApplication.topLevelWidgets()
                       if type(w).__name__ == "FigureWindow" and w.isVisible()][-1]
         # A page laid out by hand: a zoom-in inset on (a), an arrow and a note.
-        import tools.output.figure as nf
+        import arpes_viewer.tools.output.figure as nf
         window.figure.freeze()
         x, y, w, h = window.figure.panels[0].frame
         window.canvas._make_zoom(x + 0.35 * w, y + 0.1 * h, 0.3 * w, 0.3 * h)
@@ -696,7 +696,7 @@ class Shots:
         shot(window, "slice_figure", (1250, 760))
 
     def plot_tools(self):
-        from ui.viewers.plot_tools import open_plot_tools
+        from arpes_viewer.ui.viewers.plot_tools import open_plot_tools
         cut = self.cut
         cut.view.set_readout_cursor_visible(False)
         dialog = open_plot_tools(cut)
@@ -726,7 +726,7 @@ class Shots:
         dialog.close()
 
     def combine(self):
-        from ui.panels.stackcuts import CombineCutsDialog
+        from arpes_viewer.ui.panels.stackcuts import CombineCutsDialog
         contour = self.contour
         x, k, z, _cube = contour.data.angle_cube
         x = np.asarray(x, dtype=float)

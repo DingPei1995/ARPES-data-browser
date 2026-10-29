@@ -1,0 +1,43 @@
+ARPES viewer
+Copyright (c) 2026 Ding Pei
+https://github.com/DingPei1995/ARPES-data-browser
+
+Licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE.md):
+free for any noncommercial purpose -- research, teaching, personal use --
+and not for commercial use.
+
+Authorship
+----------
+ARPES viewer is the work of Ding Pei. It began as Ding Pei's own earlier
+code for ARPES data and was developed from it independently: it is not a
+work made for hire, and no institution funded or commissioned it.
+
+The requirements, the design decisions and their trade-offs, the choice of
+what to build and what not to, the physics, the testing on real
+experimental data and the feedback from it, and the review and acceptance
+of every change are Ding Pei's. The real-data tests drew on the
+measurements and calculations of these papers:
+  - Phys. Rev. B 103, 245121 (2021), https://doi.org/10.1103/PhysRevB.103.245121
+  - Phys. Rev. B 95, 125126 (2017), https://doi.org/10.1103/PhysRevB.95.125126
+
+The implementation was carried out with the assistance of Claude, an AI
+model by Anthropic, as a coding assistant working under Ding Pei's
+direction; the commits it helped write name it as a
+co-author ("Co-Authored-By: Claude").
+
+Third-party data
+----------------
+The X-ray line energies in the synthetic demo data, and the core-level
+binding energies of the core-level check, are standard tabulated values
+(the X-ray Data Booklet, Lawrence Berkeley National Laboratory; core levels
+from its Table 1-1, J. A. Bearden & A. F. Burr).
+
+The space-group tables (arpes_viewer/tools/crystal/spacegroups.py) were
+generated once from the database of spglib (devtools/gen_spacegroups.py),
+Copyright (c) Atsushi Togo, distributed under the BSD 3-Clause licence.
+
+The colour tables (arpes_viewer/tools/output/colormaps.py) were converted
+from a laboratory file, Colormap.mat, together with re-creations of
+MATLAB's gray, jet, hsv, hot and copper (devtools/gen_colormaps.py). Several
+of them carry the names of Igor Pro's colour tables; where they reproduce
+those, they remain WaveMetrics' and are not covered by the licence above.

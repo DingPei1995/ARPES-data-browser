@@ -22,13 +22,13 @@ def _cube():
 
 
 def _window(mode="slices"):
-    from ui.panels.volume import VolumeWindow
+    from arpes_viewer.ui.panels.volume import VolumeWindow
     return VolumeWindow(_cube(), (DEFL, SLIT, EKIN), LABELS, "m", mode=mode)
 
 
 @pytest.mark.parametrize("mode", ["slices", "notch", "projection"])
 def test_each_view_opens_alone_at_the_balanced_sampling(app, mode):
-    from ui.panels.volume import BALANCED_POINTS
+    from arpes_viewer.ui.panels.volume import BALANCED_POINTS
     window = _window(mode)
     assert not hasattr(window, "tabs")
     assert window.values.shape[0] <= BALANCED_POINTS < DEFL.size
@@ -41,7 +41,7 @@ def test_each_view_opens_alone_at_the_balanced_sampling(app, mode):
 
 
 def test_change_sampling_resamples_and_redraws(app, monkeypatch):
-    from ui.panels import volume
+    from arpes_viewer.ui.panels import volume
     window = _window("slices")
 
     class Chosen:
@@ -78,8 +78,8 @@ def test_one_slice_gets_its_own_colours_and_all_changes_only_what_changed(app):
 
 
 def test_transparent_and_faded_faces(app):
-    from tools.output import colormaps
-    from ui.panels.volume import _colour_face
+    from arpes_viewer.tools.output import colormaps
+    from arpes_viewer.ui.panels.volume import _colour_face
     image = np.array([[0.0, 5.0], [10.0, np.nan]])
     lut = colormaps.get_lut("gray")
     qimage = _colour_face(image, lut, (0.0, 10.0), opacity=0.5, fade=0.5)
@@ -141,7 +141,7 @@ def test_the_buttons_themselves_save_and_compose(app, tmp_path, monkeypatch):
     buttons["Save the view..."].click()
     assert (tmp_path / "clicked.png").stat().st_size > 1000
     buttons["To figure composer..."].click()
-    from ui.panels.figure import open_figure_windows
+    from arpes_viewer.ui.panels.figure import open_figure_windows
     composer = open_figure_windows()[-1]
     assert composer.figure.panels[-1].data.kind == "scene3d"
     composer.close()

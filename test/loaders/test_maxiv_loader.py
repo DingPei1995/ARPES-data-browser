@@ -13,8 +13,8 @@ import zipfile
 import numpy as np
 import pytest
 
-from loader.formats import ses as maxiv_loader
-from loader import registry
+from arpes_viewer.loader.formats import ses as maxiv_loader
+from arpes_viewer.loader import registry
 
 NA, NE = 5, 6
 

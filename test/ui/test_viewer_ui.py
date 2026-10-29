@@ -18,8 +18,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt5")
 from PyQt5.QtWidgets import QApplication, QPushButton, QToolButton   # noqa: E402
 
-from ui.viewers.widgets import MemoryData, AXIS_COLORS  # noqa: E402
-from ui.viewers import windows as W  # noqa: E402
+from arpes_viewer.ui.viewers.widgets import MemoryData, AXIS_COLORS  # noqa: E402
+from arpes_viewer.ui.viewers import windows as W  # noqa: E402
 
 DEFL = np.linspace(-10, 10, 21)
 SLIT = np.linspace(-15, 15, 31)
@@ -303,7 +303,7 @@ def _curve(kind="edc", channels=1):
 
 
 def test_curve_viewer_has_a_functions_menu(app):
-    from ui.viewers.curves import CurveWindow
+    from arpes_viewer.ui.viewers.curves import CurveWindow
     window = CurveWindow(_curve(), "edc")
     bar_buttons = [b.text() for b in window.findChildren(QPushButton)
                    if b.isVisibleTo(window)]
@@ -321,7 +321,7 @@ def test_curve_viewer_has_a_functions_menu(app):
 
 
 def test_an_operation_from_the_menu_opens_the_strip_on_it(app):
-    from ui.viewers.curves import CurveWindow
+    from arpes_viewer.ui.viewers.curves import CurveWindow
     window = CurveWindow(_curve(), "edc")
     assert not window.operations_box.isVisibleTo(window)
     window.operation_actions["bin"].trigger()
@@ -331,7 +331,7 @@ def test_an_operation_from_the_menu_opens_the_strip_on_it(app):
 
 
 def test_spin_analysis_is_offered_for_a_spin_edc(app):
-    from ui.viewers.curves import CurveWindow
+    from arpes_viewer.ui.viewers.curves import CurveWindow
     window = CurveWindow(_curve("spin_edc", 4), "spin")
     assert window.spin_action.isVisible()
     window.close()
@@ -374,7 +374,7 @@ def test_disabled_entries_look_disabled_under_the_panel_stylesheet(app):
     :disabled rules a greyed-out entry of the list's menu looked enabled."""
     from PyQt5.QtCore import QPoint, qInstallMessageHandler
     from PyQt5.QtWidgets import QMainWindow, QMenu
-    from ui.launcher import main_window
+    from arpes_viewer.ui.launcher import main_window
     warnings = []
     qInstallMessageHandler(lambda mode, ctx, msg: warnings.append(msg))
     try:
@@ -401,7 +401,7 @@ def test_menu_tooltips_follow_the_pointer_at_once(app):
     from PyQt5.QtCore import QPoint
     from PyQt5.QtTest import QTest
     from PyQt5.QtWidgets import QMenu, QToolTip
-    from ui.viewers.functions_menu import instant_tooltips
+    from arpes_viewer.ui.viewers.functions_menu import instant_tooltips
     menu = instant_tooltips(QMenu())
     first = menu.addAction("First")
     first.setToolTip("about the first")

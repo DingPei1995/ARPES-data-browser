@@ -1,0 +1,47 @@
+# Publish to PyPI when a GitHub release is published (tag v1.2.1, ...).
+# Uses PyPI trusted publishing: no token is stored in the repository. On
+# pypi.org, the project's publisher must name this repository, this
+# workflow (publish.yml) and the environment "pypi".
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the tag matches the version
+        if: github.event_name == 'release'
+        run: |
+          version=$(python -c "import re; print(re.search(r'VERSION = \"(.+)\"', open('arpes_viewer/version.py').read())[1])")
+          test "${GITHUB_REF_NAME#v}" = "$version" || { echo "tag $GITHUB_REF_NAME != version $version"; exit 1; }
+      - name: Absolute links in the README for PyPI
+        run: python devtools/pypi_readme.py README.md "${{ github.event_name == 'release' && github.ref_name || 'main' }}"
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

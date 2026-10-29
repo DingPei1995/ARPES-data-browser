@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
-from tools.spectra.fermi import levels_along, fermi_function
-from ui.viewers import windows as W
-from ui.viewers.widgets import MemoryData
+from arpes_viewer.tools.spectra.fermi import levels_along, fermi_function
+from arpes_viewer.ui.viewers import windows as W
+from arpes_viewer.ui.viewers.widgets import MemoryData
 
 DEFL = np.linspace(-8, 8, 17)
 SLIT = np.linspace(-10, 10, 41)

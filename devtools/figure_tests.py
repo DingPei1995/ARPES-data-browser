@@ -37,7 +37,7 @@ for folder in (HERE, os.path.join(HERE, "devtools")):
     if folder not in sys.path:
         sys.path.insert(0, folder)
 
-from loader import registry                          # noqa: E402,F401
+from arpes_viewer.loader import registry                          # noqa: E402,F401
 
 import demo_data as D                                # noqa: E402
 import paper_figures as P                            # noqa: E402
@@ -58,7 +58,7 @@ def _write(window, out, name, save_to):
 
 
 def _note(panel, text, x, y, colour="#000000", anchor="left", bold=False):
-    from tools.output import figure as F
+    from arpes_viewer.tools.output import figure as F
     panel.texts.append(F.TextNote(x=x, y=y, text=text, color=colour,
                                   anchor=anchor, bold=bold))
 
@@ -68,7 +68,7 @@ def _note(panel, text, x, y, colour="#000000", anchor="left", bold=False):
 # --------------------------------------------------------------------------
 def notch_panel(data, name="Γ-plane map"):
     """(a): the notched cube, the corner in front cut away down to E_F."""
-    from ui.panels.volume import VolumeWindow
+    from arpes_viewer.ui.panels.volume import VolumeWindow
 
     scan = data.scan
     labels = ("k_x (Å⁻¹)", "k_y (Å⁻¹)", "E - E_F (eV)")
@@ -93,7 +93,7 @@ def notch_panel(data, name="Γ-plane map"):
 
 def stack_panel(data, energies, mark=None, name="Γ-plane map"):
     """(c): constant-energy maps stacked up the energy axis."""
-    from ui.panels.volume import VolumeWindow
+    from arpes_viewer.ui.panels.volume import VolumeWindow
 
     scan = data.scan
     labels = ("k_x (Å⁻¹)", "k_y (Å⁻¹)", "E - E_F (eV)")
@@ -115,8 +115,8 @@ def stack_panel(data, energies, mark=None, name="Γ-plane map"):
 
 
 def test_figure_1(folder, dialog, datasets, out, save_to=None):
-    from tools.output import figure as F
-    from ui.panels.figure import FigureWindow
+    from arpes_viewer.tools.output import figure as F
+    from arpes_viewer.ui.panels.figure import FigureWindow
 
     data = dict(datasets)
     plane = data["Γ-plane map"]
@@ -188,7 +188,7 @@ def node_branches(model, alignment, kz, k_node, span=0.25, step=0.05):
     lines through the node with the bands' own slopes there. (Following
     the bands by index away from the node would hop onto other bands
     wherever they reorder.)"""
-    from tools.crystal import bands as B
+    from arpes_viewer.tools.crystal import bands as B
 
     at = alignment.apply(B.bands_along_cut(model, np.array([k_node - step, k_node]),
                                            90.0, kz=kz))
@@ -209,7 +209,7 @@ def traced_bands(model, alignment, kz, k_node, k_range, n=241):
     """The two calculated bands crossing at ``k_node``, each followed by
     its character straight through the crossing (and past any band it
     only anticrosses), aligned: ``[(k, E), (k, E)]`` along the cut."""
-    from tools.crystal import bands as B
+    from arpes_viewer.tools.crystal import bands as B
 
     k = np.linspace(k_range[0], k_range[1], n)
     points = np.column_stack([np.zeros(n), k, np.full(n, kz)])   # along k_y
@@ -242,8 +242,8 @@ def fit_dirac_point(k, energy, values, branches, guess_e, half=0.14):
     """The two straight branches of the crossing, from MDC fits seeded on
     the calculation's two branches (``branches``: two ``(k, E)`` curves,
     aligned): ``(lines, (k, E, σk, σE))``."""
-    from tools.spectra import dispersion as DISP
-    from tools.spectra import peaks as PK
+    from arpes_viewer.tools.spectra import dispersion as DISP
+    from arpes_viewer.tools.spectra import peaks as PK
 
     window = (guess_e - half, guess_e + half)
     guess_k = float(np.mean([np.interp(guess_e, *sorted_curve(b)) for b in branches]))
@@ -272,8 +272,8 @@ def fit_dirac_point(k, energy, values, branches, guess_e, half=0.14):
 def bz_picture(folder, datasets, size=900):
     """(a): the zone with the measured maps on its Γ and zone-top planes and
     the line node (K-H) in red."""
-    from ui.panels.crystal import CrystalDialog
-    from ui.panels.figure import _qimage_array
+    from arpes_viewer.ui.panels.crystal import CrystalDialog
+    from arpes_viewer.ui.panels.figure import _qimage_array
 
     maps = [(n, d) for n, d in datasets if d.kind == "k_map"]
     dialog = CrystalDialog(datasets=maps, colormap="blue", flip=True)
@@ -295,7 +295,7 @@ def bz_picture(folder, datasets, size=900):
 def kz_stack_panel(kz_map, kz_values, dps):
     """(c), right: the cuts at the four k_z, one behind the other along
     k_z, with the Dirac points joined."""
-    from ui.panels.volume import VolumeWindow
+    from arpes_viewer.ui.panels.volume import VolumeWindow
 
     scan = kz_map.scan
     labels = ("k_z (Å⁻¹)", "k_∥ (Å⁻¹)", "E - E_F (eV)")
@@ -320,11 +320,11 @@ def kz_stack_panel(kz_map, kz_values, dps):
 
 
 def test_figure_2(folder, dialog, datasets, out, save_to=None):
-    from tools.crystal import bands as B
-    from tools.output import figure as F
-    from tools.output.figfile import source_record
-    from ui.panels.figure import FigureWindow, Panel, panel_from_arrays
-    from ui.viewers.curves import curve_panel
+    from arpes_viewer.tools.crystal import bands as B
+    from arpes_viewer.tools.output import figure as F
+    from arpes_viewer.tools.output.figfile import source_record
+    from arpes_viewer.ui.panels.figure import FigureWindow, Panel, panel_from_arrays
+    from arpes_viewer.ui.viewers.curves import curve_panel
 
     data = dict(datasets)
     kz_map = data["k_z scan"]
@@ -385,7 +385,7 @@ def test_figure_2(folder, dialog, datasets, out, save_to=None):
 
     # (v) the MDC stack round the first crossing (the Stack plot window),
     # with the same dashed guides as the cut, through each MDC
-    from ui.panels.process import StackWindow
+    from arpes_viewer.ui.panels.process import StackWindow
     k, energy, values, at = cuts[0]
     half = 0.15
     keep_k = (k > 0.33) & (k < 0.67)
@@ -480,10 +480,10 @@ def test_figure_2(folder, dialog, datasets, out, save_to=None):
 def crystal_panel(folder, size=1000):
     """The layered structure as a picture panel: glossy atoms, the cell's
     lattice constants and the cleavage plane between the S layers."""
-    from tools.output import figure as F
-    from tools.output.figfile import source_record
-    from ui.panels.crystal import CrystalDialog
-    from ui.panels.figure import Panel, _qimage_array
+    from arpes_viewer.tools.output import figure as F
+    from arpes_viewer.tools.output.figfile import source_record
+    from arpes_viewer.ui.panels.crystal import CrystalDialog
+    from arpes_viewer.ui.panels.figure import Panel, _qimage_array
 
     cif = os.path.join(folder, "demo_tetragonal_crystal.cif")
     dialog = CrystalDialog()

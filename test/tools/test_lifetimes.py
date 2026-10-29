@@ -23,8 +23,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from loader.nxs_file import HANDLES, save_dataset          # noqa: E402
-from loader.session import MemoryBudget                    # noqa: E402
+from arpes_viewer.loader.nxs_file import HANDLES, save_dataset          # noqa: E402
+from arpes_viewer.loader.session import MemoryBudget                    # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
@@ -141,7 +141,7 @@ def app():
 
 
 def test_acquire_replaces_a_dataset_whose_file_died(app, tmp_path):
-    from ui.viewers.widgets import NxsData
+    from arpes_viewer.ui.viewers.widgets import NxsData
     path = _map_file(tmp_path)
     first = NxsData.acquire(path, "A")
     HANDLES._open[os.path.abspath(path)][0].close()      # the file dies
@@ -155,8 +155,8 @@ def test_acquire_replaces_a_dataset_whose_file_died(app, tmp_path):
 
 
 def test_closing_a_viewer_twice_releases_once(app, tmp_path):
-    from ui.viewers.widgets import NxsData
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers.widgets import NxsData
+    from arpes_viewer.ui.viewers import windows as W
     path = _map_file(tmp_path)
     launcher = NxsData.acquire(path, "A")                 # the list's reference
     window = W.ContourWindow(NxsData.acquire(path, "A"), "A", "gray", False)
@@ -170,8 +170,8 @@ def test_closing_a_viewer_twice_releases_once(app, tmp_path):
 
 
 def test_closing_a_map_closes_its_cut_windows_and_dialogs(app, tmp_path):
-    from ui.viewers.widgets import NxsData
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers.widgets import NxsData
+    from arpes_viewer.ui.viewers import windows as W
     path = _map_file(tmp_path)
     data = NxsData.acquire(path, "A")
     window = W.ContourWindow(data, "A", "gray", False)
@@ -188,8 +188,8 @@ def test_closing_a_map_closes_its_cut_windows_and_dialogs(app, tmp_path):
 
 
 def test_a_popped_out_snapshot_outlives_its_viewer(app):
-    from ui.viewers.widgets import MemoryData
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers import windows as W
     cut = MemoryData("cut", (np.arange(20.0), np.arange(24.0)),
                      np.random.rand(20, 24), {}, source_label="c")
     window = W.CutWindow(cut, "c", "gray", False)
@@ -206,8 +206,8 @@ def test_a_popped_out_snapshot_outlives_its_viewer(app):
 
 def test_no_view_is_registered_under_a_name(app):
     import pyqtgraph as pg
-    from ui.viewers.widgets import MemoryData
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers import windows as W
     cube = MemoryData("map", (np.arange(6.0), np.arange(20.0), np.arange(24.0)),
                       np.random.rand(6, 20, 24), {}, source_label="m")
     window = W.ContourWindow(cube, "m", "gray", False)
@@ -226,8 +226,8 @@ def test_closing_a_map_with_its_slit_cut_open_does_not_crash():
         import numpy as np
         from PyQt5.QtWidgets import QApplication
         app = QApplication([])
-        from ui.viewers.widgets import MemoryData
-        from ui.viewers import windows as W
+        from arpes_viewer.ui.viewers.widgets import MemoryData
+        from arpes_viewer.ui.viewers import windows as W
         d = MemoryData("map", (np.arange(8.), np.arange(40.), np.arange(50.)),
                        np.random.rand(8, 40, 50), {{}}, source_label="m")
         for _ in range(3):
@@ -246,7 +246,7 @@ def test_closing_a_map_with_its_slit_cut_open_does_not_crash():
 
 def test_the_program_collects_garbage_from_its_event_loop(app):
     import gc
-    from ui.common import gcguard
+    from arpes_viewer.ui.common import gcguard
     was = gc.isenabled()
     guard = gcguard.SafeGarbageCollector(interval_ms=10)
     try:

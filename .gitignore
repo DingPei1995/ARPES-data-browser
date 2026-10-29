@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 demo_data/
 error_logs/
+build/
+dist/
+*.egg-info/

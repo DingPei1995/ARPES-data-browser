@@ -11,8 +11,8 @@ import h5py
 import numpy as np
 import pytest
 
-from loader import registry
-from loader.beamlines import sgm4 as sgm4_loader
+from arpes_viewer.loader import registry
+from arpes_viewer.loader.beamlines import sgm4 as sgm4_loader
 from test.loaders.test_cassiopee import write_spectrum
 from test.loaders.test_maxiv_loader import _cube, _note, _ses_zip, _write_ibw
 

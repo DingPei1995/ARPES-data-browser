@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 import h5py
 
-from loader.cubecache import CubeCache, simplify_key
-from loader.nxs_file import LazyCube, LazyArray
+from arpes_viewer.loader.cubecache import CubeCache, simplify_key
+from arpes_viewer.loader.nxs_file import LazyCube, LazyArray
 
 
 @pytest.fixture()
