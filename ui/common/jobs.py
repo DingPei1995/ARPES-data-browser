@@ -42,13 +42,14 @@ dialog, so the common quick case does not flash a window.
 from __future__ import annotations
 
 import threading
+import time
 import traceback
 
 from PyQt5.QtCore import QObject, QThread, Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import QApplication, QProgressDialog
 
-__all__ = ["JobCancelled", "JobRunner", "run_job", "run_blocking", "busy",
-           "HDF5_LOCK"]
+__all__ = ["JobCancelled", "JobBusy", "JobRunner", "run_job", "run_blocking",
+           "busy", "one_at_a_time", "busy_work", "HDF5_LOCK"]
 
 #: Serialises every read through h5py. The handles in
 #: ``loader.nxs_file.HANDLES`` are shared between the GUI thread (a viewer
@@ -58,6 +59,10 @@ HDF5_LOCK = threading.RLock()
 
 #: How long a job may run before its progress dialog appears.
 DIALOG_DELAY_MS = 400
+
+
+class JobBusy(RuntimeError):
+    """Another job is running; this one was not started."""
 
 
 class JobCancelled(Exception):
@@ -221,7 +226,7 @@ class JobRunner(QObject):
         whatever the job raised.
         """
         if self.is_busy():
-            raise RuntimeError(
+            raise JobBusy(
                 "another operation is already running; wait for it to finish")
 
         outcome = {}
@@ -249,6 +254,14 @@ class JobRunner(QObject):
         if cancellable:
             dialog.canceled.connect(worker.cancel)
 
+        # the time taken, under the message: a step that cannot say how far
+        # it is (one big read, one solver call) still shows it is alive
+        label = {"text": title, "start": time.monotonic()}
+
+        def show_label():
+            seconds = int(time.monotonic() - label["start"])
+            dialog.setLabelText(label["text"] + (f"\n{seconds} s" if seconds >= 1 else ""))
+
         def progressed(fraction, message):
             if fraction < 0:
                 dialog.setRange(0, 0)
@@ -256,7 +269,12 @@ class JobRunner(QObject):
                 dialog.setRange(0, 100)
                 dialog.setValue(int(max(0.0, min(1.0, fraction)) * 100))
             if message:
-                dialog.setLabelText(message)
+                label["text"] = message
+                show_label()
+
+        clock = QTimer(self)
+        clock.timeout.connect(show_label)
+        clock.start(1000)
 
         worker.progressed.connect(progressed)
         worker.finished.connect(lambda value: outcome.update(result=value))
@@ -290,6 +308,7 @@ class JobRunner(QObject):
             QApplication.processEvents()
         finally:
             timer.stop()
+            clock.stop()
             dialog.close()
             thread.quit()
             thread.wait(5000)
@@ -342,3 +361,66 @@ def run_blocking(parent, title: str, work, cancellable: bool = True):
 
 def busy() -> bool:
     return runner().is_busy()
+
+
+def one_at_a_time(method):
+    """For a window's method that runs a job with :func:`run_blocking` and
+    is started by a signal (a field's value entered, say).
+
+    While the job runs the event loop is pumped, and a signal can fire
+    again then: a field's ``editingFinished`` does when the progress window
+    takes the focus from it -- which made Enter in the 3-D Fermi surface's
+    energy start a second computation on top of the first and fail with
+    "another operation is already running". With this, a call made while
+    the method runs is not started then: it runs once afterwards, with the
+    latest arguments (several such calls make one). A call made while some
+    *other* job runs waits for it the same way, instead of failing."""
+    import functools
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        state = self.__dict__.setdefault("_one_at_a_time", {})
+        name = method.__name__
+        if state.get(name):
+            state[name + ".again"] = (args, kwargs)
+            return None
+        state[name] = True
+        try:
+            result = method(self, *args, **kwargs)
+        except JobBusy:
+            result = None
+            state[name + ".again"] = (args, kwargs)
+        finally:
+            state[name] = False
+        again = state.pop(name + ".again", None)
+        if again is not None:
+            def later():
+                if busy():
+                    QTimer.singleShot(150, later)
+                else:
+                    wrapper(self, *again[0], **again[1])
+            QTimer.singleShot(0, later)
+        return result
+
+    return wrapper
+
+
+def busy_work(parent, title: str, function, *args, **kwargs):
+    """``function(*args, **kwargs)`` off the GUI thread, behind a progress
+    window that moves and counts the seconds (after a moment: a quick call
+    shows nothing) -- for a long computation that cannot say how far it is:
+    reading a whole cube, one solver call. ``function`` must not touch a
+    widget. If a job is running already, it is called here directly instead
+    (the wait cursor on) rather than refused."""
+    if busy():
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            return function(*args, **kwargs)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def work(report):
+        report(None, title)
+        return function(*args, **kwargs)
+
+    return run_blocking(parent, title, work, cancellable=False)

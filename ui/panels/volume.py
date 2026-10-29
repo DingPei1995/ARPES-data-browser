@@ -947,8 +947,12 @@ class VolumeWindow(QMainWindow):
     def _resample(self, ranges, targets):
         """Crop and bin the full cube to ``ranges`` and ``targets`` (points
         per axis) -- the cube every view of this window is drawn from."""
-        values, axes = V.reduce_volume(self.source_values, self.source_axes,
-                                       ranges, targets)
+        from ui.common.jobs import busy_work
+
+        # cropping and binning a whole map: seconds for a big one
+        values, axes = busy_work(self, "Sampling the cube", V.reduce_volume,
+                                 self.source_values, self.source_axes,
+                                 ranges, targets)
         self.values = np.asarray(values, dtype=float)
         self.axes = [np.asarray(a, dtype=float) for a in axes]
         self.sampling = ([(float(a.min()), float(a.max())) if r is None else tuple(r)

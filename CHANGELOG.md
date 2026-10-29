@@ -36,6 +36,31 @@ Enter in a field never presses a button.
   left out and saving to the main panel is greyed (it made a path cut);
   for contours it saves a calculated k-map on the plane, at a range of
   energies.
+- **A progress bar for every long step, and no second job on top of the
+  first** (`ui/common/jobs.py`). Enter in the 3-D Fermi surface's energy
+  failed with "another operation is already running" (reported from a
+  user's error log, reproduced here): the progress window took the focus,
+  the field's `editingFinished` fired again and started a second job inside
+  the first. `one_at_a_time` makes such a call wait and run once afterwards
+  with the latest values; `run_blocking` raises `JobBusy`. `busy_work` runs a
+  step that cannot say how far it is off the GUI thread behind a moving bar,
+  and every progress window now counts the seconds. Steps that had only a
+  wait cursor or nothing now show it: reading a whole map (browsing, the
+  slice figure, the 3-D views, and the k conversion, which read the cube
+  before its bar), cut k conversion, the FS correction of a map, arbitrary
+  cuts, data operations (their settings read first, on the GUI thread),
+  stacking and joining, saving `.nxs` and Igor (per dataset), ridge
+  detection to the list, the tight-binding fit, cube resampling. Rotating a
+  3-D view and painting figures stay on the GUI thread (a bar would
+  interrupt the drag; painting is Qt's).
+- **A crash closing a viewer** (`ui/viewers/windows.py`, `ARPES_viewer.py`).
+  Closing a viewer closed its child windows by asking Qt for *every* child
+  widget and testing each: that handed Python wrappers of Qt's own internal
+  widgets (popup containers, tooltips), which Qt deletes without telling
+  Python, and touching a stale one crashed the program -- now and then (two
+  full test runs in ten). Only dialogs and main windows are asked for now,
+  the type test done by Qt, afresh after every close; closing the program
+  touches only those kinds of top-level window too.
 - **No console window to close by mistake, and errors kept in a file**
   (`ARPES viewer.pyw`, `tools/runtime/console.py`,
   `tools/runtime/errorlog.py`, `ui/common/crashguard.py`). On Windows a

@@ -32,6 +32,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPainterPath
+from ui.common import jobs
 from ui.common.screen import fits_screen
 from ui.viewers.functions_menu import FunctionsMenuMixin
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
@@ -94,10 +95,30 @@ def close_child_windows(owner):
     :data:`_DETACHED` for why that ends in a crash, not just in a stale
     window.
     """
-    for child in owner.findChildren(QWidget):
+    from PyQt5 import sip
+
+    # Only dialogs and main windows -- what a viewer opens -- and the type
+    # test done by Qt itself (findChildren with a class), not on every child
+    # widget: asking for every QWidget handed Python wrappers of Qt's own
+    # internal widgets (popup containers, tooltips), which Qt deletes without
+    # telling Python, and touching one of those crashed the program now and
+    # then. Asked afresh after every close, since closing one window can
+    # delete another.
+    done = set()
+    while True:
         try:
-            if child.isWindow() and child.isVisible():
-                child.close()
+            candidates = owner.findChildren(QDialog) + owner.findChildren(QMainWindow)
+            pending = [child for child in candidates
+                       if sip.unwrapinstance(child) not in done
+                       and child.isWindow() and child.isVisible()]
+        except RuntimeError:          # the owner itself is gone
+            return
+        if not pending:
+            return
+        child = pending[0]
+        done.add(sip.unwrapinstance(child))
+        try:
+            child.close()
         except RuntimeError:          # deleted by an earlier close
             pass
 
@@ -374,7 +395,9 @@ class ViewerWindow(FunctionsMenuMixin, QMainWindow):
             return None
         values, angle_axis, energy_axis, angle_dim, energy_dim, kind, axes_of = target
         try:
-            corrected, new_energy = fs_correction(
+            # every spectrum of a map shifted: seconds for a big one
+            corrected, new_energy = jobs.busy_work(
+                self, "Straightening the bands", fs_correction,
                 values, angle_axis, energy_axis, coeffs,
                 angle_dim=angle_dim, energy_dim=energy_dim)
         except Exception as exc:
@@ -1319,16 +1342,14 @@ class CutWindow(ViewerWindow):
 
         scan = self.data.scan
         self.statusBar().showMessage("Converting the cut to k-space...")
-        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            k_axis, energy, values, report = convert_cut(
+            k_axis, energy, values, report = jobs.busy_work(
+                self, "Converting the cut to k-space", convert_cut,
                 scan.x, scan.y, self.data.cut_frame, **settings)
         except Exception as exc:
             QMessageBox.warning(self, "Cut k conversion", f"Conversion failed:\n{exc}")
             self.statusBar().showMessage("Cut k conversion failed")
             return None
-        finally:
-            QApplication.restoreOverrideCursor()
         if subtracted_fermi_level(self.data):
             # The offset was added only to give k its kinetic energies; the
             # result stays on the E - E_F axis the cut was on.
@@ -3659,11 +3680,9 @@ class ContourWindow(ViewerWindow):
         if not self.cube.load_pending():
             return self.cube[key]
         self.statusBar().showMessage("Reading the map into memory...")
-        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            self.cube.load()
+            jobs.busy_work(self, "Reading the map into memory", self.cube.load)
         finally:
-            QApplication.restoreOverrideCursor()
             self.statusBar().clearMessage()
         return self.cube[key]
 
@@ -3827,10 +3846,15 @@ class ContourWindow(ViewerWindow):
         if dialog.exec_() != QDialog.Accepted:
             return None
         settings = dialog.settings()
+        try:
+            cube = jobs.busy_work(self, "Reading the map", self.full_cube)
+        except Exception as exc:
+            QMessageBox.warning(self, "Slice figure", f"Could not read it:\n{exc}")
+            return None
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             panels = slice_panels(
-                self.full_cube(), axes, labels, axis=settings["axis"],
+                cube, axes, labels, axis=settings["axis"],
                 values=settings["values"], half_width=settings["half_width"],
                 titles=settings["titles"], colormap=self.colormap,
                 flip=self.flip)
@@ -3903,8 +3927,11 @@ class ContourWindow(ViewerWindow):
         unit = _unit_of(self.defl_label)
         distance_label = f"Distance along path ({unit})" if unit else "Distance along path"
         try:
-            distance, energy, values, joints = arbitrary_cut(
-                self.angle_defl, self.angle_slit, self.E, self.full_cube(), points)
+            full_cube = self.full_cube
+            distance, energy, values, joints = jobs.busy_work(
+                self, "Cutting the map along the path",
+                lambda: arbitrary_cut(self.angle_defl, self.angle_slit, self.E,
+                                      full_cube(), points))
         except Exception as exc:
             QMessageBox.warning(self, "Arbitrary cut", f"The cut failed:\n{exc}")
             return []
@@ -4091,16 +4118,14 @@ class ContourWindow(ViewerWindow):
             self._conversion_over()
             return None
 
-        self.statusBar().showMessage("Reading the cube...")
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            cube = self.full_cube()
-        finally:
-            QApplication.restoreOverrideCursor()
-
         defl, slit, energy_axis = self.angle_defl, self.angle_slit, self.E
+        full_cube = self.full_cube
 
         def work(report):
+            # the read of the whole cube is the slow part of a big map: in
+            # the job too, so the progress window shows it
+            report(None, "Reading the cube...")
+            cube = full_cube()
             report(None, "Converting to k-space...")
             return convert_map(defl, slit, energy_axis, cube, **settings)
 
@@ -6552,17 +6577,32 @@ class DataOperationsDialog(QDialog):
             return
 
         created = []
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            for name, data in self.datasets:
+        datasets = list(self.datasets)
+        # the settings read now, on the GUI thread: the job touches no widget
+        operation = operation(_FROZEN)
+
+        def work(report):
+            out = []
+            for index, (name, data) in enumerate(datasets):
+                report(index / len(datasets),
+                       f"{name} ({index + 1} of {len(datasets)})")
                 try:
                     values, axes = self._values_and_axes(data)
-                    new_values, new_axes = operation((values, axes))
+                    out.append(operation((values, axes)))
                 except Exception as exc:
-                    QApplication.restoreOverrideCursor()
-                    QMessageBox.warning(self, self.windowTitle(),
-                                        f"{name}: {exc}")
-                    return
+                    raise ValueError(f"{name}: {exc}") from exc
+            return out
+
+        try:
+            results = jobs.run_blocking(self, self.windowTitle(), work)
+        except jobs.JobCancelled:
+            return
+        except ValueError as exc:
+            QMessageBox.warning(self, self.windowTitle(), str(exc))
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for (name, data), (new_values, new_axes) in zip(datasets, results):
                 by_name = dict(zip(self.axis_names, new_axes))
                 order = CONSTRUCTOR_AXES.get(data.kind, self.axis_names)
                 created.append(MemoryData(
@@ -6607,8 +6647,9 @@ class DataOperationsDialog(QDialog):
                 raise ValueError("Set at least one bound to truncate.")
             return {"bounds": [list(b) for b in bounds],
                     "by": "index" if by_index else "value"}
-        values, axes = payload
-        return truncate(values, axes, bounds, by_index=by_index)
+        def run(data):
+            return truncate(data[0], data[1], bounds, by_index=by_index)
+        return run if payload is _FROZEN else run(payload)
 
     def _apply_normalise(self, payload, probe: bool = False):
         dims = self._norm_dims()
@@ -6629,10 +6670,12 @@ class DataOperationsDialog(QDialog):
             if window != (None, None) and window_dim is not None:
                 settings["window_on"] = self.axis_names[window_dim]
             return settings
-        values, axes = payload
-        return (self_normalize(values, axes, dims, window=window,
-                               by_index=by_index, to_peak=to_peak,
-                               window_dim=window_dim), axes)
+        def run(data):
+            values, axes = data
+            return (self_normalize(values, axes, dims, window=window,
+                                   by_index=by_index, to_peak=to_peak,
+                                   window_dim=window_dim), axes)
+        return run if payload is _FROZEN else run(payload)
 
     def _apply_compress(self, payload, probe: bool = False):
         factors = [spin.value() for spin in self.compress_boxes]
@@ -6640,8 +6683,14 @@ class DataOperationsDialog(QDialog):
             if all(f == 1 for f in factors):
                 raise ValueError("Set a factor above 1 on at least one axis.")
             return {"factors": list(factors)}
-        values, axes = payload
-        return compress(values, axes, factors)
+        def run(data):
+            return compress(data[0], data[1], factors)
+        return run if payload is _FROZEN else run(payload)
+
+
+#: passed to a data operation instead of data: "read your settings now and
+#: return the computation", so it can run off the GUI thread
+_FROZEN = object()
 
 
 # --------------------------------------------------------------------------

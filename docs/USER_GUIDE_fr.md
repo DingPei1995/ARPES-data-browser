@@ -118,6 +118,16 @@ de bug, **téléversez ce fichier** (dans GitHub Issues : glissez-le dans la
 zone de texte) **ou collez son texte** -- le pied du panneau principal offre
 **Copy the newest error log** et **Open the error logs**.
 
+**Les opérations longues montrent une barre de progression.** Tout ce qui
+peut prendre du temps sur de grosses données ou un ordinateur lent — lire
+une carte entière, conversion en k, correction FS, coupes arbitraires,
+opérations sur les données, assemblage, enregistrement, détection de
+crêtes, ajustements, et dans Calculated bands la lecture d'un calcul, les
+bandes sur un plan et la surface de Fermi 3D — affiche après 0,4 s une
+fenêtre de progression : une barre qui avance, les secondes écoulées, et
+Cancel quand l'étape peut s'arrêter. Le programme travaille ; il n'est pas
+figé.
+
 **Sur Mac, pas besoin du Terminal :** double-cliquez **`ARPES viewer.app`**
 dans le dossier du programme (glissez-la dans le Dock pour l'y garder). Elle
 trouve le Python qui a les paquets ci-dessus -- le même que `python3` dans le
