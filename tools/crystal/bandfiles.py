@@ -16,6 +16,18 @@ calculation codes leave behind. Three families, as agreed:
   ``OUTCAR`` or ``DOSCAR``): along a path when ``KPOINTS`` is in line mode
   (labels from it), on a grid when the k points fill the whole zone; with
   the orbital / atomic character of ``PROCAR`` as weights.
+* **FPLO + Wannier tools** -- what the post-processing programs that
+  evaluate an FPLO Wannier Hamiltonian (``wannier90_hr_fplo.dat``) leave
+  behind (``k_path.exe``, ``H.exe``, ``plot.exe``; MATLAB scripts plot
+  them): ``band.dat`` along a path (distance and energy, a blank line
+  between bands; a third column -- ``orbital.dat`` -- is a weight) or on a
+  3-D grid (``k1 k2 k3 E1 E2 ...`` per row, fractional k from -1/2 to 1/2),
+  ``Eigenvalue.dat`` (per k a line of fractional k, then one energy per
+  line), the path and the cell in their own ``KPOINTS`` (first line
+  "segments points-per-segment", then the direct and reciprocal vectors,
+  then the segments' end points with "! label"), and the Wannier
+  functions' names in ``wannier_name_center.txt``. The names are generic,
+  so :func:`read` tells these apart by their content.
 
 :func:`read` looks at the file name and content and calls the right reader;
 the loaders were written against the formats as their codes document them
@@ -40,18 +52,24 @@ from tools.crystal.bands import BandGrid, BandPath, WannierModel, reciprocal_of
 
 __all__ = ["companion_files", "read", "read_bxsf", "write_bxsf", "read_hr", "write_hr",
            "read_win_cell", "read_wannier_band", "read_spaghetti",
-           "read_eigenval", "read_poscar", "read_procar", "FORMATS"]
+           "read_eigenval", "read_poscar", "read_procar", "read_fplo_kpoints",
+           "read_fplo_band", "read_fplo_eigenvalue", "read_fplo_grid", "FORMATS"]
 
 BOHR = 0.529177210903
 
 #: what :func:`read` recognises, for the file dialog: (label, patterns)
 FORMATS = (
     ("XCrySDen band grid (*.bxsf)", ("*.bxsf",)),
-    ("Wannier90 Hamiltonian (*_hr.dat)", ("*_hr.dat",)),
+    ("Wannier90 Hamiltonian (*_hr*.dat)", ("*_hr*.dat",)),
     ("Wannier90 band structure (*_band.dat)", ("*_band.dat",)),
     ("Wien2k band structure (*.spaghetti_ene)", ("*.spaghetti_ene",)),
     ("VASP EIGENVAL", ("EIGENVAL*",)),
+    ("FPLO + Wannier tools (band.dat, Eigenvalue.dat)", ("*.dat",)),
 )
+
+#: ``wannier90_hr.dat``, ``wannier90_hr_fplo.dat``, ``x_hr.dat``...
+_HR = re.compile(r"_hr(_[^./\\]*)?\.dat$", re.I)
+
 
 
 def companion_files(path: str) -> list:
@@ -62,8 +80,9 @@ def companion_files(path: str) -> list:
     folder, name = os.path.split(os.path.abspath(path))
     lower = name.lower()
     wanted = []
-    if lower.endswith("_hr.dat"):
-        wanted = [name[:-len("_hr.dat")] + ".win"]
+    if _HR.search(name):
+        wanted = [name[:_HR.search(name).start()] + ".win", "KPOINTS",
+                  "wannier_name_center.txt"]
     elif lower.endswith("_band.dat"):
         wanted = [name[:-len(".dat")] + ".labelinfo.dat",
                   name[:-len("_band.dat")] + ".win"]
@@ -72,25 +91,41 @@ def companion_files(path: str) -> list:
         wanted = [stem + ".klist_band"]
     elif lower.startswith("eigenval"):
         wanted = ["POSCAR", "CONTCAR", "PROCAR", "OUTCAR", "DOSCAR", "KPOINTS"]
+    elif lower.endswith(".dat"):
+        wanted = ["KPOINTS", "orbital.dat", "kcal.dat"]
+        wanted = [w for w in wanted if w.lower() != lower]
     return [os.path.join(folder, w) for w in wanted
             if os.path.isfile(os.path.join(folder, w))]
 
 
 def read(path: str, **options):
-    """Whatever calculation ``path`` holds."""
+    """Whatever calculation ``path`` holds. ``options`` the chosen reader
+    does not take are dropped, so a caller can offer them all."""
     name = os.path.basename(path).lower()
     if name.endswith(".bxsf"):
-        return read_bxsf(path, **options)
-    if name.endswith("_hr.dat"):
-        return read_hr(path, **options)
-    if name.endswith("_band.dat"):
-        return read_wannier_band(path, **options)
-    if name.endswith(".spaghetti_ene") or name.endswith("spaghetti_ene"):
-        return read_spaghetti(path, **options)
-    if name.startswith("eigenval"):
-        return read_eigenval(path, **options)
-    raise ValueError(f"not a band-structure file this program reads: "
-                     f"{os.path.basename(path)}")
+        reader = read_bxsf
+    elif _HR.search(name):
+        reader = read_hr
+    elif name.endswith("_band.dat"):
+        reader = read_wannier_band
+    elif name.endswith(".spaghetti_ene") or name.endswith("spaghetti_ene"):
+        reader = read_spaghetti
+    elif name.startswith("eigenval") and _fplo_layout(path) != "eigenvalue":
+        reader = read_eigenval                   # (not the FPLO tools' Eigenvalue.dat)
+    else:
+        reader = {"path": read_fplo_band, "grid": read_fplo_grid,
+                  "eigenvalue": read_fplo_eigenvalue}.get(_fplo_layout(path))
+    if reader is None:
+        raise ValueError(
+            f"not a band-structure file this program reads: "
+            f"{os.path.basename(path)}. Read are .bxsf, *_hr.dat, *_band.dat, "
+            ".spaghetti_ene, EIGENVAL, and the FPLO + Wannier tools' band.dat "
+            "and Eigenvalue.dat; another layout can be written as one of "
+            "them (see the user guide, 'A calculation in another format')")
+    import inspect
+
+    accepted = inspect.signature(reader).parameters
+    return reader(path, **{k: v for k, v in options.items() if k in accepted})
 
 
 # --------------------------------------------------------------------------
@@ -209,15 +244,25 @@ def read_hr(path: str, lattice=None, fermi=None):
             order.append(r)
     deg_by_r = {r: degeneracy[i] for i, r in enumerate(order)}
     deg = np.array([deg_by_r[tuple(r)] for r in keys], dtype=float)
-    seed = path[:-len("_hr.dat")]
+    seed = path[:_HR.search(path).start()]
     win_cell, win_fermi = read_win_cell(seed + ".win")
+    folder = os.path.dirname(os.path.abspath(path))
+    if win_cell is None:
+        kpoints = read_fplo_kpoints(os.path.join(folder, "KPOINTS"))
+        win_cell = kpoints["lattice"] if kpoints else None
     cell = lattice if lattice is not None else win_cell
     if cell is None:
         raise ValueError("the cell is needed: give it (or the Brillouin-zone "
-                         "tool's crystal), or put seedname.win beside the file")
+                         "tool's crystal), or put seedname.win (or the FPLO "
+                         "tools' KPOINTS) beside the file")
+    names = _win_orbitals(seed + ".win", nw)
+    groups = None
+    if names is None:
+        names, groups = _wannier_names(os.path.join(folder,
+                                                    "wannier_name_center.txt"), nw)
     return WannierModel(cell, keys, H, degeneracy=deg,
                         fermi=(fermi if fermi is not None else (win_fermi or 0.0)),
-                        orbital_names=_win_orbitals(seed + ".win", nw),
+                        orbital_names=names, groups=groups,
                         name=os.path.basename(path))
 
 
@@ -538,3 +583,295 @@ def read_procar(path: str, species=(), counts=()):
     total = sum(sums.values())
     total = np.where(total > 0, total, 1.0)
     return {key: value / total for key, value in sorted(sums.items())}
+
+
+# --------------------------------------------------------------------------
+# FPLO + Wannier tools (k_path.exe, H.exe, plot.exe)
+# --------------------------------------------------------------------------
+def _numbers(line: str):
+    """The numbers of a line before any "!" comment, or None if a token
+    is not one."""
+    try:
+        return [float(v.replace("D", "E").replace("d", "e"))
+                for v in line.split("!")[0].split()]
+    except ValueError:
+        return None
+
+
+def _fplo_layout(path: str):
+    """Which FPLO-tools file ``path`` is, from its first lines: "path"
+    (distance, energy[, weight]), "grid" (k1 k2 k3 E1 E2 ...),
+    "eigenvalue" (a k line then one energy per line), or None."""
+    rows = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if line.strip():
+                    rows.append(_numbers(line))
+                    if len(rows) == 3:
+                        break
+    except OSError:
+        return None
+    if len(rows) < 2 or any(r is None or not r for r in rows):
+        return None
+    if len(rows[0]) == 3 and len(rows[1]) == 1:
+        return "eigenvalue"
+    if len(rows[0]) in (2, 3) and len(rows[1]) == len(rows[0]):
+        return "path"
+    if len(rows[0]) >= 4 and len(rows[1]) == len(rows[0]):
+        return "grid"
+    return None
+
+
+def read_fplo_kpoints(path: str):
+    """The FPLO tools' ``KPOINTS``: ``{"segments", "per_segment",
+    "lattice" (rows, Å, or None), "points": [(fractional k, label), ...]}``
+    -- each segment's two ends -- or None if ``path`` is not one (a VASP
+    KPOINTS is not)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return None
+    if not lines:
+        return None
+    head = lines[0].split()
+    try:
+        segments, per_segment = int(head[0]), int(head[1])
+    except (IndexError, ValueError):
+        return None
+    lattice, start = None, 1
+    rows = [_numbers(l) for l in lines[1:4]]
+    if len(rows) == 3 and all(r is not None and len(r) >= 6 for r in rows):
+        lattice, start = np.array([r[:3] for r in rows]), 4
+    points = []
+    for line in lines[start:]:
+        values = _numbers(line)
+        if values is None or len(values) < 3:
+            continue
+        label = line.split("!", 1)[1].strip() if "!" in line else ""
+        points.append((np.array(values[:3]), _greek(label)))
+    if lattice is None and not points:
+        return None
+    return {"segments": segments, "per_segment": per_segment,
+            "lattice": lattice, "points": points}
+
+
+def _fplo_ticks(distance, kpoints):
+    """The labelled points of a path of ``kpoints["segments"]`` segments of
+    ``per_segment`` points each (both ends included, as k_path.exe writes
+    them): ``[(distance, label), ...]``, a jump written "X|Y"."""
+    if not kpoints:
+        return []
+    nseg, per = kpoints["segments"], kpoints["per_segment"]
+    names = [label for _k, label in kpoints["points"]]
+    if nseg * per != len(distance) or len(names) < 2 * nseg:
+        return []
+    ticks = [(float(distance[0]), names[0])]
+    for s in range(nseg):
+        label = names[2 * s + 1]
+        if s + 1 < nseg and names[2 * s + 2] != label:
+            label = f"{label}|{names[2 * s + 2]}"
+        ticks.append((float(distance[(s + 1) * per - 1]), label))
+    return ticks
+
+
+def _fplo_blocks(path: str):
+    """The rows of a path file, one list per band: bands are separated by
+    blank lines, or -- without them -- start where the distance falls."""
+    blocks, current = [], []
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            values = _numbers(line) if line.strip() else None
+            if values:
+                if current and values[0] < current[-1][0] - 1e-9:
+                    blocks.append(current)
+                    current = []
+                current.append(values)
+            elif current:
+                blocks.append(current)
+                current = []
+    if current:
+        blocks.append(current)
+    if not blocks:
+        raise ValueError("no bands in the file")
+    size = len(blocks[0])
+    return [np.array(b) for b in blocks if len(b) == size]
+
+
+def read_fplo_band(path: str, lattice=None, fermi=None):
+    """The FPLO tools' ``band.dat`` (or ``orbital.dat``) along a path:
+    rows of distance (Å⁻¹, 2π included) and energy (eV, relative to E_F as
+    FPLO gives it), a blank line between bands. The labels come from the
+    ``KPOINTS`` beside it; a third column, or an ``orbital.dat`` of the
+    same shape beside it, is a weight."""
+    folder = os.path.dirname(os.path.abspath(path))
+    blocks = _fplo_blocks(path)
+    distance = blocks[0][:, 0]
+    energies = np.array([b[:, 1] for b in blocks])
+    weights = {}
+    if blocks[0].shape[1] >= 3:
+        weights[os.path.splitext(os.path.basename(path))[0]] = \
+            np.array([b[:, 2] for b in blocks])
+    other = os.path.join(folder, "orbital.dat")
+    if not weights and os.path.isfile(other) and \
+            os.path.abspath(other) != os.path.abspath(path):
+        try:
+            extra = _fplo_blocks(other)
+            if len(extra) == len(blocks) and extra[0].shape == (len(distance), 3):
+                weights["orbital"] = np.array([b[:, 2] for b in extra])
+        except (OSError, ValueError):
+            pass
+    kpoints = read_fplo_kpoints(os.path.join(folder, "KPOINTS"))
+    cell = lattice if lattice is not None else (kpoints or {}).get("lattice")
+    k = None
+    kcal = os.path.join(folder, "kcal.dat")
+    if cell is not None and os.path.isfile(kcal):
+        try:
+            frac = np.loadtxt(kcal, ndmin=2)
+            if frac.shape == (len(distance), 3):
+                k = frac @ reciprocal_of(cell)
+        except ValueError:
+            pass
+    return BandPath(distance, energies, _fplo_ticks(distance, kpoints), k=k,
+                    fermi=0.0 if fermi is None else float(fermi),
+                    weights=weights, name=os.path.basename(path))
+
+
+def read_fplo_eigenvalue(path: str, lattice=None, fermi=None):
+    """The FPLO tools' ``Eigenvalue.dat``: per k point a line of its
+    coordinates -- 2π times fractional, the phase k.R that ``H.exe`` uses
+    (plain fractional ones, all within ±1, are taken as they are) -- then
+    one energy per line (eV, relative to E_F). The cell and labels come
+    from the ``KPOINTS`` beside it."""
+    folder = os.path.dirname(os.path.abspath(path))
+    k_frac, energies, current = [], [], None
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            values = _numbers(line) if line.strip() else None
+            if not values:
+                continue
+            if len(values) >= 3:
+                k_frac.append(values[:3])
+                current = []
+                energies.append(current)
+            elif current is not None:
+                current.append(values[0])
+    if not energies:
+        raise ValueError("no k points in the file")
+    count = len(energies[0])
+    if any(len(e) != count for e in energies):
+        raise ValueError("the k points do not all have the same number of bands")
+    kpoints = read_fplo_kpoints(os.path.join(folder, "KPOINTS"))
+    cell = lattice if lattice is not None else (kpoints or {}).get("lattice")
+    if cell is None:
+        raise ValueError("the cell is needed: put the FPLO tools' KPOINTS "
+                         "beside Eigenvalue.dat (or use band.dat)")
+    k_frac = np.array(k_frac)
+    if np.abs(k_frac).max() > 1.0 + 1e-6:
+        k_frac = k_frac / (2.0 * np.pi)
+    k_cart = k_frac @ reciprocal_of(cell)
+    steps = np.r_[0.0, np.linalg.norm(np.diff(k_cart, axis=0), axis=1)]
+    if kpoints and kpoints["segments"] * kpoints["per_segment"] == len(k_cart):
+        # a segment starts where the last ended, or after a jump: no distance
+        steps[kpoints["per_segment"]::kpoints["per_segment"]] = 0.0
+    distance = np.cumsum(steps)
+    return BandPath(distance, np.array(energies).T, _fplo_ticks(distance, kpoints),
+                    k=k_cart, fermi=0.0 if fermi is None else float(fermi),
+                    name=os.path.basename(path))
+
+
+def _row_chunks(path: str, rows: int, usecols=None):
+    """The numbers of a big text table, ``rows`` lines at a time."""
+    from itertools import islice
+
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        while True:
+            lines = [l for l in islice(handle, rows) if l.strip()]
+            if not lines:
+                return
+            yield np.loadtxt(lines, ndmin=2, usecols=usecols)
+
+
+def read_fplo_grid(path: str, lattice=None, fermi=None, window=(-2.0, 1.0),
+                   chunk: int = 20000):
+    """The FPLO tools' 3-D ``band.dat``: per row the fractional k
+    (``k1 k2 k3``, each from -1/2 to 1/2, ends included) and every band's
+    energy (eV, relative to E_F). Such a file is large (gigabytes for a
+    101³ grid of a hundred bands), so it is read in pieces, twice, and
+    only the bands that come within ``window`` (eV about E_F) are kept --
+    the others cannot reach a measured cut. The cell comes from
+    ``lattice`` or the FPLO tools' ``KPOINTS`` beside the file."""
+    folder = os.path.dirname(os.path.abspath(path))
+    if lattice is None:
+        lattice = (read_fplo_kpoints(os.path.join(folder, "KPOINTS")) or {}).get("lattice")
+    if lattice is None:
+        raise ValueError("the cell is needed: put the KPOINTS of the band "
+                         "calculation along the path beside band.dat, or "
+                         "set the crystal in the Brillouin-zone tool")
+    fermi = 0.0 if fermi is None else float(fermi)
+    lo = hi = None
+    axes = [np.empty(0)] * 3
+    total = 0
+    for block in _row_chunks(path, chunk):
+        e = block[:, 3:]
+        lo = e.min(0) if lo is None else np.minimum(lo, e.min(0))
+        hi = e.max(0) if hi is None else np.maximum(hi, e.max(0))
+        axes = [np.union1d(axes[i], np.round(block[:, i], 6)) for i in range(3)]
+        total += len(block)
+    if lo is None:
+        raise ValueError("no k points in the file")
+    if max(np.abs(a).max() for a in axes) > 1.0 + 1e-6:
+        raise ValueError("the first three columns are not fractional k "
+                         "(in units of the reciprocal vectors)")
+    n = [len(a) for a in axes]
+    if int(np.prod(n)) != total:
+        raise ValueError(f"the {total} k points do not fill a regular "
+                         f"{n[0]}x{n[1]}x{n[2]} grid")
+    keep = np.flatnonzero((hi - fermi >= window[0]) & (lo - fermi <= window[1]))
+    if keep.size == 0:
+        raise ValueError(f"no band comes within {window[0]:g} to {window[1]:g} "
+                         "eV of E_F")
+    values = np.empty((keep.size, *n), dtype=np.float32)
+    for block in _row_chunks(path, chunk, usecols=[0, 1, 2, *(3 + keep)]):
+        index = tuple(np.searchsorted(axes[i], np.round(block[:, i], 6))
+                      for i in range(3))
+        values[(slice(None), *index)] = block[:, 3:].T
+    general = all(abs(a[-1] - a[0] - 1.0) < 1e-4 for a in axes)
+    reciprocal = reciprocal_of(lattice)
+    options = dict(origin=[float(a[0]) for a in axes], fermi=fermi,
+                   name=os.path.basename(path))
+    grid = (BandGrid.from_general_grid(reciprocal, values, **options) if general
+            else BandGrid(reciprocal, values, **options))
+    #: the kept bands' numbers in the file (1-based), as the scripts count them
+    grid.band_numbers = keep + 1
+    grid.total_bands = int(lo.size)
+    return grid
+
+
+def _wannier_names(path: str, count: int):
+    """The Wannier functions' names in ``wannier_name_center.txt`` (rows
+    of index, atom, orbital, centre) and their groups -- each element's
+    shell ("Cr 3d"), and each spin -- or ``(None, None)``."""
+    names, groups = [], {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                parts = line.split()
+                if len(parts) >= 3:
+                    names.append(f"{parts[1]} {parts[2]}")
+    except OSError:
+        return None, None
+    if len(names) != count:
+        return None, None
+    spins = {"UP": "spin up", "DN": "spin down", "DOWN": "spin down"}
+    for i, name in enumerate(names):
+        atom, orbital = name.split(" ", 1)
+        element = atom.rstrip("0123456789")
+        shell = re.match(r"\d*[spdf]", orbital)
+        if shell:
+            groups.setdefault(f"{element} {shell.group(0)}", []).append(i)
+        spin = re.search(r"(UP|DN|DOWN)$", orbital.upper())
+        if spin:
+            groups.setdefault(spins[spin.group(1)], []).append(i)
+    return names, groups

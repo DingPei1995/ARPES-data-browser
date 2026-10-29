@@ -11,9 +11,11 @@ steps:
 
 1. **The calculation** -- a file from the theory side: an XCrySDen
    ``.bxsf`` band grid (Wien2k, Quantum ESPRESSO, VASP, Wannier90), a
-   Wannier90 Hamiltonian (``_hr.dat``), or bands along a path (Wannier90
+   Wannier90 Hamiltonian (``_hr.dat``), bands along a path (Wannier90
    ``_band.dat``, Wien2k ``.spaghetti_ene``, VASP ``EIGENVAL`` with its
-   ``PROCAR``). The crystal's space group names the high-symmetry points.
+   ``PROCAR``), or what the FPLO + Wannier tools write (``band.dat`` along
+   a path or on a 3-D grid, ``Eigenvalue.dat``, with their ``KPOINTS``).
+   The crystal's space group names the high-symmetry points.
 2. **Along a path** -- the bands through the high-symmetry points
    (Γ-M-K-Γ-A-L-H-A), optionally coloured by orbital character, over the
    measurement along the same path, assembled from the selected maps (the
@@ -26,7 +28,10 @@ steps:
 4. **Output** -- the calculation's spectral function to the list, and
    figure-composer panels: measurement with calculation, calculation
    alone (with the points' names on the axis), constant-energy map with
-   calculated contours.
+   calculated contours, and calculated contours alone (no map needed).
+
+With no measurement selected, steps 2 and 3 can simply be paged through:
+the calculation alone goes to the output all the same.
 
 The arithmetic is :mod:`tools.crystal.bands`, :mod:`tools.crystal.compare`
 and :mod:`tools.crystal.bandfiles`, none of which imports Qt.
@@ -166,6 +171,10 @@ class BandsDialog(QDialog):
                                self, finish_text="Close")
         self.stepper.finished.connect(self.accept)
         layout.addWidget(self.stepper)
+        if not self.datasets:
+            # the calculation alone: nothing measured to draw it over
+            for key in ("path", "compare"):
+                self.panel_boxes[key].setChecked(False)
 
     # ==================================================================
     # Step 1: the calculation
@@ -198,6 +207,18 @@ class BandsDialog(QDialog):
                                "Programs differ; if the zone comes out 2π "
                                "too small or large, change this.")
         form.addRow("bxsf k units", self.k_unit)
+        keep = QHBoxLayout()
+        self.keep_lo = _spin(-2.0, -50.0, 0.0, 2, " eV", 0.5)
+        self.keep_hi = _spin(1.0, 0.0, 50.0, 2, " eV", 0.5)
+        for box in (self.keep_lo, self.keep_hi):
+            box.setToolTip("A 3-D band.dat of the FPLO tools holds every "
+                           "band on a dense grid (gigabytes); only the bands "
+                           "that come within this window of E_F are kept.")
+        keep.addWidget(self.keep_lo)
+        keep.addWidget(QLabel("to"))
+        keep.addWidget(self.keep_hi)
+        keep.addStretch(1)
+        form.addRow("Big grids: keep bands from", keep)
         column.addWidget(options)
 
         crystal = QGroupBox("The crystal (names the high-symmetry points)")
@@ -232,10 +253,15 @@ class BandsDialog(QDialog):
                 "energy as contours; and <b>bands along a path</b> "
                 "(<code>_band.dat</code>, <code>.spaghetti_ene</code>, VASP "
                 "<code>EIGENVAL</code>), which can be drawn along that path "
-                "only. Orbital weights come with a Hamiltonian (its Wannier "
-                "functions) or a VASP <code>PROCAR</code>.<br>The space "
-                "group names the zone's points; it is guessed from the "
-                "cell's shape -- set the crystal's own for its labels.")
+                "only. The FPLO + Wannier tools' <code>band.dat</code> (along "
+                "a path, or a 3-D grid) and <code>Eigenvalue.dat</code> are "
+                "read too, with their <code>KPOINTS</code> beside them for "
+                "the cell and labels. Orbital weights come with a Hamiltonian "
+                "(its Wannier functions) or a VASP <code>PROCAR</code>.<br>The "
+                "space group names the zone's points; it is guessed from the "
+                "cell's shape -- set the crystal's own for its labels.<br>No "
+                "measurement selected? Page on through steps 2 and 3: the "
+                "output takes the calculation alone.")
         return Step("The calculation", text, page,
                     ready=lambda: "" if self.model is not None
                     else "Open a calculation first.")
@@ -254,11 +280,28 @@ class BandsDialog(QDialog):
         if path.lower().endswith(".bxsf"):
             kwargs.setdefault("k_scale", (1.0, 2 * np.pi, 1.0 / bandfiles.BOHR)[
                 self.k_unit.currentIndex()])
+        kwargs.setdefault("window", (self.keep_lo.value(), self.keep_hi.value()))
+        from PyQt5.QtWidgets import QApplication
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)          # a big grid: ~30 s/GB
         try:
-            model = bandfiles.read(path, **kwargs)
+            try:
+                model = bandfiles.read(path, **kwargs)
+            except ValueError as exc:
+                # no cell beside the file: the Brillouin-zone tool's crystal
+                crystal = last_crystal.lattice_params()
+                if "cell is needed" not in str(exc) or crystal is None \
+                        or "lattice" in kwargs:
+                    raise
+                from tools.crystal.lattice import primitive_vectors
+
+                model = bandfiles.read(path, lattice=primitive_vectors(crystal),
+                                       **kwargs)
         except (OSError, ValueError, IndexError) as exc:
             self.file_label.setText(f"<b>Could not read it:</b> {exc}")
             return None
+        finally:
+            QApplication.restoreOverrideCursor()
         self.model_path = path
         self.set_model(model)
         return model
@@ -281,6 +324,10 @@ class BandsDialog(QDialog):
                     if isinstance(model, B.WannierModel)
                     else "a band grid, interpolated")
             count = model.band_count()
+            numbers = getattr(model, "band_numbers", None)
+            if numbers is not None and len(numbers):
+                count = (f"{count} (bands {numbers[0]}-{numbers[-1]} of "
+                         f"{model.total_bands}, those near E_F)")
         weights = list(getattr(model, "weight_names", []) or [])
         name = os.path.basename(self.model_path) or getattr(model, "name", "") \
             or "calculation"
@@ -293,6 +340,8 @@ class BandsDialog(QDialog):
         self.weight_combo.addItem("(one colour)")
         self.weight_combo.addItems(weights)
         self.weight_combo.blockSignals(False)
+        if not self.datasets:
+            self.panel_boxes["contours"].setChecked(not isinstance(model, B.BandPath))
         self._crystal_changed()
         self._fill_compare_list()
         self.stepper.refresh()
@@ -799,18 +848,19 @@ class BandsDialog(QDialog):
             plane = np.nanmean(np.asarray(scan.value, float)[:, :, keep], axis=2)
         return np.asarray(scan.x, float), np.asarray(scan.k, float), plane, energy
 
-    def map_contours(self, kx, ky, energy):
+    def map_contours(self, kx, ky, energy, options=None):
         """The calculation's contours at measured ``energy`` on the map's
-        grid: ``[(band, xs, ys)]`` (the inverse alignment taken first)."""
+        grid: ``[(band, xs, ys)]`` (the inverse alignment taken first);
+        on the k_z of step 3 unless ``options`` say (``{"kz": ...}``)."""
         if isinstance(self.model, B.BandPath):
             raise ValueError("a band structure along a path has no contours")
         calc_energy = (energy - self.alignment.shift) / self.alignment.z
-        options = self._kz_options()
+        options = options or self._kz_options()
         return B.contours(self.model, np.linspace(kx.min(), kx.max(), 161),
                           np.linspace(ky.min(), ky.max(), 161), calc_energy,
                           rotation_deg=self.direction_box.value(), **options)
 
-    def contour_points_k(self, xs, ys, energy):
+    def contour_points_k(self, xs, ys, energy, options=None):
         """3-D k (in the calculation's frame) of contour points drawn on a
         map's (k_x, k_y) at measured ``energy`` -- for their weights."""
         c, s_ = (np.cos(np.deg2rad(-self.direction_box.value())),
@@ -818,7 +868,7 @@ class BandsDialog(QDialog):
         xs, ys = np.asarray(xs, float), np.asarray(ys, float)
         inplane = np.column_stack([c * xs - s_ * ys, s_ * xs + c * ys])
         calc_energy = (energy - self.alignment.shift) / self.alignment.z
-        options = self._kz_options()
+        options = options or self._kz_options()
         if "kz" in options:
             return np.column_stack([inplane, np.full(len(xs), options["kz"])])
         return B.kz_on_sphere(inplane, calc_energy, options["hv"],
@@ -852,7 +902,7 @@ class BandsDialog(QDialog):
                 for p, q in edges.values()]
 
     def contour_overlays(self, kx, ky, energy, colours=("#d62728", "#2ca02c"),
-                         width=0.8, style="solid", threshold=0.5):
+                         width=0.8, style="solid", threshold=0.5, options=None):
         """The calculated contours at ``energy`` as overlays: in the first
         colour, or -- with a weight chosen in step 2 -- split where the
         chosen orbital's weight crosses ``threshold``, the parts above it in
@@ -862,12 +912,13 @@ class BandsDialog(QDialog):
         weight = (self.weight_combo.currentText()
                   if self.weight_combo.currentIndex() > 0 else None)
         out = []
-        for band, xs, ys in self.map_contours(kx, ky, energy):
+        for band, xs, ys in self.map_contours(kx, ky, energy, options):
             xs, ys = np.asarray(xs, float), np.asarray(ys, float)
             if weight is None:
                 pieces = [(0, np.arange(xs.size))]
             else:
-                w = self.model.weights_at(self.contour_points_k(xs, ys, energy),
+                w = self.model.weights_at(self.contour_points_k(xs, ys, energy,
+                                                                options),
                                           weight)[band]
                 high = (w >= threshold).astype(int)
                 cuts = np.flatnonzero(np.diff(high)) + 1
@@ -908,6 +959,34 @@ class BandsDialog(QDialog):
             panel.overlays += self.zone_overlays(panel.x_range, panel.y_range,
                                                  colour="#d62728")
         panel.overlays += self.contour_overlays(kx, ky, energy, colours)
+        panel.data.sources = self.provenance([])
+        return panel
+
+    def panel_contours_alone(self, energy=0.0, colours=("#d62728", "#2ca02c")):
+        """The calculated contours at ``energy`` over the zone and a little
+        beyond, on the plane k_z of step 3, the zones dashed -- no
+        measurement needed: the calculation's own constant-energy map."""
+        from ui.viewers.curves import curve_panel
+
+        if isinstance(self.model, B.BandPath):
+            raise ValueError("a band structure along a path has no contours: "
+                             "open a band grid or a Hamiltonian")
+        b = np.asarray(self.model.reciprocal, float)[:2, :2]
+        reach = 0.8 * float(np.linalg.norm(b, axis=1).max())
+        kx = ky = np.linspace(-reach, reach, 161)
+        kz = self.kz_value.value()
+        panel = curve_panel([-reach, reach], [], x_label="k_x (Å⁻¹)",
+                            y_label="k_y (Å⁻¹)",
+                            name=f"calculation at {energy:+.2f} eV, "
+                                 f"k_z = {kz:.3g} Å⁻¹")
+        panel.data.x = np.array([-reach, reach])
+        panel.data.y = np.array([-reach, reach])
+        panel.x_range = panel.y_range = (-reach, reach)
+        panel.overlays += self.zone_overlays(panel.x_range, panel.y_range,
+                                             colour="#888888")
+        panel.overlays += self.contour_overlays(kx, ky, energy, colours,
+                                                options={"kz": kz})
+        panel.title = "E_F" if abs(energy) < 1e-9 else f"E - E_F = {energy:g} eV"
         panel.data.sources = self.provenance([])
         return panel
 
@@ -997,9 +1076,11 @@ class BandsDialog(QDialog):
         self.panel_boxes = {}
         for key, text in (("path", "Measurement along the path, calculation over it"),
                           ("path_calc", "Calculation alone along the path"),
-                          ("compare", "The compared cut or map, calculation over it")):
+                          ("compare", "The compared cut or map, calculation over it"),
+                          ("contours", "Calculated contours alone at the series "
+                                       "energies (no map needed; k_z plane of step 3)")):
             box = QCheckBox(text)
-            box.setChecked(True)
+            box.setChecked(key != "contours")
             g.addWidget(box)
             self.panel_boxes[key] = box
         series = QHBoxLayout()
@@ -1184,6 +1265,12 @@ class BandsDialog(QDialog):
         if self.series_box.isChecked():
             try:
                 out += self.series_panels()
+            except ValueError as exc:
+                problems.append(str(exc))
+        if self.panel_boxes["contours"].isChecked():
+            try:
+                out += [self.panel_contours_alone(e)
+                        for e in self.series_energies_list() or [0.0]]
             except ValueError as exc:
                 problems.append(str(exc))
         return out, problems

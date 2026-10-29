@@ -10,7 +10,7 @@ version in ``ARPES viewer.app/Contents/Info.plist`` (the macOS launcher)
 the same as VERSION -- a test checks it.
 """
 VERSION = "1.2.0"
-UPDATED = "2026-10-28"
+UPDATED = "2026-10-29"
 REPOSITORY = "https://github.com/DingPei1995/ARPES-data-browser"
 
 

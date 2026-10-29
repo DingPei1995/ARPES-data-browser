@@ -10,7 +10,7 @@ file is the record of how it got that way.
 
 ---
 
-## 1.2.0 — 2026-10-28
+## 1.2.0 — 2026-10-29
 
 Tools ported from the lab's MATLAB programs (`DataAnalysisPrograms_PD`),
 each checked against the original and improved where it could be; a third
@@ -143,6 +143,21 @@ is done; `ui/common/stepper.py`).
   **Autosaves** (the old names are in their tooltips). The Datasets box puts
   **Rename**, **Save** and **Remove** on one row, and gains **Sum repeated
   scans...**.
+- **Calculated bands: the FPLO + Wannier tools' files, and the calculation
+  alone to the output** (`tools/crystal/bandfiles.py`). A collaborator's
+  LaCrGe3 calculation (FPLO, its Wannier Hamiltonian evaluated by
+  `k_path.exe`/`H.exe`/`plot.exe`, plotted by MATLAB) came as `band.dat`,
+  `Eigenvalue.dat` and a `KPOINTS` of its own, none of which the window
+  read: the names are generic, so the reader now goes by content --
+  `band.dat` along a path (with `orbital.dat`'s weight) or as a 3-D grid
+  (`k1 k2 k3 E1 ...`, gigabytes: read in pieces, twice, keeping only the
+  bands near E_F), `Eigenvalue.dat` (its k is 2π times fractional),
+  `wannier90_hr_fplo.dat` (cell from `KPOINTS`, names and shell/spin weights
+  from `wannier_name_center.txt`). Checked on the real path: `band.dat` and
+  `Eigenvalue.dat` agree to 5e-7 eV and the bands crossing E_F are 41-44, as
+  the MATLAB script finds. With nothing measured selected, the output now
+  leaves the measured panels unticked and offers the calculated contours
+  alone (a Fermi-surface slice on the step-3 k_z plane, zones drawn).
 
 ## 1.1.1 — 2026-10-28
 

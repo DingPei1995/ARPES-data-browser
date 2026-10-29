@@ -1311,6 +1311,8 @@ wrote it:
 | `_band.dat` (+ `labelinfo`) | Wannier90 | bands along a path |
 | `.spaghetti_ene` (+ `.klist_band`) | Wien2k | bands along a path |
 | `EIGENVAL` (+ `POSCAR`, `PROCAR`) | VASP | bands along a path or on a grid; atomic and orbital weights |
+| `band.dat`, `Eigenvalue.dat` (+ their `KPOINTS`, `orbital.dat`) | FPLO + Wannier tools (`k_path.exe`, `H.exe`, `plot.exe`) | bands along a path (a third column is a weight), or — `band.dat` with rows `k1 k2 k3 E1 E2 …` — on a 3-D grid |
+| `wannier90_hr_fplo.dat` (+ `KPOINTS`, `wannier_name_center.txt`) | FPLO's Wannier Hamiltonian | as `_hr.dat`; weights per Wannier function and per shell ("Cr 3d") and spin |
 
 A calculation "everywhere" can be cut anywhere: along any measured cut, on
 the k_z a photon energy reaches, at any energy as contours. One "along a
@@ -1318,6 +1320,30 @@ path" can be drawn along that path only. *Set E_F myself* overrides the
 file's Fermi level; *bxsf k units* is for a grid written without 2π. The
 **space group** names the zone's points; it is guessed from the cell's
 shape — set the crystal's own (or take it from the Brillouin-zone tool).
+
+The FPLO tools' files have generic names, so they are recognised by their
+content. Their `KPOINTS` (first line "segments points-per-segment", then the
+direct and reciprocal vectors, then each segment's ends with `! label`)
+gives the cell and the labels — keep it beside `band.dat`. A 3-D `band.dat`
+is large (a 101³ grid of 136 bands is about 2 GB): it is read in pieces
+(about 30 s per GB) and only the bands within *Big grids: keep bands from …
+to …* of E_F are kept; without a `KPOINTS` beside it, the cell is taken from
+the Brillouin-zone tool's crystal.
+
+**The calculation alone.** With nothing selected, open the calculation and
+page through steps 2 and 3 with Next: step 4 then offers the calculation
+alone along the path and, for a grid or a Hamiltonian, *Calculated contours
+alone* at the series energies on the k_z plane set in step 3 (0 for the Γ
+plane, π/c for the zone top) — a Fermi-surface slice with the zones drawn.
+
+**A calculation in another format.** When the theory side's files are none of
+these, the safest route is to ask for (or convert to) one of the standard
+ones: a `.bxsf` for bands everywhere, `_hr.dat` + `.win` for a Hamiltonian,
+or a two-column `_band.dat` (distance, energy; a blank line between bands)
+with its `_band.labelinfo.dat` for a path. The MATLAB or Python script that
+plots their data says the layout: which columns, which order of k, the units
+of k (with or without 2π, fractional or Cartesian) and whether energies are
+already relative to E_F.
 
 **2. Along a path.** The calculation through the high-symmetry points
 (`Γ-M-K-Γ-A-L-H-A`; `G` for Γ, `|` for a jump), over the **measurement
@@ -1349,7 +1375,8 @@ of −49.8 meV, the values the demo was made with (0.8 and −50 meV).
 
 - **To figure composer...** makes the panels ticked: the measurement along
   the path with the calculation over it, the calculation alone (the points'
-  names on its axis), the compared cut or map with its calculation, and —
+  names on its axis), the compared cut or map with its calculation, the
+  calculated contours alone (no map needed), and —
   with **Constant-energy series at** — for a compared k-map, the measured
   maps at each energy with the zones dashed (top row) and the calculated
   contours alone (bottom row), coloured by the weight chosen in step 2 (the

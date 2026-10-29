@@ -156,10 +156,11 @@ class WannierModel(_Everywhere):
     lattice vectors -- Wannier90's ``_hr.dat`` convention. Diagonalised at
     every k, so there is no interpolation error at all; the weights are
     each Wannier function's share of each eigenvector (``wf1``, ``wf2``...,
-    or the names given)."""
+    or the names given), and of each group of them in ``groups`` (name ->
+    indices, e.g. every Cr 3d function), listed first."""
 
     def __init__(self, lattice, R, H, *, degeneracy=None, fermi: float = 0.0,
-                 orbital_names=None, name: str = ""):
+                 orbital_names=None, groups=None, name: str = ""):
         self.reciprocal = reciprocal_of(lattice)
         self.R = np.asarray(R, dtype=float).reshape(-1, 3)
         self.H = np.asarray(H, dtype=complex)
@@ -169,7 +170,8 @@ class WannierModel(_Everywhere):
         size = self.H.shape[1]
         self.orbital_names = list(orbital_names or
                                   [f"wf{i + 1}" for i in range(size)])
-        self.weight_names = list(self.orbital_names)
+        self.groups = {k: list(v) for k, v in (groups or {}).items()}
+        self.weight_names = list(self.groups) + list(self.orbital_names)
         self.name = name
 
     def band_count(self) -> int:
@@ -190,9 +192,9 @@ class WannierModel(_Everywhere):
         return values.T - self.fermi
 
     def weights_at(self, k_points, name: str) -> np.ndarray:
-        index = self.orbital_names.index(name)
+        index = self.groups.get(name) or [self.orbital_names.index(name)]
         _values, vectors = self.diagonalise(k_points)
-        return (np.abs(vectors[:, index, :]) ** 2).T
+        return (np.abs(vectors[:, index, :]) ** 2).sum(axis=1).T
 
 
 @dataclass
