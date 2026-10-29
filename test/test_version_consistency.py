@@ -41,3 +41,16 @@ def test_the_citation_file_states_the_current_version():
         text = f.read()
     assert re.search(rf"^version: {re.escape(version.VERSION)}$", text, re.M)
     assert re.search(rf"^date-released: {version.UPDATED}$", text, re.M)
+
+
+def test_the_citation_file_names_the_licence_of_pyproject():
+    """Zenodo takes the licence of an archived release from CITATION.cff;
+    without it, it applies CC BY 4.0, which allows commercial use."""
+    with open(os.path.join(ROOT, "CITATION.cff"), encoding="utf-8") as f:
+        cff = f.read()
+    with open(os.path.join(ROOT, "pyproject.toml"), encoding="utf-8") as f:
+        licence = re.search(r'^license = "(.+)"$', f.read(), re.M)[1]
+    assert re.search(rf"^license: {re.escape(licence)}$", cff, re.M)
+    keys = re.findall(r"^([a-z-]+):", cff, re.M)       # the top-level keys
+    assert len(keys) == len(set(keys)), keys
+    assert {"cff-version", "title", "authors", "version", "doi"} <= set(keys)
