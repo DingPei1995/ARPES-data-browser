@@ -136,7 +136,7 @@ def test_the_fermi_surface_is_drawn_and_made_a_figure(app, tmp_path):
     dialog.stepper.go(1)                         # entering it draws
     surface = dialog._fs_drawn
     assert surface is not None and len(surface.surfaces) == 1
-    assert dialog.fs_bands.count() == 1
+    assert dialog.fs_table.rowCount() == 1
     assert dialog.panel_boxes["fs"].isChecked()
     panels, problems = dialog.panels()
     assert not problems and panels[0].data.kind == "picture"
@@ -221,3 +221,140 @@ def test_a_step_window_asks_before_closing_and_keeps_its_settings(app, tmp_path,
     assert not again.reopen_button.isHidden() and "band.dat" in again.reopen_button.text()
     again.stepper.defaults_button.click()
     assert again.goal() == "dispersion" and again.keep_lo.value() == -2.0
+
+
+# --------------------------------------------------------------------------
+# round 3: the plane, the cell, Enter, the bands' looks, the goal's steps
+# --------------------------------------------------------------------------
+def _two_band_hr(folder):
+    R = [(0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (1, 1, 0),
+         (-1, -1, 0), (0, 0, 1), (0, 0, -1)]
+    H = np.zeros((9, 2, 2), complex)
+    H[0] = np.diag([0.3, -0.4])
+    H[1:7, 0, 0], H[1:7, 1, 1] = -0.15, 0.12
+    H[7:, 0, 0], H[7:, 1, 1] = 0.08, -0.05
+    hr = os.path.join(folder, "x_hr.dat")
+    bandfiles.write_hr(hr, LATTICE, {r: H[i] for i, r in enumerate(R)}, 2)
+    return hr
+
+
+def test_the_contour_plane_is_set_like_the_zone_tool(app, tmp_path):
+    from ui.panels.bands import BandsDialog
+
+    dialog = BandsDialog([])
+    dialog.open_file(_two_band_hr(str(tmp_path)))
+    dialog.set_goal("contours")
+    dialog.stepper.go(1)
+    items = [dialog.cont_through.itemText(i) for i in range(dialog.cont_through.count())]
+    assert any(text.startswith("A, H, L") for text in items)
+    top = next(i for i, t in enumerate(items) if t.startswith("A, H, L"))
+    dialog.cont_through.setCurrentIndex(top)
+    dialog._through_chosen(top)
+    assert dialog.cont_offset.value() == pytest.approx(np.pi / 6.0, abs=1e-4)
+    assert "holds A, H, L" in dialog.cont_label.text()
+    dialog.cont_window.setValue(0.2)                     # along the (hkl) normal
+    overlays, axis, image = dialog.plane_overlays(0.0)
+    assert image is not None and image.shape == (axis.size, axis.size)
+    first = dialog.current_plane().e1
+    dialog.cont_rotation.setValue(30.0)                  # turns the drawn axes
+    turned = dialog.current_plane()
+    assert np.dot(first, turned.e1) == pytest.approx(np.cos(np.pi / 6))
+    assert np.allclose(np.cross(turned.e1, turned.e2), turned.normal)
+    dialog.cont_h.setValue(1)
+    dialog.cont_l.setValue(0)
+    assert abs(dialog.current_plane().normal[2]) < 1e-9
+    zone = dialog.open_zone_window()
+    assert zone.view.planes and "(1 0 0)" in zone.label.text()
+    zone.close()
+
+
+def test_the_cell_is_locked_until_asked(app, tmp_path):
+    from ui.panels.bands import BandsDialog
+
+    dialog = BandsDialog([])
+    dialog.open_file(_two_band_hr(str(tmp_path)))
+    assert not dialog.space_group.isEnabled() and not dialog.take_button.isEnabled()
+    assert not any(box.isEnabled() for box in dialog.cell_boxes)
+    k = np.array([[0.4, 0.1, 0.2]])
+    before = dialog.model.energies(k)
+    dialog.change_lattice.setChecked(True)
+    assert dialog.space_group.isEnabled() and dialog.cell_boxes[0].isEnabled()
+    for box in dialog.cell_boxes[:3]:
+        box.setValue(2 * box.value())
+    dialog._cell_typed()
+    assert np.allclose(dialog.model.energies(k / 2), before)
+
+
+def test_enter_in_a_field_takes_the_value_and_presses_nothing(app, tmp_path):
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtTest import QTest
+
+    from ui.panels.bands import BandsDialog
+
+    dialog = BandsDialog([])
+    dialog.show()
+    dialog.open_file(_path_file(str(tmp_path)))
+    dialog.options_toggle.setChecked(True)
+    dialog.keep_lo.setFocus()
+    app.processEvents()
+    QTest.keyClick(QApplication.focusWidget(), Qt.Key_Return)
+    app.processEvents()
+    assert dialog.stepper.index == 0                 # Next was not pressed
+    dialog.stepper.next_button.setFocus()
+    QTest.keyClick(dialog.stepper.next_button, Qt.Key_Return)
+    assert dialog.stepper.index == 1                 # a focused button still is
+    dialog.close()
+
+
+def test_bands_take_their_own_colours_and_opacity(app, tmp_path):
+    from ui.panels.bands import BandsDialog
+
+    dialog = BandsDialog([])
+    dialog.set_goal("fs")
+    dialog.open_file(_two_band_hr(str(tmp_path)))
+    dialog.fs_detail.setCurrentIndex(0)
+    dialog.fs_energy.setValue(0.05)
+    dialog._fs_energy_entered()                      # what Enter does
+    surface = dialog._fs_drawn
+    assert surface is not None and surface.energy == pytest.approx(0.05)
+    bands = dialog.fs_table.bands
+    for band in bands:                               # one group, one colour
+        dialog.fs_table.set_colour(band, "#123456")
+    dialog.fs_table.cellWidget(0, 2).setValue(0.4)
+    assert all(dialog.fs_view.style_of(i, b)["colour"] == "#123456"
+               for i, b in enumerate(bands))
+    assert dialog.fs_view.style_of(0, bands[0])["opacity"] == pytest.approx(0.4)
+    assert not dialog.fs_view.render_image(200, 180).isNull()
+    # the contours take the same colours
+    dialog.set_goal("contours")
+    dialog.stepper.go(1)
+    overlays, _axis, _image = dialog.plane_overlays(0.05)
+    assert {o.color for o in overlays if o.name.startswith("band")} == {"#123456"}
+
+
+def test_the_goal_shapes_the_steps_and_what_is_saved(app, tmp_path):
+    from ui.panels.bands import BandsDialog
+
+    dialog = BandsDialog([])
+    dialog.open_file(_two_band_hr(str(tmp_path)))
+    dialog.set_goal("fs")
+    assert 2 in dialog.stepper.skipped
+    assert not dialog.save_button.isEnabled()
+    dialog.fs_detail.setCurrentIndex(0)
+    dialog.stepper.go(1)
+    dialog.stepper.next_button.click()
+    assert dialog.stepper.index == 3                 # past Compare
+    assert dialog.stepper.title.text().startswith("Step 3 of 3")
+    dialog.set_goal("contours")
+    assert 2 not in dialog.stepper.skipped
+    assert dialog.save_button.isEnabled() and "map" in dialog.save_button.text()
+    created = []
+    dialog.datasetsCreated.connect(created.extend)
+    dialog.map_lo.setValue(-0.2)
+    dialog.map_hi.setValue(0.1)
+    dialog.spectrum_to_list()
+    data = created[0]
+    assert data.kind == "k_map" and data.scan.value.shape[2] == 31
+    dialog.set_goal("dispersion")
+    dialog.spectrum_to_list()
+    assert created[1].kind == "cut"

@@ -2,7 +2,7 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-*Last updated: 28 October 2026 — for ARPES viewer v1.2.0*
+*Last updated: 29 October 2026 — for ARPES viewer v1.2.1*
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
@@ -222,7 +222,7 @@ rest of what is done to the rows: **Experiment info**, **Log format...** and
 **Rename**, **Save** and **Remove** on one row, **Sum repeated scans...**
 and **Session log...**. Its buttons grey out like the tools.
 
-### Where things are now (v1.2.0)
+### Where things are now (v1.2.1)
 
 If you used an earlier version: the tools moved out of the right-click menu
 and the viewers' *Functions* menus into the tool panel, so each has one way
@@ -1304,9 +1304,11 @@ calculation alone. Four steps.
 Like every step-by-step window (Crystal structure, Tight-binding fit, Sum
 repeated scans, Detector corrections), it **asks before closing** — the last
 step's Close sits where Next was, so a quick double click no longer loses the
-work; the title bar's close and Esc ask too, and Enter never presses Close.
-What you set is **kept**: the window opens as you left it (**Restore
-defaults** at the bottom left starts afresh).
+work; the title bar's close and Esc ask too. **Enter in a field takes its
+value** (and redraws what depends on it) — in every window of the program it
+never presses Next, Close or any other button; only a button that has the
+focus answers Enter. What you set is **kept**: the window opens as you left
+it (**Restore defaults** at the bottom left starts afresh).
 
 **1. The calculation.** First say **what you want to see**:
 
@@ -1357,9 +1359,15 @@ open** writes the pieces back into one file beside them.
 
 *Reading options ▸* (usually nothing to change): *Set E_F myself* overrides
 the file's Fermi level; *bxsf k units* is for a grid written without 2π; *Big
-grids: keep bands from … to …* of E_F. The **space group** names the zone's
-points; it is guessed from the cell's shape — set the crystal's own (or take
-it from the Brillouin-zone tool).
+grids: keep bands from … to …* of E_F.
+
+**The crystal.** The cell (a, b, c, α, β, γ) is read from the calculation
+and the **space group** that names the zone's points is guessed from its
+shape. Once read, both are **locked** — as are *From the Brillouin-zone
+tool* — so a stray click cannot change the calculation's lattice. Tick
+**Change the lattice parameters** to change them on purpose: typing a new
+cell (or taking the Brillouin-zone tool's) scales the calculation to it —
+its bands, held in fractional coordinates, stretch with the zone.
 
 **A calculation in another format.** When the theory side's files are none of
 these, the safest route is to ask for (or convert to) one of the standard
@@ -1381,15 +1389,34 @@ Cartesian) and whether energies are already relative to E_F.
   the crystal's a axis on the map. **Highlight bands** draws chosen bands
   thick and in colour, the others grey — their numbers as the file counts
   them (`41-44`), or `EF` for every band crossing E_F (step 1 lists them).
-- **Constant-energy contours.** The calculated contours at one energy on one
-  k_z plane (**Γ plane** / **zone top** buttons), one colour per band, the
-  zones grey: a calculated Fermi-surface map.
+- **Constant-energy contours.** The calculated contours at one energy on any
+  plane of k-space, set as in the Brillouin-zone tool: its **normal (hkl)**
+  (conventional reciprocal axes; (001) gives k_x-k_y), and **k⊥**, how far it
+  sits from Γ along that normal — **Through point** puts it through a
+  high-symmetry point (Γ K M at 0, A H L at π/c for (001)); **In-plane
+  rotation** turns the two drawn axes about the normal (to match a measured
+  map's azimuth, say). The **k⊥
+  integration window** sums the bands over a range of k⊥ about the plane —
+  along the (hkl) normal, not the absolute k_z — as a map with a finite k⊥
+  resolution does; the integrated intensity is drawn grey under the
+  contours of the middle plane. **Show the plane in the Brillouin zone...**
+  opens a turnable 3-D view of the zone with the plane in it (red), the
+  faces of its k⊥ window (light red) and the named points it holds; it
+  follows the plane as you change it. The zones' outlines on the plane are
+  dashed grey.
 - **3D Fermi surface.** The surfaces where the bands cross the energy,
-  inside the first zone, one colour per band, with the zone's edges and named
-  points. Drag to turn, wheel to zoom; untick a band to hide it; *Detail*
-  trades speed for smoothness (a Hamiltonian is diagonalised on a grid first,
-  with a progress bar). **Open in its own window** shows it large, with
-  *Save picture*; the energy, detail and bands are still set here.
+  inside the first zone, with the zone's edges and named points. Drag to
+  turn, wheel to zoom; Enter in *Energy* redraws it; *Detail* trades speed
+  for smoothness (a Hamiltonian is diagonalised on a grid first, with a
+  progress bar). **Open in its own window** shows it large, with *Save
+  picture*; the energy, detail and bands are still set here. With this goal
+  there is nothing to compare, so the Compare step is left out.
+
+Each band's **colour** (from the list, or *Other colour...*), and for a
+surface its **opacity**, and whether it is **shown**, are set in the band
+table. Several bands may share one colour — to group the electron pockets
+in one colour and the hole pockets in another, say — and a band keeps its
+colour from the contours to the 3-D view.
 
 **Colour by orbital weight** draws fat bands along a path, or splits the
 contours where the chosen orbital's weight exceeds one half.
@@ -1419,12 +1446,20 @@ of −49.8 meV, the values the demo was made with (0.8 and −50 meV).
   step 2, and — with **Constant-energy series of the compared map** — the
   measured maps at each energy with the zones dashed (top row) and the
   calculated contours (bottom row).
-- **Save calculation to main panel** (beside it) makes the calculation a
-  spectrum (Lorentzians of the width set), along the compared cut or along
-  the path, as a new cut in the list. A spectrum along a path keeps its
-  high-symmetry points: the cut viewer shows their names along the top, with
-  a dashed line at each (**High-symmetry points**, ticked; the k values stay
-  on the bottom axis), and the figure composer puts them on the k axis.
+- **Save … to main panel** (beside it) puts the calculation in the list as
+  data the main panel's viewers open, and what it saves follows step 1:
+  - *dispersion* — a cut: the bands as a spectrum (Lorentzians of the width
+    set) along the compared cut or along the path. A cut along a path keeps
+    its high-symmetry points: the cut viewer shows their names along the
+    top, with a dashed line at each (**High-symmetry points**, ticked; the k
+    values stay on the bottom axis), and the figure composer puts them on
+    the k axis.
+  - *contours* — **Save calculated map to main panel**: a k-map of the
+    calculated intensity on the plane of step 2 (its (hkl), k⊥, in-plane
+    rotation and k⊥ window) at every energy of *Energies of the saved map*, to slice and
+    compare like a measured map.
+  - *3D Fermi surface* — greyed out: the viewers open cuts and maps, not a
+    surface; the figure composer (or *Save picture*) takes it.
 
 ![Output](images/bands_output.png)
 

@@ -2,7 +2,7 @@
 
 *[English version](USER_GUIDE_en.md) · [中文版](USER_GUIDE_zh.md)*
 
-*Dernière mise à jour : 28 octobre 2026 — pour ARPES viewer v1.2.0*
+*Dernière mise à jour : 29 octobre 2026 — pour ARPES viewer v1.2.1*
 
 La version et sa date figurent dans la barre de titre et en bas de la fenêtre
 principale. Signaler un bogue, poser une question, obtenir la dernière version :
@@ -236,7 +236,7 @@ et **Auto Exp. log** côte à côte (voir [le journal d'expérience](#le-journal
 **Rename**, **Save** et **Remove** sur une ligne, **Sum repeated scans...**
 et **Session log...**. Ses boutons se grisent comme les outils.
 
-### Où se trouvent les choses maintenant (v1.2.0)
+### Où se trouvent les choses maintenant (v1.2.1)
 
 Pour qui a utilisé une version antérieure : les outils ont quitté le menu
 contextuel et les menus *Functions* des fenêtres pour le panneau d'outils ;
@@ -1397,6 +1397,74 @@ Panneau → Calculation → **Calculated bands...** met un calcul de structure
 de bandes à côté de la mesure. Sélectionnez ce avec quoi le comparer —
 k-maps, cartes kz en impulsion et coupes en impulsion — ou rien, pour
 regarder le calcul seul. Quatre étapes.
+
+**Nouveautés de la v1.2.1** (le guide anglais les détaille) :
+
+- L'étape 1 commence par **ce que vous voulez voir** : dispersion E–k,
+  contours à énergie constante, ou surface de Fermi 3D. Le choix trie la
+  liste des fichiers, refuse un calcul le long d'un chemin pour les contours
+  (en disant pourquoi) et règle les étapes suivantes. **Which file?** lit tout
+  un dossier et dit, pour chaque fichier, ce qu'il est, ce qu'il peut montrer,
+  ce qui lui manque, s'il s'agit d'un fichier standard renommé ou découpé en
+  morceaux (qu'il recolle). Les fichiers sont reconnus par leur contenu ; les
+  fichiers des outils FPLO + Wannier (`band.dat`, `Eigenvalue.dat`,
+  `KPOINTS`) et les grilles MATLAB `Ek_3D` (`.mat`) sont lus. Les lectures
+  longues ont une barre de progression.
+- La maille lue dans le calcul est **verrouillée** (groupe d'espace et
+  *From the Brillouin-zone tool* compris) tant que **Change the lattice
+  parameters** n'est pas coché.
+- Étape 2, **contours** : sur n'importe quel plan, réglé comme dans l'outil
+  de zone de Brillouin — normale (hkl), k⊥ le long de cette normale
+  (*Through point*), **rotation dans le plan**, et une **fenêtre
+  d'intégration en k⊥** le long de la normale (hkl), pas du k_z absolu.
+  **Show the plane in the Brillouin zone...** montre où se trouve la coupe.
+  **Surface de Fermi 3D** : à tourner à la souris, aussi dans sa propre
+  fenêtre. Couleur (la même pour plusieurs bandes, pour grouper les poches),
+  opacité et visibilité se règlent **bande par bande**. *Highlight bands*
+  (`41-44` ou `EF`) colore les bandes choisies le long du chemin.
+- Pour la surface de Fermi 3D, l'étape *Compare* est sautée. **Save … to
+  main panel** suit le choix de l'étape 1 : une coupe (qui garde les noms des
+  points de haute symétrie, affichés par la visionneuse de coupe — case
+  **High-symmetry points**), une carte k calculée pour les contours, et
+  grisé pour la surface 3D.
+- Toutes les fenêtres pas à pas **demandent avant de se fermer** et
+  **gardent leurs réglages** (**Restore defaults** pour repartir de zéro) ;
+  **Entrée dans un champ valide la valeur** sans jamais appuyer sur Next,
+  Close ni un autre bouton.
+
+**Nouveautés de la v1.2.1** (le guide anglais les détaille) :
+
+- L'étape 1 commence par **ce que vous voulez voir** : dispersion E–k,
+  contours à énergie constante, ou surface de Fermi 3D. Le choix trie la
+  liste des fichiers, refuse un calcul le long d'un chemin pour les contours
+  (en disant pourquoi) et règle les étapes suivantes. **Which file?** lit tout
+  un dossier et dit, pour chaque fichier, ce qu'il est, ce qu'il peut montrer,
+  ce qui lui manque, s'il s'agit d'un fichier standard renommé ou découpé en
+  morceaux (qu'il recolle). Les fichiers sont reconnus par leur contenu ; les
+  fichiers des outils FPLO + Wannier (`band.dat`, `Eigenvalue.dat`,
+  `KPOINTS`) et les grilles MATLAB `Ek_3D` (`.mat`) sont lus. Les lectures
+  longues ont une barre de progression.
+- La maille lue dans le calcul est **verrouillée** (groupe d'espace et
+  *From the Brillouin-zone tool* compris) tant que **Change the lattice
+  parameters** n'est pas coché.
+- Étape 2, **contours** : sur n'importe quel plan, réglé comme dans l'outil
+  de zone de Brillouin — normale (hkl), k⊥ le long de cette normale
+  (*Through point*), rotation dans le plan, et une **fenêtre d'intégration
+  en k⊥** le long de la normale (hkl), pas du k_z absolu. **Show the plane in
+  the Brillouin zone...** montre où se trouve la coupe. **Surface de Fermi
+  3D** : à tourner à la souris, aussi dans sa propre fenêtre. Couleur (la
+  même pour plusieurs bandes, pour grouper les poches), opacité et
+  visibilité se règlent **bande par bande**. *Highlight bands* (`41-44` ou
+  `EF`) colore les bandes choisies le long du chemin.
+- Pour la surface de Fermi 3D, l'étape *Compare* est sautée. **Save … to
+  main panel** suit le choix de l'étape 1 : une coupe (qui garde les noms des
+  points de haute symétrie, affichés par la visionneuse de coupe — case
+  **High-symmetry points**), une carte k calculée pour les contours, et
+  grisé pour la surface 3D.
+- Toutes les fenêtres pas à pas **demandent avant de se fermer** et
+  **gardent leurs réglages** (**Restore defaults** pour repartir de zéro) ;
+  **Entrée dans un champ valide la valeur** sans jamais appuyer sur Next,
+  Close ni un autre bouton.
 
 **1. Le calcul.** **Open calculation...** lit, quel que soit le programme
 qui l'a écrit :
