@@ -46,6 +46,20 @@ as a publication figure.
 > standard emission energies as listed in the X-ray Data Booklet; that
 > spectrum is not part of this figure.)
 
+<p align="center">
+  <img src="docs/images/composer_colour_bar.png" width="96%"
+       alt="Example figure 1 in the figure composer, its colour bar being set">
+</p>
+<p align="center">
+  <img src="docs/images/main_window_advanced.png" width="50%"
+       alt="The main panel: the beamtime's datasets and the tools for the selected ones">
+  <img src="docs/images/map_k_contour.png" width="47%"
+       alt="A Fermi-surface map converted to momentum, in its viewer">
+</p>
+<p align="center"><sub>Example figure 1 in the figure composer (top); the
+main panel and a Fermi-surface map in momentum, in its viewer (bottom) --
+also on the synthetic demo data.</sub></p>
+
 Every step from the files to the finished figure is the program's own,
 and every step is plain Python that a script -- or an **AI agent** -- can
 run, without a screen:
