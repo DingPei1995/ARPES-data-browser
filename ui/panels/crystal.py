@@ -43,7 +43,7 @@ from tools.crystal import last_crystal
 from tools.crystal import structure as S
 from tools.processing.volume import Camera
 from ui.common.screen import fits_screen
-from ui.common.stepper import Step, Stepper
+from ui.common.stepper import Step, Stepper, guard_window
 
 __all__ = ["CrystalDialog", "CrystalView"]
 
@@ -638,7 +638,6 @@ class CrystalDialog(QDialog):
                                 self._step_export()], self,
                                finish_text="Close", show_index=False)
         self.stepper.setMinimumWidth(470)
-        self.stepper.finished.connect(self.accept)
         self.stepper.stepChanged.connect(self._step_shown)
         layout.addWidget(self.stepper, 2)
         right = QVBoxLayout()
@@ -652,6 +651,10 @@ class CrystalDialog(QDialog):
         views.addStretch(1)
         right.addLayout(views)
         layout.addLayout(right, 3)
+        # a CIF is not reopened by itself: start from the typed-in cell
+        self._not_remembered = ("src_cif",)
+        guard_window(self, self.stepper, "crystal_structure", "Crystal structure",
+                     close_on_finish=True)
         self.manual_changed()
 
     # ==================================================================

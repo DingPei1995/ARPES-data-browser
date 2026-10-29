@@ -248,11 +248,12 @@ def test_a_calculation_alone_goes_to_the_output(app, tmp_path):
     panels, problems = dialog.panels()
     assert len(panels) == 1 and not problems
     dialog.open_file(hr)
+    dialog.set_goal("contours")
     assert dialog.panel_boxes["contours"].isChecked()
     dialog.series_energies.setText("0")
     panels, problems = dialog.panels()
-    assert len(panels) == 2 and not problems
-    assert any(o.name.startswith("band") for o in panels[1].overlays)
+    assert len(panels) == 1 and not problems                 # the contours alone
+    assert any(o.name.startswith("band") for o in panels[0].overlays)
 
 
 def test_the_stacked_slices_view_draws_layers_and_a_mark(app):

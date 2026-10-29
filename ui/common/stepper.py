@@ -16,12 +16,22 @@ panel: every control lives on exactly one step, so a user who has never seen
 the tool cannot miss one, and one who knows it pages through in a few
 clicks (the step list on the left jumps straight to any step already
 reached).
+
+:func:`guard_window` keeps the work from being lost by a slip: closing the
+window (its last step's Close, which sits where Next was, the title bar's
+close button, or Esc) asks first, Enter never presses the last step's
+button, and what was set is kept and comes back the next time the window
+opens (with **Restore defaults** to start afresh).
 """
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QPushButton,
-                             QStackedWidget, QVBoxLayout, QWidget)
+import os
+
+from PyQt5.QtCore import QEvent, QObject, Qt, pyqtSignal
+from PyQt5.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QMessageBox,
+                             QPushButton, QStackedWidget, QVBoxLayout, QWidget)
+
+__all__ = ["Step", "Stepper", "guard_window", "confirm_close"]
 
 
 class Step:
@@ -85,6 +95,13 @@ class Stepper(QWidget):
         column.addWidget(self.pages, 1)
 
         nav = QHBoxLayout()
+        self.defaults_button = QPushButton("Restore defaults")
+        self.defaults_button.setAutoDefault(False)
+        self.defaults_button.setToolTip("Set every control back to how the "
+                                        "window first opens (what was kept "
+                                        "from last time is forgotten).")
+        self.defaults_button.setVisible(False)
+        nav.addWidget(self.defaults_button)
         self.progress = QLabel("")
         self.progress.setStyleSheet("color: #666;")
         nav.addWidget(self.progress)
@@ -93,6 +110,7 @@ class Stepper(QWidget):
         self.missing.setWordWrap(True)
         nav.addWidget(self.missing, 1)
         self.back_button = QPushButton("← Back")
+        self.back_button.setAutoDefault(False)
         self.back_button.clicked.connect(lambda: self.go(self.index - 1))
         nav.addWidget(self.back_button)
         self.next_button = QPushButton("Next →")
@@ -140,6 +158,10 @@ class Stepper(QWidget):
         missing = self.steps[self.index].ready() or ""
         last = self.index == len(self.steps) - 1
         self.next_button.setText(self.finish_text if last else "Next →")
+        # Enter never presses the last step's button (Close sits where Next
+        # was): only a click does
+        self.next_button.setDefault(not last)
+        self.next_button.setAutoDefault(not last)
         self.next_button.setEnabled(not missing)
         self.next_button.setToolTip(missing)
         self.missing.setText(missing)
@@ -152,3 +174,95 @@ class Stepper(QWidget):
             item.setFlags(flags | Qt.ItemIsEnabled if i <= self.reached
                           else flags & ~Qt.ItemIsEnabled)
         return missing
+
+    def retitle(self, index: int, title: str, text: str = None):
+        """Change step ``index``'s title (and what it says)."""
+        step = self.steps[index]
+        step.title = title
+        if text is not None:
+            step.text = text
+        self.index_list.item(index).setText(f"{index + 1}. {title}")
+        if index == self.index:
+            self.title.setText(f"Step {index + 1} of {len(self.steps)}: {title}")
+            self.text.setText(step.text)
+
+
+def confirm_close(parent, title: str) -> bool:
+    """Ask whether to close ``title``; "Keep working" is the default, so a
+    second hasty Enter keeps it open. (``ARPES_VIEWER_NO_CONFIRM`` set:
+    no question, for scripts.)"""
+    if os.environ.get("ARPES_VIEWER_NO_CONFIRM"):
+        return True
+    box = QMessageBox(QMessageBox.Question, title, f"Close “{title}”?",
+                      parent=parent)
+    box.setInformativeText("What you have set is kept: it comes back the next "
+                           "time you open this window.")
+    close = box.addButton("Close", QMessageBox.AcceptRole)
+    keep = box.addButton("Keep working", QMessageBox.RejectRole)
+    box.setDefaultButton(keep)
+    box.setEscapeButton(keep)
+    box.exec_()
+    return box.clickedButton() is close
+
+
+class _CloseGuard(QObject):
+    """Asks before ``window`` closes, and keeps its settings when it does."""
+
+    def __init__(self, window, key, title, extra):
+        super().__init__(window)
+        self.window = window
+        self.key = key
+        self.title = title
+        self.extra = extra
+        self.ask = True
+
+    def save(self):
+        from ui.common import remember
+
+        remember.save(self.window, self.key,
+                      self.extra() if callable(self.extra) else None)
+
+    def eventFilter(self, obj, event):
+        if obj is not self.window:
+            return False
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+            self.window.close()
+            return True
+        if event.type() == QEvent.Close and self.window.isVisible():
+            if self.ask and not confirm_close(self.window, self.title):
+                event.ignore()
+                return True
+            self.save()
+        return False
+
+
+def guard_window(window, stepper: Stepper, key: str, title: str, *,
+                 close_on_finish: bool = False, extra=None):
+    """Guard ``window`` (whose steps are ``stepper``) against closing by a
+    slip, and keep its settings under ``key`` between uses. With
+    ``close_on_finish`` the last step's button closes it (asking first).
+    ``extra()`` returns more to keep (a dict); the window reads it back
+    with ``remember.load(key).get("_extra")``. Returns True when settings
+    from last time were put back."""
+    from ui.common import remember
+
+    defaults = remember.snapshot(window)
+
+    def reset():
+        remember.apply(window, defaults)
+        remember.forget(key)
+        stepper.go(stepper.index)
+
+    restored = remember.restore(window, key)
+    stepper.defaults_button.setVisible(True)
+    stepper.defaults_button.clicked.connect(reset)
+    if restored:
+        stepper.defaults_button.setToolTip(
+            "These are your settings from last time. Click to set every "
+            "control back to how the window first opens.")
+    guard = _CloseGuard(window, key, title, extra)
+    window.installEventFilter(guard)
+    window._close_guard = guard
+    if close_on_finish:
+        stepper.finished.connect(window.close)
+    return restored

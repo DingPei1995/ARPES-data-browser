@@ -1455,7 +1455,7 @@ faite (0,8 et −50 meV).
   mesurées à chaque énergie avec les zones en pointillés (rangée du haut) et
   les contours calculés seuls (rangée du bas), colorés selon le poids choisi
   à l'étape 2 (en vert là où il dépasse la moitié).
-- **Calculation to list** fait du calcul un spectre (des lorentziennes de la
+- **Save calculation to main panel** fait du calcul un spectre (des lorentziennes de la
   largeur choisie), le long de la coupe comparée ou du chemin, qui s'ouvre
   donc dans les fenêtres de visualisation à côté des données ou s'en
   soustrait.

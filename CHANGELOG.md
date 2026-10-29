@@ -143,6 +143,65 @@ is done; `ui/common/stepper.py`).
   **Autosaves** (the old names are in their tooltips). The Datasets box puts
   **Rename**, **Save** and **Remove** on one row, and gains **Sum repeated
   scans...**.
+- **Calculated bands, as an experimentalist meets it** (`ui/panels/bands.py`,
+  `ui/panels/bandfinder.py`, `ui/panels/fsview.py`,
+  `tools/crystal/fermisurface.py`). Step 1 now starts from *what you want to
+  see* -- E-k dispersion, constant-energy contours or the 3D Fermi surface --
+  which sorts the file dialog, refuses a path-only file for contours with a
+  plain reason, retitles step 2 and ticks the matching outputs. **Which
+  file?** reads a whole folder by content and says what each file is, what it
+  can show, what it lacks, whether it is a standard file renamed or one file
+  split in pieces (and joins them). Files are recognised by content
+  everywhere, so a renamed `_hr.dat` or `.bxsf` opens; MATLAB `Ek_3D` `.mat`
+  grids (v5 and v7.3) read too. Long reads run off the GUI thread with a
+  progress bar and Cancel. Step 2 is the path, the calculated contours on a
+  chosen k_z plane, or a 3-D Fermi surface (marching tetrahedra, clipped
+  exactly at the zone faces, drawn without OpenGL, turned with the mouse)
+  that goes to the figure composer as a picture. *Highlight bands* (`41-44`
+  or `EF`) colours chosen bands as the theory side's scripts do. *Calculation
+  to list* is **Save calculation to main panel**, beside *To figure
+  composer*; a spectrum along a path keeps its high-symmetry points, shown by
+  the cut viewer along the top (a **High-symmetry points** box, ticked) and
+  by the figure composer on the k axis.
+- **Step-by-step windows ask before closing and remember**
+  (`ui/common/stepper.py`, `ui/common/remember.py`). The last step's Close
+  sat where Next had been, so a quick second click closed the window and lost
+  everything set. Now Close, the title bar and Esc ask first ("Keep working"
+  the default), Enter never presses Close, and every control is kept and put
+  back the next time the window opens (**Restore defaults** to start afresh)
+  -- in Calculated bands, Crystal structure, Tight-binding fit, Sum repeated
+  scans and Detector corrections.
+- **Calculated bands, as an experimentalist meets it** (`ui/panels/bands.py`,
+  `ui/panels/bandfinder.py`, `ui/panels/fsview.py`,
+  `tools/crystal/fermisurface.py`). Step 1 now starts from *what you want to
+  see* -- E-k dispersion, constant-energy contours or the 3D Fermi surface --
+  which sorts the file dialog, refuses a path-only file for contours with a
+  plain reason, retitles step 2 and ticks the matching outputs. **Which
+  file?** reads a whole folder by content and says what each file is, what it
+  can show, what it lacks, whether it is a standard file renamed or one file
+  split in pieces (and joins them). Files are recognised by content
+  everywhere, so a renamed `_hr.dat` or `.bxsf` opens; MATLAB `Ek_3D` `.mat`
+  grids (v5 and v7.3) read too. Long reads run off the GUI thread with a
+  progress bar and Cancel. Step 2 is the path, the calculated contours on a
+  chosen k_z plane, or a 3-D Fermi surface (marching tetrahedra, clipped
+  exactly at the zone faces, drawn without OpenGL, turned with the mouse,
+  also in a large window of its own) that goes to the figure composer as a
+  picture. The volume viewer's 3-D projection was not reused: it shades one
+  data cube at one level, where a Fermi surface is several bands, each its
+  own colour, cut at the zone with its points named. *Highlight bands*
+  (`41-44` or `EF`) colours chosen bands as the theory side's scripts do.
+  *Calculation to list* is **Save calculation to main panel**, beside *To
+  figure composer*; a spectrum along a path keeps its high-symmetry points,
+  shown by the cut viewer along the top (a **High-symmetry points** box,
+  ticked) and by the figure composer on the k axis.
+- **Step-by-step windows ask before closing and remember**
+  (`ui/common/stepper.py`, `ui/common/remember.py`). The last step's Close
+  sat where Next had been, so a quick second click closed the window and lost
+  everything set. Now Close, the title bar and Esc ask first ("Keep working"
+  the default), Enter never presses Close, and every control is kept and put
+  back the next time the window opens (**Restore defaults** to start afresh)
+  -- in Calculated bands, Crystal structure, Tight-binding fit, Sum repeated
+  scans and Detector corrections.
 - **Calculated bands: the FPLO + Wannier tools' files, and the calculation
   alone to the output** (`tools/crystal/bandfiles.py`). A collaborator's
   LaCrGe3 calculation (FPLO, its Wannier Hamiltonian evaluated by

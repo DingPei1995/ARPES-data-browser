@@ -1084,46 +1084,80 @@ E-k 谱**。拖动红色靶标即可查看另一点的谱。在面板上右键�
 选中要比较的数据——k-map、动量空间的 kz map 和动量空间的 cut——或者什么都不选，
 只看计算结果。共四步。
 
-**1. 计算结果。** **Open calculation...** 读取以下文件，无论由哪个程序写出：
+与所有分步窗口（Crystal structure、Tight-binding fit、Sum repeated scans、Detector
+corrections）一样，它**关闭前会先确认**——最后一步的 Close 正好在原来 Next 的位置，
+手快多点一下也不会丢掉工作；标题栏的关闭按钮和 Esc 同样会确认，回车键不会触发
+Close。所设的参数会**保留**：下次打开时窗口恢复原样（左下角 **Restore defaults**
+可恢复默认）。
 
-| 文件 | 写出程序 | 内容 |
-|---|---|---|
-| `.bxsf`（XCrySDen 能带网格） | Wien2k、Quantum ESPRESSO、VASP、Wannier90 | 整个布里渊区内的能带，插值 |
-| `_hr.dat`（及旁边的 `.win`） | Wannier90、任何紧束缚模型 | 哈密顿量，在每个 k 点精确对角化；轨道权重 |
-| `_band.dat`（及 `labelinfo`） | Wannier90 | 沿路径的能带 |
-| `.spaghetti_ene`（及 `.klist_band`） | Wien2k | 沿路径的能带 |
-| `EIGENVAL`（及 `POSCAR`、`PROCAR`） | VASP | 沿路径或网格上的能带；原子与轨道权重 |
-| `band.dat`、`Eigenvalue.dat`（及其 `KPOINTS`、`orbital.dat`） | FPLO + Wannier 工具（`k_path.exe`、`H.exe`、`plot.exe`） | 沿路径的能带（第三列为权重），或——每行 `k1 k2 k3 E1 E2 …` 的 `band.dat`——三维网格上的能带 |
-| `wannier90_hr_fplo.dat`（及 `KPOINTS`、`wannier_name_center.txt`） | FPLO 的 Wannier 哈密顿量 | 同 `_hr.dat`；按 Wannier 函数、按壳层（"Cr 3d"）和按自旋的权重 |
+**1. 计算结果。** 先选**想看什么**：
 
-"整个布里渊区"的计算结果可以在任何地方切：沿任意实测 cut、在某光子能量对应的
-k_z 上、在任意能量画等能线。"沿路径"的结果只能沿该路径画。*Set E_F myself* 覆盖
-文件中的费米能级；*bxsf k units* 用于不含 2π 写出的网格。**空间群**决定布里渊区中
-各点的名称；它由晶胞形状猜测——请设为晶体自己的空间群（或从布里渊区工具获取）。
+- **E–k dispersion**（色散）——沿路径的能带，或沿实测 cut 的能带。任何计算结果都行。
+- **Constant-energy contours**（等能线）——与 k-map（费米面 map）比较。
+- **3D Fermi surface**（三维费米面）。
 
-FPLO 工具的文件名是通用的，因此按内容识别。其 `KPOINTS`（第一行为"段数 每段点数"，
-然后是正、倒格矢，再是每段两端点及 `! 标签`）给出晶胞和标签——请放在 `band.dat`
-旁边。三维 `band.dat` 很大（101³ 网格、136 条能带约 2 GB）：分块读取（约每 GB
-30 秒），只保留 *Big grids: keep bands from … to …* 范围内（相对 E_F）的能带；旁边
-没有 `KPOINTS` 时，晶胞取自布里渊区工具的晶体。
+后两者需要**整个布里渊区内**的能带（能带网格或哈密顿量）；只沿路径的能带给不出，
+窗口会直接说明而不是继续往下走。这一选择也决定 **Open calculation...** 文件列表的
+排序：第一个过滤器只显示能给出所需结果的文件类型。若选中了 k-map，默认选等能线；
+选中了 cut，默认选色散。文件也可以直接拖进窗口；**Reopen …** 重新打开上次的文件。
 
-**单独看计算结果。** 什么都不选，打开计算结果后用 Next 直接翻过第 2、3 步：第 4 步
-即可输出单独的沿路径能带，以及（网格或哈密顿量时）在第 3 步所设 k_z 平面上
-（Γ 平面为 0，布里渊区顶面为 π/c）、各 series 能量处的 *Calculated contours alone*
-——即画出布里渊区的费米面切片。
+| 文件 | 写出程序 | 内容 | 能显示 |
+|---|---|---|---|
+| `.bxsf`（XCrySDen 能带网格） | Wien2k、Quantum ESPRESSO、VASP、Wannier90 | 整个布里渊区内的能带，插值 | 三者都可 |
+| `_hr.dat`（及旁边的 `.win`） | Wannier90、任何紧束缚模型 | 哈密顿量，在每个 k 点精确对角化；轨道权重 | 三者都可 |
+| `wannier90_hr_fplo.dat`（及 `KPOINTS`、`wannier_name_center.txt`） | FPLO 的 Wannier 哈密顿量 | 同 `_hr.dat`；按 Wannier 函数、壳层（"Cr 3d"）和自旋的权重 | 三者都可 |
+| 每行 `k1 k2 k3 E1 E2 …` 的 `band.dat`（及 `KPOINTS`） | FPLO + Wannier 工具 | 三维能带网格 | 三者都可 |
+| 含 `Ek_3D` 的 MATLAB `.mat`（及 `KPOINTS`） | 理论方的 MATLAB，由上述三维 `band.dat` 生成 | 三维能带网格 | 三者都可 |
+| `EIGENVAL`（及 `POSCAR`、`PROCAR`） | VASP | 沿路径或网格上的能带；原子与轨道权重 | 网格时三者都可 |
+| `_band.dat`（及 `labelinfo`） | Wannier90 | 沿路径的能带 | 色散 |
+| `.spaghetti_ene`（及 `.klist_band`） | Wien2k | 沿路径的能带 | 色散 |
+| `band.dat`、`Eigenvalue.dat`（及 `KPOINTS`、`orbital.dat`） | FPLO + Wannier 工具（`k_path.exe`、`H.exe`、`plot.exe`） | 沿路径的能带（第三列为权重） | 色散 |
+
+文件按**内容**而不是文件名识别：途中被改了名的标准文件（例如其实是 `_hr.dat` 的
+`hamiltonian.txt`）照样能打开。FPLO 工具的 `KPOINTS`（第一行为"段数 每段点数"，然后
+是正、倒格矢，再是每段两端点及 `! 标签`）给出晶胞和标签——请放在能带文件旁边；没有
+时晶胞取自布里渊区工具的晶体。长时间读取（101³ 网格、136 条能带的三维 `band.dat`
+约 2 GB；大的 `_hr.dat`）会显示带 Cancel 的**进度条**；大网格只保留 E_F 附近的能带
+（*Reading options ▸ Big grids*）。
+
+**Which file? ...**：不知道一堆文件里哪个是计算结果时，选择理论方发来的文件夹，
+其中每个文件都会被读取并用通俗的话说明——它是什么、能显示什么、读取还缺什么（晶胞、
+标签）、是否是改了名的标准文件，或是被**拆成几段**的同一个文件（`band.dat.1、
+band.dat.2`，`band_part1.dat …`，`xaa、xab`——为通过上传大小限制而拆分）。绿色行
+可以直接打开得到所需结果；**Join the pieces, then open** 把各段在旁边合并回一个文件
+再打开。
+
+*Reading options ▸*（通常不用改）：*Set E_F myself* 覆盖文件中的费米能级；
+*bxsf k units* 用于不含 2π 写出的网格；*Big grids: keep bands from … to …*（相对
+E_F）。**空间群**决定布里渊区中各点的名称；它由晶胞形状猜测——请设为晶体自己的
+空间群（或从布里渊区工具获取）。
 
 **其他格式的计算结果。** 理论方给的文件不属于以上任何一种时，最稳妥的做法是请对方
 提供（或自己转换为）标准格式之一：整个布里渊区用 `.bxsf`，哈密顿量用 `_hr.dat` +
 `.win`，路径用两列的 `_band.dat`（距离、能量；能带之间空一行）加
-`_band.labelinfo.dat`。对方用来画图的 MATLAB 或 Python 脚本会说明格式：哪几列、
-k 的排列顺序、k 的单位（含不含 2π、分数坐标还是笛卡尔坐标）、能量是否已减去 E_F。
+`_band.labelinfo.dat`。需要向对方确认：哪几列、k 的排列顺序、k 的单位（含不含 2π、
+分数坐标还是笛卡尔坐标）、能量是否已减去 E_F。
 
-**2. 沿路径。** 计算能带穿过高对称点（`Γ-M-K-Γ-A-L-H-A`；`G` 代表 Γ，`|` 表示
-跳跃），画在**沿同一路径的测量数据**上，后者由选中的 map 拼成：每段面内路径取自在
-其 k_z 平面上测量的 map（Γ-M-K-Γ 取自 Γ 平面 map，A-L-H-A 取自布里渊区顶面的
-map），Γ-A 取自 kz map。每张 map 的 k_z 由光子能量和内势 V0 算出；必要时在表格中
-修改，取消勾选可排除某张 map，并给出晶体 a 轴在 map 上的方位角。map 达不到某点时，
-使用其对称等价点。**Weight** 画"胖能带"：线宽为所选轨道的权重。
+**2. 计算结果的样子**——取决于第 1 步的选择：
+
+- **Along a path**（色散）。计算能带穿过高对称点（`Γ-M-K-Γ-A-L-H-A`；`G` 代表 Γ，
+  `|` 表示跳跃），画在**沿同一路径的测量数据**上，后者由选中的 map 拼成：每段面内
+  路径取自在其 k_z 平面上测量的 map（Γ-M-K-Γ 取自 Γ 平面 map，A-L-H-A 取自布里渊区
+  顶面的 map），Γ-A 取自 kz map。每张 map 的 k_z 由光子能量和内势 V0 算出；必要时在
+  表格中修改，取消勾选可排除某张 map，并给出晶体 a 轴在 map 上的方位角。
+  **Highlight bands** 把所选能带画粗并着色、其余为灰色——填文件中的能带编号
+  （`41-44`），或填 `EF` 表示所有穿过 E_F 的能带（第 1 步会列出它们）。
+- **Constant-energy contours**（等能线）。某一能量、某一 k_z 平面（**Γ plane** /
+  **zone top** 按钮）上的计算等能线，每条能带一种颜色，布里渊区为灰色：即计算的
+  费米面 map。
+- **3D Fermi surface**（三维费米面）。能带穿过该能量的曲面，限制在第一布里渊区内，
+  每条能带一种颜色，并画出布里渊区棱边和高对称点。拖动旋转，滚轮缩放；取消勾选可
+  隐藏某条能带；*Detail* 在速度与平滑之间取舍（哈密顿量先在网格上对角化，有进度条）。
+  **Open in its own window** 在单独的大窗口中显示（可 *Save picture*）；能量、精细度和
+  能带仍在这里设置。
+
+**Colour by orbital weight** 沿路径画"胖能带"，或在所选轨道权重超过一半处把等能线
+分段着色。
 
 ![沿路径](images/bands_path.png)
 
@@ -1137,16 +1171,17 @@ map），Γ-A 取自 kz map。每张 map 的 k_z 由光子能量和内势 V0 算
 
 ![与 cut 比较](images/bands_compare.png)
 
-**4. 输出。**
+**4. 输出。** 没有选中任何测量时，第 3 步会说明这一点：直接按 Next。
 
-- **To figure composer...** 生成所勾选的面板：沿路径的测量及其上的计算能带、单独
-  的计算能带（坐标轴上标出各点名称）、所比较的 cut 或 map 及其计算结果、单独的计算
-  等能线（不需要 map），以及——
-  勾选 **Constant-energy series at** 时，对所比较的 k-map——各能量的实测 map 并以
-  虚线画出布里渊区（上排），和单独的计算等能线（下排），按第 2 步所选的权重着色
-  （权重超过一半的部分为绿色）。
-- **Calculation to list** 把计算结果做成一张谱（指定宽度的洛伦兹线型），沿所比较的
-  cut 或沿路径，于是可以在查看窗口中与数据并排打开，或从数据中减去。
+- **To figure composer...** 生成所勾选的面板——默认按第 1 步的选择勾选：沿路径的
+  测量及其上的计算能带、单独的计算能带（坐标轴上标出各点名称）、所比较的 cut 或 map
+  及其计算结果、在所列能量处单独的计算等能线（不需要 map）、第 2 步画出的三维费米面，
+  以及——勾选 **Constant-energy series of the compared map** 时——各能量的实测 map
+  并以虚线画出布里渊区（上排）和计算等能线（下排）。
+- **Save calculation to main panel**（与上一个按钮同一行）把计算结果做成一张谱（指定
+  宽度的洛伦兹线型），沿所比较的 cut 或沿路径，作为新的 cut 放进主面板的列表。沿路径的
+  谱会保留高对称点：cut 查看窗口在顶部显示各点名称并在每点画虚线（**High-symmetry
+  points**，默认勾选；k 数值仍在底部坐标轴），作图器则把它们标在 k 轴上。
 
 ![输出](images/bands_output.png)
 
