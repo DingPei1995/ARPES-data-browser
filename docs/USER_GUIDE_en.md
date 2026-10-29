@@ -15,7 +15,9 @@ window and the viewers), then the **Basic**, **Advanced** and
 **Calculation** tabs, then figures — ending with two figures built step
 by step in the figure composer. The technical
 background for each step (formulas, test results, design choices) is in the
-[README](../README.md) and [CHANGELOG](../CHANGELOG.md).
+technical references beside the code — [reading data](../loader/README.md),
+[the windows](../ui/README.md), [analysis](../tools/README.md) — and in the
+[CHANGELOG](../CHANGELOG.md).
 
 Every screenshot was taken from the running program, using the synthetic
 data written by `devtools/demo_data.py`, so you can follow along without a
@@ -1776,8 +1778,9 @@ data as shown and the measurement it came from.
   you from the Fermi fit; if you shifted the axis some other way, type the
   kinetic energy of E_F (photon energy − work function) into *Energy offset*.
 - **A file is misread** — choose the reader explicitly in the loader, and see
-  *Assumptions worth knowing about* in the README (axis order in SOLEIL
-  files).
+  *Assumptions worth knowing about* in the
+  [reading-data reference](../loader/README.md#assumptions-worth-knowing-about)
+  (axis order in SOLEIL files).
 - **Dragging the cursor on a big map is sluggish** — a map read lazily from
   its file re-slices in about 0.1 s per window, so the other windows wait for
   the mouse to pause. Once the map has been read into memory it follows live.

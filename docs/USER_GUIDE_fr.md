@@ -15,8 +15,10 @@ chargement, fenêtre principale et fenêtres de visualisation), puis les
 onglets **Basic**, **Advanced** et **Calculation**, puis les figures — pour
 finir par deux figures construites pas à pas dans le composeur de figures.
 Le contexte technique de chaque étape (formules, résultats des tests, choix
-de conception) se trouve dans le [README](../README.md) et le
-[CHANGELOG](../CHANGELOG.md), en anglais.
+de conception) se trouve dans les références techniques à côté du code —
+[lecture des données](../loader/README.md), [les fenêtres](../ui/README.md),
+[analyse](../tools/README.md) — et dans le [CHANGELOG](../CHANGELOG.md), en
+anglais.
 
 Toutes les captures ont été prises sur le programme en fonctionnement, avec
 les données synthétiques écrites par `devtools/demo_data.py` : vous pouvez
@@ -1868,8 +1870,9 @@ qu'affichées et la mesure dont elles proviennent.
   l'axe autrement, saisissez dans *Energy offset* l'énergie cinétique de E_F
   (énergie de photon − travail de sortie).
 - **Un fichier est mal lu** — choisissez explicitement le lecteur dans la
-  fenêtre de chargement, et voyez *Assumptions worth knowing about* dans le
-  README (ordre des axes dans les fichiers SOLEIL).
+  fenêtre de chargement, et voyez *Assumptions worth knowing about* dans la
+  [référence technique de la lecture](../loader/README.md#assumptions-worth-knowing-about)
+  (ordre des axes dans les fichiers SOLEIL).
 - **Le curseur est lent sur une grande carte** — une carte lue à la demande
   dans son fichier se recoupe en environ 0,1 s par fenêtre, si bien que les
   autres fenêtres attendent que la souris s'arrête. Une fois la carte lue en
