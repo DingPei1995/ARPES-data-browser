@@ -1,6 +1,6 @@
 # How to cite ARPES viewer: read by GitHub ("Cite this repository") and by
-# Zenodo when it archives a release. Add the Zenodo concept DOI under
-# `identifiers` once the first archived release has one.
+# Zenodo when it archives a release. The DOI is Zenodo's concept DOI: it
+# stands for all versions and resolves to the latest.
 cff-version: 1.2.0
 message: "If you use ARPES viewer for a paper, please cite it as below."
 type: software
@@ -16,6 +16,11 @@ authors:
     orcid: "https://orcid.org/0000-0002-3995-0690"
 version: 1.2.2
 date-released: 2026-10-29
+doi: 10.5281/zenodo.23771647
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23771647
+    description: "Concept DOI: all versions, resolving to the latest"
 repository-code: "https://github.com/DingPei1995/ARPES-data-browser"
 url: "https://pypi.org/project/arpes-viewer/"
 keywords:

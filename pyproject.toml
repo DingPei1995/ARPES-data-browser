@@ -32,6 +32,7 @@ classifiers = [
 Homepage = "https://github.com/DingPei1995/ARPES-data-browser"
 Documentation = "https://github.com/DingPei1995/ARPES-data-browser/blob/main/docs/USER_GUIDE_en.md"
 Issues = "https://github.com/DingPei1995/ARPES-data-browser/issues"
+DOI = "https://doi.org/10.5281/zenodo.23771647"
 Changelog = "https://github.com/DingPei1995/ARPES-data-browser/blob/main/CHANGELOG.md"
 
 [project.gui-scripts]

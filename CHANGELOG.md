@@ -27,7 +27,9 @@ reference to cite. No change to what the program does.
 - **A reference to cite.** `CITATION.cff` (with the author's ORCID) gives
   the reference for GitHub's *Cite this repository* and for Zenodo, which
   archives each release from this one on; a test keeps its version and date
-  with `version.py`.
+  with `version.py`. Zenodo's concept DOI, standing for all versions, is
+  [10.5281/zenodo.23771647](https://doi.org/10.5281/zenodo.23771647); the
+  README shows it and asks papers to cite it.
 
 ---
 

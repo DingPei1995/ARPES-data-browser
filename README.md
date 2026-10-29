@@ -1,5 +1,7 @@
 # ARPES viewer
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23771647.svg)](https://doi.org/10.5281/zenodo.23771647)
+
 **Version 1.2.2** (last modified 29 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `arpes_viewer/version.py` and is shown in the main window's title bar and at its foot,
@@ -12,11 +14,11 @@ reporting a bug, and upload the error log with the report ([below](#bug-reports)
 > New and updated loaders cover data from **public large-scale facilities**
 > (synchrotrons and similar user facilities) only -- formats of individual
 > laboratories' own set-ups are not supported. If you use this program for
-> a paper on ARPES experiments, please cite this repository in its
-> references (<https://github.com/DingPei1995/ARPES-data-browser>; GitHub's
-> *Cite this repository* gives the reference). If you write a paper related
-> to AI that uses this program or its code, please discuss it with the
-> author by e-mail first. For collaborations, or
+> a paper on ARPES experiments, please cite it in its references:
+> Ding Pei, *ARPES viewer*, Zenodo, <https://doi.org/10.5281/zenodo.23771647>
+> (GitHub's *Cite this repository* gives the reference in other formats).
+> If you write a paper related to AI that uses this program or its code,
+> please discuss it with the author by e-mail first. For collaborations, or
 > questions about the details, contact
 > [ding.pei@synchrotron-soleil.fr](mailto:ding.pei@synchrotron-soleil.fr).
 >
