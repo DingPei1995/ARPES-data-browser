@@ -2,6 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23771647.svg)](https://doi.org/10.5281/zenodo.23771647)
 [![PyPI version](https://img.shields.io/pypi/v/arpes-viewer.svg)](https://pypi.org/project/arpes-viewer/)
+[![User Guide](https://img.shields.io/badge/📖_User_Guide-English-blue?style=flat-square)](https://github.com/DingPei1995/ARPES-data-browser/blob/main/docs/USER_GUIDE_en.md)
 
 **Version 1.2.2** (last modified 29 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
