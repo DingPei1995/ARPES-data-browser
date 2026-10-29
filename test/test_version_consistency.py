@@ -8,8 +8,7 @@ import datetime
 import os
 import re
 
-import version
-
+from arpes_viewer import version
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

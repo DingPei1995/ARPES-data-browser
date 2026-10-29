@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 
-from tools.runtime import console
+from arpes_viewer.tools.runtime import console
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -53,7 +53,7 @@ def test_off_windows_or_from_a_shell_the_console_stays(monkeypatch):
 def test_errors_are_kept_beside_the_program_and_only_errors(tmp_path):
     import io
 
-    from tools.runtime import errorlog
+    from arpes_viewer.tools.runtime import errorlog
 
     console_out = io.StringIO()
     tee = errorlog.ErrorTee(console_out, str(tmp_path), "1.2.1")
@@ -74,7 +74,7 @@ def test_an_error_in_a_slot_is_logged_and_the_program_carries_on(tmp_path):
         "from PyQt5.QtWidgets import QApplication, QPushButton\n"
         "from PyQt5.QtCore import QTimer\n"
         "app = QApplication([])\n"
-        "from ui.common import crashguard\n"
+        "from arpes_viewer.ui.common import crashguard\n"
         f"crashguard.install({str(tmp_path)!r}, 'test')\n"
         "crashguard._say = lambda *a: None\n"
         "b = QPushButton()\n"
@@ -96,8 +96,8 @@ def test_an_error_in_a_slot_is_logged_and_the_program_carries_on(tmp_path):
 def test_the_panel_foot_copies_the_newest_error_log(tmp_path, monkeypatch):
     from PyQt5.QtWidgets import QApplication
 
-    from tools.runtime import errorlog
-    from ui.launcher.main_window import about_link
+    from arpes_viewer.tools.runtime import errorlog
+    from arpes_viewer.ui.launcher.main_window import about_link
 
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(errorlog, "program_folder", lambda: str(tmp_path))

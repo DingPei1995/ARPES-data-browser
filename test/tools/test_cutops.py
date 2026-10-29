@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from tools.processing import cutops as C
+from arpes_viewer.tools.processing import cutops as C
 
 
 ANG = ("Angle (deg)", "Energy (eV)")

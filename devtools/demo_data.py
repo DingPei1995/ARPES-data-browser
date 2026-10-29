@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from loader.nxs_file import save_dataset            # noqa: E402
+from arpes_viewer.loader.nxs_file import save_dataset            # noqa: E402
 
 A_K = 0.512317          # k [A^-1] = A_K sqrt(E_kin [eV]) sin(angle)
 A_KZ = 0.262466         # k^2 [A^-2] = A_KZ E [eV]
@@ -266,7 +266,7 @@ def hoppings(scale: float = 1.0, shift: float = 0.0):
 
 
 def bulk_model(scale: float = 1.0, shift: float = 0.0):
-    from tools.crystal.bands import WannierModel
+    from arpes_viewer.tools.crystal.bands import WannierModel
 
     table = hoppings(scale, shift)
     R = np.array(list(table), dtype=float)
@@ -473,7 +473,7 @@ def write_calculation(folder: str) -> "list[str]":
     """The "calculation" of the crystal, as a theory group would send it:
     a Wannier90 Hamiltonian (``demo_calc_hr.dat`` + ``demo_calc.win``) and
     the same bands on a grid (``demo_calc.bxsf``); and the crystal's CIF."""
-    from tools.crystal import bandfiles
+    from arpes_viewer.tools.crystal import bandfiles
 
     os.makedirs(folder, exist_ok=True)
     hr = os.path.join(folder, "demo_calc_hr.dat")

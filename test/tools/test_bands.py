@@ -7,10 +7,10 @@ import os
 import numpy as np
 import pytest
 
-from tools.crystal import bandfiles
-from tools.crystal import bands as B
-from tools.crystal import compare as C
-from tools.crystal.lattice import LatticeParams
+from arpes_viewer.tools.crystal import bandfiles
+from arpes_viewer.tools.crystal import bands as B
+from arpes_viewer.tools.crystal import compare as C
+from arpes_viewer.tools.crystal.lattice import LatticeParams
 
 A, CC = 3.3, 6.0
 LATTICE = np.array([[A, 0, 0], [-A / 2, A * np.sqrt(3) / 2, 0], [0, 0, CC]])
@@ -268,7 +268,7 @@ def test_the_node_line_follows_one_crossing_through_kz():
 
 
 def test_two_fitted_branches_cross_at_the_dirac_point():
-    from tools.spectra import dispersion as DISP
+    from arpes_viewer.tools.spectra import dispersion as DISP
 
     rng = np.random.default_rng(3)
     k = np.linspace(0.3, 0.7, 30)
@@ -283,7 +283,7 @@ def test_two_fitted_branches_cross_at_the_dirac_point():
 
 
 def test_a_collapsed_peak_error_does_not_break_the_fit():
-    from tools.spectra import dispersion as DISP
+    from arpes_viewer.tools.spectra import dispersion as DISP
 
     k = np.linspace(0, 1, 10)
     errors = np.full(10, 0.01)
@@ -293,7 +293,7 @@ def test_a_collapsed_peak_error_does_not_break_the_fit():
 
 
 def test_a_stack_of_slices_averages_its_window():
-    from tools.processing import volume as V
+    from arpes_viewer.tools.processing import volume as V
 
     x = np.linspace(-1, 1, 21)
     y = np.linspace(-1, 1, 11)

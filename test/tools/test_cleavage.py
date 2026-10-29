@@ -10,8 +10,8 @@ plausible.
 import numpy as np
 import pytest
 
-from tools.crystal import cleavage
-from tools.crystal.lattice import LatticeParams
+from arpes_viewer.tools.crystal import cleavage
+from arpes_viewer.tools.crystal.lattice import LatticeParams
 
 
 def cubic(a, space_group):

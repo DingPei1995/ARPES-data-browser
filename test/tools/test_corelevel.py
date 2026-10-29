@@ -9,8 +9,8 @@ import os
 import numpy as np
 import pytest
 
-from tools.spectra import corelevel as CL
-from tools.spectra.corelevel_table import BINDING_ENERGIES, ELEMENTS
+from arpes_viewer.tools.spectra import corelevel as CL
+from arpes_viewer.tools.spectra.corelevel_table import BINDING_ENERGIES, ELEMENTS
 
 HV, W = 600.0, 4.5
 #: (E_B, height) of the synthetic lines: Nb 3d, Nb 4p, Nb 4s, S 2p,
@@ -298,7 +298,7 @@ def app():
 
 
 def _cut_data():
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     angles, ekin, frame = _spectrum()
     return MemoryData("cut", (angles, ekin), frame,
                       {"x": "Angle (deg)", "y": "Kinetic energy (eV)"},
@@ -308,7 +308,7 @@ def _cut_data():
 
 
 def test_the_dialogs_and_window_run_end_to_end(app):
-    from ui.panels import corelevel as UC
+    from arpes_viewer.ui.panels import corelevel as UC
 
     data = _cut_data()
     energy, intensity, label = UC.cut_edc(data)
@@ -340,8 +340,8 @@ def test_the_dialogs_and_window_run_end_to_end(app):
 
 
 def test_the_shift_button_moves_the_reference(app):
-    from ui.panels import corelevel as UC
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.panels import corelevel as UC
+    from arpes_viewer.ui.viewers.widgets import MemoryData
 
     angles, ekin, frame = _spectrum(shift=1.2)
     data = MemoryData("cut", (angles, ekin), frame,
@@ -360,7 +360,7 @@ def test_the_shift_button_moves_the_reference(app):
 
 
 def test_the_window_draws_log_counts_and_takes_peaks_by_hand(app):
-    from ui.panels import corelevel as UC
+    from arpes_viewer.ui.panels import corelevel as UC
 
     be, counts = _strong_and_weak()
     window = UC.CoreLevelWindow(
@@ -409,7 +409,7 @@ def test_the_window_draws_log_counts_and_takes_peaks_by_hand(app):
 
 
 def _strong_and_weak_window():
-    from ui.panels import corelevel as UC
+    from arpes_viewer.ui.panels import corelevel as UC
 
     be, counts = _strong_and_weak()
     return UC.CoreLevelWindow(
@@ -492,7 +492,7 @@ def test_a_zoom_window_places_a_shoulder(app):
 
 
 def test_the_list_menu_offers_the_check_for_one_cut():
-    from ui.launcher.list_actions import availability
+    from arpes_viewer.ui.launcher.list_actions import availability
     assert availability("corelevel", [("c", "Cut")])[0]
     assert not availability("corelevel", [("m", "Map")])[0]
     assert not availability("corelevel", [("c", "Cut"), ("d", "Cut")])[0]

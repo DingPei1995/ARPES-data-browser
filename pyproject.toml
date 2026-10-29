@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arpes-viewer"
+dynamic = ["version"]
+description = "Browse, convert, analyse and compare ARPES data with calculations, and lay the results out as publication figures."
+readme = "README.md"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE.md", "NOTICE"]
+authors = [{ name = "Ding Pei" }]
+requires-python = ">=3.9"
+dependencies = [
+    "PyQt5>=5.12",
+    "pyqtgraph>=0.12",
+    "numpy>=1.20",
+    "scipy>=1.6",
+    "h5py>=3.0",
+]
+keywords = ["ARPES", "photoemission", "synchrotron", "band structure", "Fermi surface"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+[project.urls]
+Homepage = "https://github.com/DingPei1995/ARPES-data-browser"
+Documentation = "https://github.com/DingPei1995/ARPES-data-browser/blob/main/docs/USER_GUIDE_en.md"
+Issues = "https://github.com/DingPei1995/ARPES-data-browser/issues"
+Changelog = "https://github.com/DingPei1995/ARPES-data-browser/blob/main/CHANGELOG.md"
+
+[project.gui-scripts]
+arpes-viewer = "arpes_viewer.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "arpes_viewer.version.VERSION" }
+
+[tool.setuptools.packages.find]
+include = ["arpes_viewer*"]
+
+[tool.setuptools.package-data]
+"*" = ["README.md"]

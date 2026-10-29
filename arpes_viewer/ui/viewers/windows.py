@@ -1,0 +1,6711 @@
+"""
+ui/viewers/windows.py
+=====================
+The per-file viewer windows. The main ``ARPES_viewer`` window is only a
+launcher -- a file list plus metadata -- and double-clicking a file opens
+one of these on top of it:
+
+- :class:`SpatialScanWindow` (``spem_4d`` / ``spem_1d``): the spatial map
+  and, beside it, the E-vs-k spectrum at the cursor.
+- :class:`CutWindow` (``cut``): the single E-vs-k spectrum.
+- :class:`ContourWindow` (``map``): the constant-energy contour, which is
+  what a deflector map is normally opened on. Its two buttons open the two
+  orthogonal cuts through the cube, each in its own :class:`MapCutWindow`.
+
+Why separate windows rather than the stacked pages this replaced: one
+window per thing you are looking at means several files (or several cuts
+of one file) can be on screen at once and arranged however you like, which
+a single fixed layout cannot do.
+
+Exporting belongs to the panel rather than to the window -- a window can
+hold two pictures -- so it lives in each panel's own right-click menu (see
+``ExportDialog`` in ``ui.viewers.widgets``): the data as ``.nxs``, the
+picture as an image at a chosen size, and the axes alone as an ``.eps`` to
+edit in Illustrator. The launcher keeps the metadata table and its CSV
+export, since metadata belongs to the file rather than to any one view.
+"""
+from __future__ import annotations
+
+import os
+
+import numpy as np
+import pyqtgraph as pg
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QPainterPath
+from arpes_viewer.ui.common import jobs
+from arpes_viewer.ui.common.screen import fits_screen
+from arpes_viewer.ui.viewers.functions_menu import FunctionsMenuMixin
+from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
+                              QLabel, QPushButton, QFileDialog, QMessageBox,
+                              QComboBox, QCheckBox, QDialog, QFormLayout,
+                              QDoubleSpinBox, QSpinBox, QDialogButtonBox,
+                              QApplication, QLineEdit, QInputDialog, QMenu,
+                              QTableWidget, QTableWidgetItem, QHeaderView,
+                              QScrollArea, QFrame, QGraphicsPathItem,
+                              QTabWidget, QRadioButton, QGroupBox,
+                              QProgressDialog)
+
+from arpes_viewer.tools.processing.analysis import arbitrary_cut, fit_feature, fs_correction
+from arpes_viewer.tools.spectra.fermi import (PARAMETERS, PARAMETER_LABELS, K_B, levels_along,
+                                 initial_guess, fermi_edge_model,
+                                 fit_fermi_edge, fit_channels, divide_fermi)
+from arpes_viewer.tools.processing.dataops import (truncate, self_normalize, compress,
+                                      ARRAY_AXES, CONSTRUCTOR_AXES,
+                                      normalise_presets)
+from arpes_viewer.loader.cubecache import CubeCache
+from arpes_viewer.loader.nxs_file import CUBE_KINDS, CURVE_KINDS, MOMENTUM_KINDS, energy_slot
+
+from arpes_viewer.ui.viewers.cursorlink import CursorLink
+from arpes_viewer.ui.viewers.widgets import (SpatialImageView, FrameImageView, ImagePanel,
+                                FrameWindow, KMapData, MemoryData,
+                                _SliceControl, ViewOptionsBar, apply_colormap,
+                                separator, section_label, scroll_strip,
+                                strip_stock_menu, add_button, ButtonRow,
+                                AXIS_COLORS, COLORMAP_NAMES)
+
+
+#: Windows that must stay open after the window that made them has closed:
+#: a popped-out snapshot, or a viewer opened for a computed dataset with no
+#: launcher to hold it. Without this their only reference would be a list on
+#: the closed window, and when Python's cycle collector reclaimed that
+#: window it would take a still-visible window with it -- which pyqtgraph
+#: does not survive (its named ViewBoxes unregister from a ``destroyed``
+#: callback that runs mid-collection and crashes the interpreter).
+_DETACHED = []
+
+
+def keep_alive(window):
+    """Hold ``window`` until it is closed; see :data:`_DETACHED`."""
+    if window in _DETACHED:
+        return window
+    _DETACHED.append(window)
+    signal = getattr(window, "closed", None)
+    if signal is not None:
+        signal.connect(lambda *_: _DETACHED.remove(window)
+                       if window in _DETACHED else None)
+    return window
+
+
+def close_child_windows(owner):
+    """Close every window Qt parents to ``owner`` that is still on screen.
+
+    A dialog or panel opened from a viewer belongs to it: it acts on the
+    viewer's data and draws on its plots. Left open after the viewer
+    closes, it would be a window whose owner is garbage -- see
+    :data:`_DETACHED` for why that ends in a crash, not just in a stale
+    window.
+    """
+    from PyQt5 import sip
+
+    # Only dialogs and main windows -- what a viewer opens -- and the type
+    # test done by Qt itself (findChildren with a class), not on every child
+    # widget: asking for every QWidget handed Python wrappers of Qt's own
+    # internal widgets (popup containers, tooltips), which Qt deletes without
+    # telling Python, and touching one of those crashed the program now and
+    # then. Asked afresh after every close, since closing one window can
+    # delete another.
+    done = set()
+    while True:
+        try:
+            candidates = owner.findChildren(QDialog) + owner.findChildren(QMainWindow)
+            pending = [child for child in candidates
+                       if sip.unwrapinstance(child) not in done
+                       and child.isWindow() and child.isVisible()]
+        except RuntimeError:          # the owner itself is gone
+            return
+        if not pending:
+            return
+        child = pending[0]
+        done.add(sip.unwrapinstance(child))
+        try:
+            child.close()
+        except RuntimeError:          # deleted by an earlier close
+            pass
+
+
+class ViewerWindow(FunctionsMenuMixin, QMainWindow):
+    """Shared scaffolding for every viewer: title, colormap propagation,
+    export of whatever this window currently shows, and deregistration on
+    close."""
+
+    closed = pyqtSignal(object)
+    #: a dataset computed in this window (a saved slice, an arbitrary cut, a
+    #: corrected map), for the launcher to list
+    datasetCreated = pyqtSignal(object)
+
+    def __init__(self, data, filename: str, colormap: str, flip: bool):
+        super().__init__()
+        self.data = data
+        self.popout_windows = []
+        self.filename = filename
+        self.colormap = colormap
+        self.flip = flip
+        self.setWindowTitle(f"{filename}  [{data.kind}]")
+        self.resize(1150, 820)
+
+        self._central = QWidget()
+        self.setCentralWidget(self._central)
+        self.root = QVBoxLayout(self._central)
+        self.root.setContentsMargins(4, 4, 4, 4)
+
+        self.statusBar()
+
+    # -- subclasses implement these ------------------------------------
+    def image_panels(self):
+        """Every ImagePanel this window owns, for colormap and display
+        options."""
+        return ()
+
+    def exportable_panels(self):
+        """``(suffix, array2d, x_axis, y_axis, x_label, y_label)`` for each
+        panel worth writing out; arrays in (x, y) order matching the axes."""
+        return []
+
+    # -- shared behaviour ----------------------------------------------
+    # The Functions menu (add_function, function_actions) comes from
+    # FunctionsMenuMixin, shared with the curve viewer.
+
+    def build_toolbar(self, extra_widgets=()):
+        """The one control row along the top of every viewer.
+
+        Left to right: the few buttons a window keeps in sight (a map's
+        Scan-axis cut and Slit cut), the **Functions** menu with everything
+        else this window can do, the colormap, and the view controls (axis
+        ranges, invert, grid). Vertical rules separate the blocks.
+
+        Tools are in the menu rather than in a row of buttons because a map
+        can do a dozen things and a row of a dozen buttons is a window that
+        cannot be made narrow -- and a contour wants to open at its data's
+        aspect ratio. New tools go in the menu too (:meth:`add_function`).
+
+        Exporting is deliberately *not* here: it belongs to the panel being
+        looked at, not to the window, and a window can hold two of them. It
+        lives in each panel's own right-click menu instead.
+
+        The colormap lives here rather than in the launcher so two windows can
+        be tinted differently -- useful when comparing a faint map against a
+        bright one, where one shared colormap suits neither.
+        """
+        bar_widget = QWidget()
+        bar = QHBoxLayout(bar_widget)
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(6)
+        self._toolbar_tools = list(extra_widgets)
+        for widget in extra_widgets:
+            bar.addWidget(widget)
+        if extra_widgets:
+            self._toolbar_tools.append(separator())
+            bar.addWidget(self._toolbar_tools[-1])
+
+        # What to do with the slice on screen: last in the menu, for every
+        # viewer.
+        self.save_slice_action = self.add_function(
+            "Save slice to the main list", self.save_slice_to_list,
+            "Put the slice on screen in the launcher's list as a dataset of its "
+            "own, to reopen, compare or save to a file later.", section="Slice")
+        self.popout_action = self.add_function(
+            "Freeze slice in a new window", self.pop_out_slice,
+            "Open the slice on screen in a window of its own that stays put "
+            "while this one moves on -- to compare two positions side by "
+            "side, or to make a figure of it (Figure composer).",
+            section="Slice")
+
+        bar.addWidget(self.make_functions_button())
+        self.functions_button.setToolTip(
+            "Everything this window can do: analysis, conversions, figures, "
+            "and saving or freezing the slice on screen.")
+        # Drawing on the plot in front of you -- guide lines, labels -- is
+        # used while looking, so it is a button rather than a menu entry.
+        from arpes_viewer.ui.viewers.plot_tools import plot_tools_button
+        self.plot_tools_button = plot_tools_button(self)
+        bar.addWidget(self.plot_tools_button)
+        self._toolbar_tools += [self.functions_button, self.plot_tools_button,
+                                separator()]
+        bar.addWidget(self._toolbar_tools[-1])
+
+        bar.addWidget(section_label("Colormap"))
+        self.colormap_combo = QComboBox()
+        self.colormap_combo.addItems(COLORMAP_NAMES)
+        self.colormap_combo.setCurrentText(self.colormap)
+        self.colormap_combo.setToolTip("Colormap for this window only.")
+        self.colormap_combo.setMaximumWidth(132)
+        bar.addWidget(self.colormap_combo)
+        self.flip_cb = QCheckBox("Flip")
+        self.flip_cb.setChecked(self.flip)
+        self.flip_cb.setToolTip("Reverse the colormap (invert the intensity scale).")
+        bar.addWidget(self.flip_cb)
+        self.colormap_combo.currentTextChanged.connect(self._on_colormap_control_changed)
+        self.flip_cb.toggled.connect(self._on_colormap_control_changed)
+
+        # The view controls on the same row: axis ranges, invert, grid --
+        # what used to be buried in pyqtgraph's right-click menu.
+        bar.addWidget(separator())
+        self.view_bar = ViewOptionsBar(self)
+        bar.addWidget(self.view_bar)
+        bar.addStretch(1)
+
+        # In a scroll strip: the row is wider than a narrow window, and
+        # without this its width would become the window's minimum -- which
+        # would defeat opening a tall-narrow map at its own aspect ratio.
+        self.root.addWidget(scroll_strip(bar_widget))
+
+    # -- the slice on screen, as a dataset or its own window --------------
+    def slice_label(self) -> str:
+        """How the slice currently on screen is identified -- the energy or
+        angle it sits at. Windows that slice a cube override this; for a
+        window showing one fixed image there is nothing to say."""
+        return ""
+
+    def _choose_panel(self, title: str):
+        """Which panel to act on. One panel needs no question; two (a
+        spatial scan) do, and the answer names them as the panels do."""
+        panels = self.exportable_panels()
+        if not panels:
+            QMessageBox.warning(self, title, "Nothing displayed yet.")
+            return None
+        if len(panels) == 1:
+            return panels[0]
+        names = [entry[0] for entry in panels]
+        choice, ok = QInputDialog.getItem(self, title, "Which panel?", names, 0, False)
+        if not ok:
+            return None
+        return panels[names.index(choice)]
+
+    def _display_levels(self, array) -> dict:
+        """The colour window (user-set min/max, or None) and gamma of the
+        panel showing ``array``, for a snapshot of it to open with."""
+        panels = tuple(self.image_panels())
+        for panel in panels:
+            shown = getattr(panel.view, "last_frame", None)
+            if shown is None:
+                shown = getattr(panel.view, "_image2d", None)
+            if shown is not None and np.may_share_memory(shown, array):
+                break
+        else:
+            if len(panels) != 1:
+                return {}
+            panel = panels[0]
+        return {"levels": panel.user_levels(), "gamma": panel.level_bar.gamma()}
+
+    def _slice_name(self, suffix: str) -> str:
+        label = self.slice_label()
+        stem = f"{self.filename} [{suffix}]"
+        return f"{stem} {label}" if label else stem
+
+    def save_slice_to_list(self):
+        """Put the displayed slice in the launcher's list as a dataset of
+        its own, the way the MATLAB tool's "Save Slice" puts it back in the
+        workspace. From there it can be reopened, compared with others and
+        saved to a file like any measurement."""
+        entry = self._choose_panel("Save slice")
+        if entry is None:
+            return None
+        suffix, array, xaxis, yaxis, xlabel, ylabel = entry
+        default = self._slice_name(suffix)
+        name, ok = QInputDialog.getText(self, "Save slice", "Name for the slice:",
+                                        text=default)
+        if not ok or not name.strip():
+            return None
+        data = MemoryData(
+            "cut", (np.asarray(xaxis, dtype=float), np.asarray(yaxis, dtype=float)),
+            np.array(array, dtype=float, copy=True),
+            {"x": xlabel, "y": ylabel},
+            source_label=name.strip(),
+            parameters={"source": self.filename, "panel": suffix,
+                        "position": self.slice_label() or "n/a"},
+            prefix="slice",
+            source_path=getattr(self.data, "path", ""),
+            source_info=dict(getattr(self.data.scan, "info", {})))
+        self.datasetCreated.emit(data)
+        self.statusBar().showMessage(f"Saved slice as {name.strip()}")
+        return data
+
+    def pop_out_slice(self):
+        """Open the displayed slice in a window of its own, frozen: the
+        MATLAB tool's "Plot in new figure". Several can be open at once,
+        which is the point -- two energies, or two cuts, side by side while
+        this window moves on."""
+        entry = self._choose_panel("Pop out")
+        if entry is None:
+            return None
+        suffix, array, xaxis, yaxis, xlabel, ylabel = entry
+        label = self.slice_label()
+        title = f"{self.filename} · {suffix}" + (f" · {label}" if label else "")
+        window = FrameWindow(title, np.asarray(array, dtype=float),
+                             np.asarray(xaxis, dtype=float),
+                             np.asarray(yaxis, dtype=float),
+                             x_label=xlabel, y_label=ylabel,
+                             colormap=self.colormap, flip=self.flip,
+                             **self._display_levels(array))
+        self._arm_figure_source(window)
+        window.closed.connect(lambda w: self.popout_windows.remove(w)
+                              if w in self.popout_windows else None)
+        self.popout_windows.append(window)
+        window.show()
+        self.statusBar().showMessage(f"Popped out {suffix} {label}".strip())
+        return window
+
+    # -- Fermi-surface correction ----------------------------------------
+    def fs_angle_axis(self):
+        """The axis the correction is fitted along -- the angle axis of the
+        image on screen. Windows that offer the correction provide it."""
+        return None
+
+    def open_fs_correction(self):
+        """Collect the points, fit, and straighten. Modeless, because the
+        points are picked on the image behind the dialog."""
+        existing = getattr(self, "_fs_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return None
+        entry = self.exportable_panels()
+        if not entry:
+            QMessageBox.warning(self, "Fermi-surface correction",
+                                "Nothing displayed yet.")
+            return None
+        _, _, _, _, x_label, y_label = entry[0]
+        dialog = FSCorrectionDialog(self, self.image_panels()[0].view, x_label, y_label)
+        self._fs_dialog = dialog
+        self.statusBar().showMessage(
+            "Click along the feature that should be flat, then press Correct.")
+
+        def on_accepted():
+            coeffs, order = dialog.coefficients(), dialog.order_box.value()
+            points, name = dialog.points(), dialog.name_box.text().strip()
+            self._fs_dialog = None
+            self.run_fs_correction(coeffs, name=name, order=order, points=points)
+
+        dialog.accepted.connect(on_accepted)
+        dialog.rejected.connect(lambda: setattr(self, "_fs_dialog", None))
+        dialog.show()
+        dialog.raise_()
+        return dialog
+
+    def run_fs_correction(self, coeffs, name=None, order=2, points=(),
+                          open_window: bool = True):
+        """Apply the fit to this window's data and list the result.
+
+        Subclasses say *what* is corrected (one cut, or the whole cube a cut
+        was taken from) through :meth:`fs_correction_target`; the shifting
+        itself is the same operation either way.
+        """
+        target = self.fs_correction_target()
+        if target is None or coeffs is None:
+            return None
+        values, angle_axis, energy_axis, angle_dim, energy_dim, kind, axes_of = target
+        try:
+            # every spectrum of a map shifted: seconds for a big one
+            corrected, new_energy = jobs.busy_work(
+                self, "Straightening the bands", fs_correction,
+                values, angle_axis, energy_axis, coeffs,
+                angle_dim=angle_dim, energy_dim=energy_dim)
+        except Exception as exc:
+            QMessageBox.warning(self, "Fermi-surface correction",
+                                f"The correction failed:\n{exc}")
+            return None
+
+        scan = self.data.scan
+        source_info = {k: v for k, v in scan.info.items() if not k.startswith("fscorr.")}
+        data = MemoryData(
+            kind, axes_of(new_energy), corrected, dict(scan.labels),
+            source_label=name or f"{self.filename} [FS corr]",
+            parameters={"order": order, "coefficients": list(map(float, coeffs)),
+                        "points": [list(map(float, p)) for p in points],
+                        "angle_axis": self.fs_angle_label()},
+            prefix="fscorr",
+            source_path=getattr(self.data, "path", ""),
+            source_info=source_info,
+            source_motors=dict(scan.fourd_info))
+        self.datasetCreated.emit(data)
+        grew = new_energy.size - np.asarray(energy_axis).size
+        self.statusBar().showMessage(
+            f"Fermi-surface correction applied (order {order}); the energy axis "
+            f"grew by {grew} bins -- added to the file list")
+        if open_window:
+            self.open_computed(data)
+        return data
+
+    def fs_correction_target(self):
+        """What the correction acts on, or None when this window does not
+        offer it."""
+        return None
+
+    def fs_angle_label(self) -> str:
+        return ""
+
+    # -- Fermi-edge fitting ------------------------------------------------
+    def open_fermi_fit(self, bound: bool = False):
+        """Fit the Fermi edge of what this window shows. Modeless, because
+        the region it fits is the selection box on the image behind it.
+
+        ``bound`` ties the two together, as the launcher's tool panel opens
+        them: closing either closes the other. The window was opened for
+        the fit, and has nothing left to do without it."""
+        existing = getattr(self, "_fermi_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+        try:
+            dialog = FermiFitDialog(self)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Fermi level fitting", str(exc))
+            return None
+        self._fermi_dialog = dialog
+        dialog.finished.connect(lambda *_: setattr(self, "_fermi_dialog", None))
+        if bound:
+            dialog.finished.connect(lambda *_: self.close())
+            self.closed.connect(lambda *_: dialog.close())
+        dialog.show()
+        dialog.raise_()
+        return dialog
+
+    def show_picture_only(self):
+        """Keep only the picture and how it is displayed: no Functions menu,
+        no plot tools, no cut buttons. For a window opened to serve one tool
+        (a k conversion picks Γ on it), where anything else on offer would
+        be a way to wander off from the job."""
+        self._picture_only = True
+        for widget in getattr(self, "_toolbar_tools", ()):
+            widget.setVisible(False)
+        return self
+
+    def fermi_frame(self):
+        """``(angles, energy, frame, angle label, energy label)``: the
+        angle-vs-energy picture the Fermi fit works on. A cut is that
+        already; a map's slit-cut window overrides this with the cut it
+        shows."""
+        return reference_frame(self.data)
+
+    def offset_energy_axis(self, ef: float, info: dict = None):
+        """List a copy of this dataset with the energy axis shifted so the
+        fitted E_F is zero. The axis is relabelled ``E - E_F`` -- after the
+        shift the numbers are no longer the analyser's kinetic energies, and
+        a label that still said "Energy" would be a lie."""
+        data = self.data
+        scan = data.scan
+        axes_names = CONSTRUCTOR_AXES.get(data.kind)
+        energy_name = energy_slot(data.kind)
+        if axes_names is None or energy_name is None:
+            QMessageBox.warning(self, "Offset energy axis",
+                                 f"{data.kind} has no energy axis to shift.")
+            return None
+        values = scan.value4d if data.kind == "spem_4d" else scan.value
+        if hasattr(values, "materialise"):
+            values = values.materialise()
+        axes = []
+        for name in axes_names:
+            axis = np.asarray(getattr(scan, name), dtype=float)
+            axes.append(axis - float(ef) if name == energy_name else axis)
+        labels = dict(scan.labels)
+        unit = _unit_of(labels.get(energy_name, "")) or "eV"
+        labels[energy_name] = f"E - E_F ({unit})"
+
+        name = f"{self.filename} [E-Ef]"
+        naming = getattr(self, "existing_names", None)
+        taken = set(naming()) if callable(naming) else set()
+        if name in taken:
+            n = 2
+            while f"{name} {n}" in taken:
+                n += 1
+            name = f"{name} {n}"
+        parameters = dict(info or {})
+        parameters["ef_subtracted"] = float(ef)
+        result = MemoryData(data.kind, tuple(axes), np.asarray(values, dtype=float),
+                            labels, source_label=name, parameters=parameters,
+                            prefix="fitEF", source_path=getattr(data, "path", ""),
+                            source_info=dict(scan.info),
+                            source_motors=dict(scan.fourd_info))
+        self.datasetCreated.emit(result)
+        self.statusBar().showMessage(
+            f"Energy axis shifted by {ef:.6g} eV -- added to the file list")
+        return result
+
+    def offset_energy_per_slice(self, levels, info: dict = None):
+        """List a copy of this map with each slice along its first axis
+        shifted by its own Fermi level ``levels`` (one per slice), so every
+        one has E_F at zero.
+
+        Shifted by different amounts, the slices no longer share a range,
+        so the result keeps the energies all of them still reach
+        (:func:`tools.momentum.kzmap.align`, the kz map's own alignment).
+        """
+        from arpes_viewer.tools.momentum.kzmap import align
+
+        data = self.data
+        if data.kind not in CUBE_KINDS:
+            raise ValueError(f"{data.kind} has no slices to shift one by one")
+        scan = data.scan
+        values = scan.value
+        if hasattr(values, "materialise"):
+            values = values.materialise()
+        cube, energy, trimmed = align(np.asarray(values, dtype=float),
+                                      np.asarray(scan.z, dtype=float), levels)
+        labels = dict(scan.labels)
+        unit = _unit_of(labels.get("z", "")) or "eV"
+        labels["z"] = f"E - E_F ({unit})"
+        name = f"{self.filename} [E-Ef]"
+        naming = getattr(self, "existing_names", None)
+        taken = set(naming()) if callable(naming) else set()
+        if name in taken:
+            n = 2
+            while f"{name} {n}" in taken:
+                n += 1
+            name = f"{name} {n}"
+        parameters = dict(info or {})
+        levels = np.asarray(levels, dtype=float)
+        parameters.update({"ef_min": float(levels.min()),
+                           "ef_max": float(levels.max()),
+                           "trimmed_eV": float(trimmed)})
+        result = MemoryData(data.kind, (np.asarray(scan.x, dtype=float),
+                                        np.asarray(scan.k, dtype=float), energy),
+                            cube, labels, source_label=name,
+                            parameters=parameters, prefix="fitEF",
+                            source_path=getattr(data, "path", ""),
+                            source_info=dict(scan.info),
+                            source_motors=dict(scan.fourd_info))
+        self.datasetCreated.emit(result)
+        self.statusBar().showMessage(
+            f"Each slice shifted by its own E_F ({levels.min():.5g} to "
+            f"{levels.max():.5g} eV); {trimmed * 1000:.3g} meV trimmed so they "
+            f"share one range -- added to the file list")
+        return result
+
+    def divide_fermi_cutoff(self, fit, cutoff_kt: float, info: dict = None):
+        """Divide this dataset by the resolution-broadened Fermi function and
+        list the result (the MATLAB tool's "Corr FS")."""
+        data = self.data
+        scan = data.scan
+        axes_names = CONSTRUCTOR_AXES.get(data.kind)
+        energy_name = energy_slot(data.kind)
+        if axes_names is None or energy_name is None:
+            return None
+        values = scan.value4d if data.kind == "spem_4d" else scan.value
+        if hasattr(values, "materialise"):
+            values = values.materialise()
+        values = np.asarray(values, dtype=float)
+        array_names = ARRAY_AXES[data.kind]
+        energy_dim = array_names.index(energy_name)
+        energy = np.asarray(getattr(scan, energy_name), dtype=float)
+
+        divided = divide_fermi(
+            energy, values, ef=fit.values["ef"],
+            temperature=fit.values["temperature"],
+            resolution=fit.values["resolution"], energy_dim=energy_dim,
+            cutoff_kt=float(cutoff_kt),
+            background=(fit.values["bkg0"], fit.values["bkg1"]))
+
+        name = f"{self.filename} [dFD]"
+        parameters = dict(info or {})
+        parameters["cutoff_kT"] = float(cutoff_kt)
+        result = MemoryData(
+            data.kind,
+            tuple(np.asarray(getattr(scan, n), dtype=float) for n in axes_names),
+            divided, dict(scan.labels), source_label=name,
+            parameters=parameters, prefix="dFD",
+            source_path=getattr(data, "path", ""),
+            source_info=dict(scan.info), source_motors=dict(scan.fourd_info))
+        self.datasetCreated.emit(result)
+        kept = float(np.isfinite(divided).mean() * 100)
+        self.statusBar().showMessage(
+            f"Fermi cut-off divided out above {cutoff_kt:g} kT "
+            f"({kept:.0f}% of the cube kept) -- added to the file list")
+        return result
+
+    def fit_channels_here(self, *, temperature, fixed, window, half_width,
+                          step=1, start=None):
+        """Fit the edge channel by channel on this window's own data and draw
+        the result over the image."""
+        try:
+            angles, energy, frame, _, _ = self.fermi_frame()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Fermi level fitting", str(exc))
+            return None
+        return run_channel_fit(self, angles, energy, frame,
+                               temperature=temperature, fixed=fixed,
+                               window=window, half_width=half_width,
+                               step=step, start=start, draw_on=self.view)
+
+    def adopt_child(self, window):
+        """Pass this window's launcher hooks to one it just opened.
+
+        A cut window is opened by its contour, not by the launcher, so it
+        would otherwise have no way to list a dataset it computes (the whole
+        point of the Fermi correction living there). Its results are
+        forwarded up through this window, which the launcher does listen to.
+        """
+        window._name_source = getattr(self, "_name_source", None)
+        window._dataset_opener = getattr(self, "_dataset_opener", None)
+        window.datasetCreated.connect(self.datasetCreated.emit)
+        return window
+
+    def open_computed(self, data):
+        """Show a dataset this window has just computed.
+
+        Goes through the launcher when there is one, so the new window is
+        registered, named and coloured exactly like a double-clicked one;
+        standing alone (in tests) it opens the window directly.
+        """
+        opener = getattr(self, "_dataset_opener", None)
+        if callable(opener):
+            return opener(data)
+        window = open_viewer(data, getattr(data, "source_label", "computed"),
+                             self.colormap, self.flip)
+        if window is not None:
+            self.popout_windows.append(window)
+            window.closed.connect(lambda w: self.popout_windows.remove(w)
+                                  if w in self.popout_windows else None)
+            window.show()
+        return window
+
+    def _on_colormap_control_changed(self, *_):
+        self.set_colormap(self.colormap_combo.currentText(), self.flip_cb.isChecked())
+
+    def set_colormap(self, name: str, flip: bool):
+        self.colormap, self.flip = name, flip
+        combo = getattr(self, "colormap_combo", None)
+        if combo is not None and combo.currentText() != name:
+            combo.blockSignals(True)
+            combo.setCurrentText(name)
+            combo.blockSignals(False)
+        flip_cb = getattr(self, "flip_cb", None)
+        if flip_cb is not None and flip_cb.isChecked() != flip:
+            flip_cb.blockSignals(True)
+            flip_cb.setChecked(flip)
+            flip_cb.blockSignals(False)
+        for panel in self.image_panels():
+            apply_colormap(panel.view, name, flip)
+
+    def apply_display_options(self):
+        for panel in self.image_panels():
+            panel.apply_display_options()
+        # The panels only exist after build_toolbar has run, so the view bar
+        # is pointed at them here -- every window ends its __init__ with this
+        # call, which is exactly the moment they are all in place.
+        view_bar = getattr(self, "view_bar", None)
+        if view_bar is not None and not view_bar.panels:
+            view_bar.bind(self.image_panels())
+        self.arm_panel_exports()
+        self._wire_curve_exports()
+
+    # -- EDC / MDC to the list ----------------------------------------------
+    def _wire_curve_exports(self):
+        """Connect every panel's EDC/MDC export to this window, once."""
+        wired = self.__dict__.setdefault("_curve_wired", set())
+        for panel in self.image_panels():
+            if id(panel) in wired or getattr(panel, "curves", None) is None:
+                continue
+            panel.curveToList.connect(self.curve_to_list)
+            wired.add(id(panel))
+
+    def curve_to_list(self, payload: dict):
+        """List the EDC or MDC a panel sent out, as a one-dimensional
+        dataset that remembers where it was taken.
+
+        The kind follows the curve's own axis, not the button: an "EDC" of
+        a constant-energy contour runs along an angle, and is listed as an
+        MDC-like profile, because what matters downstream is whether its
+        axis is an energy.
+        """
+        from arpes_viewer.ui.viewers.curves import curve_dataset
+        from arpes_viewer.ui.viewers.widgets import _is_energy_label
+
+        kind = "edc" if _is_energy_label(payload["x_label"]) else "mdc"
+        word = kind.upper()
+        where = f"{payload['position']:.4g}"
+        width = payload["half_width"]
+        suffix = f"{word} @ {where}" + (f" ±{width:g}" if width > 0 else "")
+        label = self.slice_label()
+        name = f"{self.filename} [{suffix}]" + (f" {label}" if label else "")
+        taken = set(self.existing_names())
+        if name in taken:
+            n = 2
+            while f"{name} ({n})" in taken:
+                n += 1
+            name = f"{name} ({n})"
+        position_label = payload.get("position_label") or "position"
+        parameters = {"curve": word, "position": payload["position"],
+                      "position_axis": position_label,
+                      "half_width": width, "points_summed": payload["n_summed"],
+                      "slice": label or ""}
+        data = curve_dataset(
+            kind, payload["x"], np.asarray(payload["y"], dtype=float)[:, None],
+            [word], x_label=payload["x_label"],
+            value_label=(f"Intensity (sum of {payload['n_summed']})"
+                         if payload["n_summed"] > 1 else "Intensity"),
+            name=name, step=f"take_{kind}", parameters=parameters,
+            source_info=dict(getattr(self.data.scan, "info", {}) or {}),
+            source=self.filename, source_path=getattr(self.data, "path", ""))
+        self.datasetCreated.emit(data)
+        self.statusBar().showMessage(f"Added “{name}” to the list")
+        return data
+
+    def _arm_figure_source(self, window):
+        """Let a popped-out panel's figure composer reach the launcher's
+        list (for further panels) and this dataset's own metadata (for an
+        E_F line taken from the fit)."""
+        window.source_info = dict(getattr(self.data.scan, "info", {}) or {})
+        entries = getattr(self, "_dataset_entries", None)
+        loader = getattr(self, "_dataset_loader", None)
+        if callable(entries) and callable(loader):
+            window.figure_source = {"entries": entries, "loader": loader}
+
+    def panel_export_names(self):
+        """A short name for each :meth:`image_panels` entry, in that order --
+        what an export of that panel is called.
+
+        The names already exist as the suffixes of :meth:`exportable_panels`
+        ("Cut", "SpatialMap", ...), which are far better filenames than the
+        panel's on-screen title; this default reuses them whenever the two
+        lists line up, and a window whose lists are in a different order
+        (the spatial scan) says so itself.
+        """
+        panels = self.exportable_panels()
+        if panels and len(panels) == len(self.image_panels()):
+            return tuple(entry[0] for entry in panels)
+        return ()
+
+    def arm_panel_exports(self):
+        """Tell each panel what an export of it should be called and what
+        metadata goes with it.
+
+        Only plain values are handed over -- no bound method of this window,
+        which would make the panel keep the window alive. The slice position
+        is read back the other way round, by the panel asking its window at
+        export time.
+        """
+        info = dict(getattr(getattr(self.data, "scan", None), "info", {}) or {})
+        names = self.panel_export_names()
+        for index, panel in enumerate(self.image_panels()):
+            view = getattr(panel, "view", None)
+            if view is None:
+                continue
+            view.export_prefix = self.export_stem()
+            view.export_info = info
+            view.export_source_path = getattr(self.data, "path", "") or ""
+            if index < len(names):
+                view.export_title = names[index]
+
+    def _show_degrid(self, dialog):
+        """Show a De-grid window made for this viewer, or raise the one it
+        already has; its results go to the list."""
+        existing = getattr(self, "_degrid_dialog", None)
+        if dialog is None:
+            return None
+        if existing is not None and existing.isVisible():
+            dialog.deleteLater()
+            existing.raise_()
+            return existing
+        dialog.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        self._degrid_dialog = dialog
+        dialog.show()
+        return dialog
+
+    def existing_names(self):
+        """Names already in the launcher's list, so anything computed here
+        can be given one that is free. Empty when no launcher is
+        listening."""
+        receiver = getattr(self, "_name_source", None)
+        return list(receiver()) if callable(receiver) else []
+
+    def export_stem(self) -> str:
+        """A filesystem-safe basename for this window's exports.
+
+        The window is titled after the dataset, which for a file holding
+        several is "scan.nxs \u00b7 DeflX_0003" -- not something to feed a
+        file dialog: the separator is not a legal Windows filename character,
+        and splitext would cut at the wrong dot. So the entry, when there is
+        one, is appended to the file's stem with an underscore.
+        """
+        name = self.filename
+        entry = None
+        if " \u00b7 " in name:
+            name, entry = name.split(" \u00b7 ", 1)
+        stem = os.path.splitext(name)[0]
+        if entry:
+            stem = f"{stem}_{entry}"
+        return "".join(ch for ch in stem if ch.isalnum() or ch in "._- ") or "export"
+
+    def size_to_data_aspect(self, view, extra_width=60, extra_height=260,
+                            min_w=520, max_w=1500, min_h=520, max_h=1000):
+        """Shape the window so an equal-aspect image fills it.
+
+        With a 1:1 lock the view has to stretch whichever axis is short for
+        the panel's shape, which is what leaves broad empty margins beside a
+        tall-narrow contour in a wide window. Nothing inside the plot can fix
+        that -- the cure is to open the window at the data's own aspect, so
+        the lock has nothing to stretch. ``extra_height`` is everything above
+        and below the image (two control rows, title, level bar, options,
+        status bar), so it has to grow whenever a row is added. The user is free to resize
+        afterwards (margins come back, as geometry demands) or to untick the
+        ratio box for a tight fill on both axes.
+        """
+        extent = view.data_extent()
+        if extent is None:
+            return
+        x0, x1, y0, y1 = extent
+        dx, dy = abs(x1 - x0), abs(y1 - y0)
+        if dx <= 0 or dy <= 0:
+            return
+        height = min(max(self.height(), min_h), max_h)
+        plot_height = max(height - extra_height, 100)
+        width = int(round(plot_height * dx / dy)) + extra_width
+        self.resize(int(min(max(width, min_w), max_w)), int(height))
+
+    def closeEvent(self, event):
+        # Each window owns one reference to its NxsData (and so to the open
+        # file), and closing the window gives it back -- once. Qt delivers a
+        # close event again to a window that is already closed (close() on a
+        # hidden window, or the launcher closing everything at exit), and a
+        # second release would take the reference of another window that
+        # shares the file: the next read there fails with "identifier is not
+        # of specified type".
+        if getattr(self, "_released", False):
+            super().closeEvent(event)
+            return
+        self._released = True
+        for window in list(getattr(self, "figure_windows", ())):
+            window.close()
+        # Snapshots hold numpy copies of their own: they stay open, but must
+        # not be left hanging off this window once it is gone.
+        for window in list(self.popout_windows):
+            try:
+                if window.isVisible():
+                    keep_alive(window)
+            except RuntimeError:
+                pass
+        close_child_windows(self)
+        try:
+            self.data.close()
+        except Exception:
+            pass
+        self.closed.emit(self)
+        super().closeEvent(event)
+
+
+# --------------------------------------------------------------------------
+# Real-space scans
+# --------------------------------------------------------------------------
+class SpatialScanWindow(ViewerWindow):
+    """Spatial map plus the E-vs-k spectrum at the cursor -- double-clicking
+    a spatial scan opens both together, since neither is much use without
+    the other."""
+
+    def __init__(self, data, filename, colormap, flip):
+        super().__init__(data, filename, colormap, flip)
+        scan = data.scan
+        labels = scan.labels
+
+        self.build_toolbar()
+        self.statusBar().showMessage(
+            "Drag the red target to move the readout pixel. Right-click a panel for the "
+            "readout cursor (EDC/MDC), a selection box and its integration, or a new "
+            "window at this position.")
+
+        panels = QHBoxLayout()
+        self.spatial_view = SpatialImageView()
+        self.spatial_panel = ImagePanel("Spatial overview", self.spatial_view,
+                                        lock_ratio=True, parent=self)
+        self.frame_view = FrameImageView()
+        self.frame_panel = ImagePanel("E vs k at cursor / selection", self.frame_view,
+                                      curves=True, parent=self)
+        panels.addWidget(self.spatial_panel)
+        panels.addWidget(self.frame_panel)
+        self.root.addLayout(panels, stretch=1)
+
+        self.frame_label = ""   # what the spectrum panel currently holds
+        #: Whether the spatial panel shows the scan's Y axis horizontally.
+        #: The file says which stage was scanned first, and that is what this
+        #: program calls X -- but a lab whose own convention is the other way
+        #: round would see its maps transposed, so the view can be flipped
+        #: without touching the data. Only the *display* swaps: the cursor
+        #: readout, every export and every saved slice keep the axes the
+        #: measurement had.
+        self.swap_xy = False
+        self._spatial_map = None      # the current map in (y, x) data order
+
+        if data.kind == "spem_4d":
+            self.frame_view.set_axis_labels(labels.get("k"), labels.get("z"))
+            self._set_spatial_map(data.spatial_overview)
+            self.spatial_view.enable_swap_action(True)
+            self.spatial_view.swapToggled.connect(self.set_swap_xy)
+            self.spatial_view.enable_selection_action(
+                True, "Integrate selection -> E vs k panel")
+            self.frame_view.enable_selection_action(
+                True, "Integrate selection -> spatial panel")
+            self._show_frame_at(len(scan.y) // 2, len(scan.x) // 2)
+        else:  # spem_1d
+            self.spatial_view.set_axis_labels(labels.get("x"), labels.get("y"))
+            self.frame_view.set_axis_labels(labels.get("y"), labels.get("z"))
+            self.spatial_view.set_data(data.line_kmap.T, scan.x, scan.y)
+            # The two-way region integration needs a 2D spatial map to write
+            # back onto, which a line scan does not have.
+            self.spatial_view.enable_selection_action(False)
+            self.frame_view.enable_selection_action(False)
+            self._show_frame_at_x(len(scan.x) // 2)
+
+        self.spatial_view.enable_popout_action(True, "Open this position in a new window")
+        self.spatial_view.pixelChanged.connect(self._on_cursor_moved)
+        self.spatial_panel.selectionApplied.connect(self._on_spatial_selection)
+        self.frame_panel.selectionApplied.connect(self._on_frame_selection)
+        self.spatial_view.popoutRequested.connect(self.open_popout)
+
+        self._apply_default_orientation()
+        self.set_colormap(colormap, flip)
+        self.apply_display_options()
+
+    def image_panels(self):
+        return (self.spatial_panel, self.frame_panel)
+
+    def panel_export_names(self):
+        # exportable_panels() lists the spectrum first (it is the panel the
+        # window exists for); image_panels() lists the map first, because
+        # that is the one on the left. Spelt out rather than derived.
+        return ("SpatialMap", "EvsK")
+
+    def slice_label(self) -> str:
+        return self.frame_label
+
+    # -- which way round the spatial map is drawn -------------------------
+    def _set_spatial_map(self, map_yx, reset_cursor: bool = True):
+        """Draw a spatial map given in the data's own (y, x) order, the way
+        round the swap setting asks for."""
+        scan = self.data.scan
+        labels = scan.labels
+        self._spatial_map = np.asarray(map_yx)
+        if self.swap_xy:
+            self.spatial_view.set_axis_labels(labels.get("y"), labels.get("x"))
+            self.spatial_view.set_data(self._spatial_map.T, scan.y, scan.x,
+                                       reset_cursor=reset_cursor)
+        else:
+            self.spatial_view.set_axis_labels(labels.get("x"), labels.get("y"))
+            self.spatial_view.set_data(self._spatial_map, scan.x, scan.y,
+                                       reset_cursor=reset_cursor)
+
+    def _apply_default_orientation(self):
+        """Draw the spatial map the way its beamline does, where the loader
+        said how (``Spatial.swap_xy`` / ``Spatial.invert_x`` /
+        ``Spatial.invert_y`` in the metadata -- set for ANTARES scans only,
+        see ``loader.nxs_file.antares_spatial_orientation``). Anything else
+        keeps the plotting default. Display only, and only the starting
+        state: right-click "swap" and the view bar's "Inv" boxes still
+        change it, and the data keeps the order the file has."""
+        info = getattr(self.data.scan, "info", {}) or {}
+
+        def flag(key):
+            value = info.get(key)
+            if value is None:
+                return None
+            if isinstance(value, (bytes, np.bytes_)):
+                value = value.decode("utf-8", "replace")
+            if isinstance(value, str):
+                return value.strip().lower() in ("1", "true", "yes")
+            return bool(value)
+
+        # Swap first: it carries any inversion with it, and the inversions
+        # below are for the screen axes as they end up.
+        if flag("Spatial.swap_xy") and self.data.kind == "spem_4d":
+            self.set_swap_xy(True)
+        for axis, key in ((0, "Spatial.invert_x"), (1, "Spatial.invert_y")):
+            value = flag(key)
+            if value is not None:
+                self.spatial_view.set_axis_inverted(axis, value)
+
+    def set_swap_xy(self, on: bool):
+        """Exchange the spatial panel's two axes, keeping the cursor on the
+        same measured pixel."""
+        on = bool(on)
+        if on == self.swap_xy or self._spatial_map is None:
+            return
+        cursor = self.spatial_view.cursor.pos()
+        # A reversed axis stays reversed when it moves to the other side:
+        # the direction belongs to the measured axis, not to the screen.
+        inverted = (self.spatial_view.axis_inverted(0),
+                    self.spatial_view.axis_inverted(1))
+        self.spatial_view.set_axis_inverted(0, inverted[1])
+        self.spatial_view.set_axis_inverted(1, inverted[0])
+        self.swap_xy = on
+        self._set_spatial_map(self._spatial_map, reset_cursor=False)
+        # The pixel the cursor was on has not moved; its coordinates have
+        # swapped places, so the cursor follows them.
+        self.spatial_view.cursor.setPos((float(cursor.y()), float(cursor.x())))
+        self.spatial_panel.sync_level_range()
+        self.set_colormap(self.colormap, self.flip)
+        self.spatial_view.fit_to_data()
+        action = self.spatial_view.action_swap
+        if action.isChecked() != on:
+            action.blockSignals(True)
+            action.setChecked(on)
+            action.blockSignals(False)
+        view_bar = getattr(self, "view_bar", None)
+        if view_bar is not None and view_bar.panels:
+            view_bar.sync_from_view()
+        self.statusBar().showMessage(
+            "Spatial map drawn with Y horizontal" if on
+            else "Spatial map drawn with X horizontal")
+
+    def _axis_names(self):
+        """Short names of the scan's two spatial axes for readouts -- the
+        stage ("ST", "PIX") where the title carries one, else x/y."""
+        labels = self.data.scan.labels or {}
+        names = []
+        for slot in ("x", "y"):
+            title = str(labels.get(slot) or "").split(" (")[0].strip()
+            names.append(title if title and title not in ("X", "Y") else slot)
+        return tuple(names)
+
+    def _data_pixel(self, row: int, col: int):
+        """(y index, x index) for a pixel the *display* reported."""
+        return (col, row) if self.swap_xy else (row, col)
+
+    # -- cursor / frames -------------------------------------------------
+    def _show_frame_at(self, row, col):
+        scan = self.data.scan
+        self.frame_view.set_frame(self.data.frame_at(row, col), scan.k, scan.z)
+        self.frame_panel.sync_curve_source()
+        self.frame_panel.sync_level_range()
+        nx, ny = self._axis_names()
+        self.frame_label = f"{nx}={scan.x[col]:.4g}, {ny}={scan.y[row]:.4g}"
+        self.statusBar().showMessage(f"pixel ({self.frame_label})")
+
+    def _show_frame_at_x(self, xi):
+        scan = self.data.scan
+        self.frame_view.set_frame(self.data.frame_at_x(xi), scan.y, scan.z)
+        self.frame_panel.sync_curve_source()
+        self.frame_panel.sync_level_range()
+        self.frame_label = f"{self._axis_names()[0]}={scan.x[xi]:.4g}"
+        self.statusBar().showMessage(self.frame_label)
+
+    def _on_cursor_moved(self, row, col):
+        if self.data.kind == "spem_4d":
+            self._show_frame_at(*self._data_pixel(row, col))
+        else:
+            self._show_frame_at_x(col)
+
+    # -- region integration ----------------------------------------------
+    def _on_spatial_selection(self):
+        if self.data.kind != "spem_4d":
+            return
+        ranges = self.spatial_view.selection_index_ranges()
+        if ranges is None:
+            self.statusBar().showMessage("Draw a selection box first "
+                                          "(right-click -> Selection box)")
+            return
+        (ia0, ia1), (ib0, ib1) = ranges
+        # The ranges come back in display order; swapped, the horizontal one
+        # is the scan's Y.
+        (ix0, ix1), (iy0, iy1) = (((ib0, ib1), (ia0, ia1)) if self.swap_xy
+                                  else ((ia0, ia1), (ib0, ib1)))
+        scan = self.data.scan
+        frame = self.data.frame_over_region(slice(iy0, iy1 + 1), slice(ix0, ix1 + 1))
+        self.frame_view.set_frame(frame, scan.k, scan.z)
+        self.frame_panel.sync_curve_source()
+        self.frame_panel.sync_level_range()
+        nx, ny = self._axis_names()
+        self.frame_label = (f"{nx}[{scan.x[ix0]:.4g}..{scan.x[ix1]:.4g}], "
+                            f"{ny}[{scan.y[iy0]:.4g}..{scan.y[iy1]:.4g}] integrated")
+        self.set_colormap(self.colormap, self.flip)
+        self.statusBar().showMessage(
+            f"E vs k integrated over spatial {self.spatial_view.selection_summary()}")
+
+    def _on_frame_selection(self):
+        if self.data.kind != "spem_4d":
+            return
+        ranges = self.frame_view.selection_index_ranges()
+        if ranges is None:
+            self.statusBar().showMessage("Draw a selection box first "
+                                          "(right-click -> Selection box)")
+            return
+        (ik0, ik1), (ie0, ie1) = ranges
+        scan = self.data.scan
+        smap = self.data.spatial_over_region(slice(ik0, ik1 + 1), slice(ie0, ie1 + 1))
+        # The cursor stays put: this changes what the map shows, not which
+        # pixel the user was looking at.
+        self._set_spatial_map(smap, reset_cursor=False)
+        self.spatial_panel.sync_level_range()
+        self.set_colormap(self.colormap, self.flip)
+        self.statusBar().showMessage(
+            f"Spatial map integrated over {self.frame_view.selection_summary()}")
+
+    # -- comparison snapshots --------------------------------------------
+    def open_popout(self):
+        frame = self.frame_view.last_frame
+        if frame is None:
+            return
+        scan = self.data.scan
+        x_axis = scan.k if self.data.kind == "spem_4d" else scan.y
+        window = FrameWindow(f"{self.filename}  @ {self.frame_label or 'current view'}",
+                             frame, x_axis, scan.z,
+                             x_label=self.frame_view.x_label,
+                             y_label=self.frame_view.y_label,
+                             colormap=self.colormap, flip=self.flip,
+                             **self._display_levels(frame))
+        self._arm_figure_source(window)
+        window.closed.connect(lambda w: self.popout_windows.remove(w)
+                              if w in self.popout_windows else None)
+        self.popout_windows.append(window)
+        window.show()
+        self.statusBar().showMessage(f"Opened snapshot ({len(self.popout_windows)} open)")
+
+    def exportable_panels(self):
+        scan = self.data.scan
+        labels = scan.labels
+        out = []
+        if self.frame_view.last_frame is not None:
+            x_axis = scan.k if self.data.kind == "spem_4d" else scan.y
+            x_label = labels.get("k" if self.data.kind == "spem_4d" else "y", "k")
+            out.append(("EvsK", self.frame_view.last_frame, x_axis, scan.z,
+                        x_label, labels.get("z", "E")))
+        if self._spatial_map is not None:
+            # Always the measurement's own orientation, whichever way the
+            # panel happens to be drawn: an exported map should not depend on
+            # how it was being looked at.
+            out.append(("SpatialMap", np.asarray(self._spatial_map).T, scan.x, scan.y,
+                        labels.get("x", "x"), labels.get("y", "y")))
+        elif self.spatial_view._image2d is not None:
+            out.append(("SpatialMap", self.spatial_view._image2d.T, scan.x, scan.y,
+                        labels.get("x", "x"), labels.get("y", "y")))
+        return out
+
+
+# --------------------------------------------------------------------------
+# Single cut
+# --------------------------------------------------------------------------
+def path_points(info) -> list:
+    """The high-symmetry points a cut computed along a path records (the
+    Calculated bands window writes ``calc.path`` as ``"Γ@0.0000
+    M@0.5851 ..."``): ``[(distance, label), ...]``, or ``[]``."""
+    text = (info or {}).get("calc.path")
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
+    points = []
+    for part in str(text or "").split():
+        label, _at, where = part.rpartition("@")
+        try:
+            points.append((float(where), label))
+        except ValueError:
+            continue
+    return points if all(label for _d, label in points) else []
+
+
+class CutWindow(ViewerWindow):
+    """One E-vs-k spectrum (a scan taken at a single deflector position)."""
+
+    def __init__(self, data, filename, colormap, flip):
+        super().__init__(data, filename, colormap, flip)
+        scan = data.scan
+        self.statusBar().showMessage(
+            "Right-click the image for the readout cursor: it reports the "
+            "coordinates and value under it and draws the EDC and MDC through "
+            "that point.")
+        # The Fermi edge fit, the k conversion, the MDC and EDC fits, cut
+        # arithmetic and de-gridding are buttons of the launcher's tool
+        # panel, so they are not repeated here: one way in for each, always
+        # in sight.
+        self.fs_action = self.add_function(
+            "Straighten bands (FS correction)...", self.open_fs_correction,
+            "Straighten a curved feature: click along it, fit a polynomial, and "
+            "shift every angle column in energy so it comes out flat.")
+        # a calculation saved along a path of high-symmetry points: their
+        # names over the k axis (the k values stay below)
+        self.path_points = path_points(scan.info)
+        self.points_box = None
+        if self.path_points:
+            self.points_box = QCheckBox("High-symmetry points")
+            self.points_box.setChecked(True)
+            self.points_box.setToolTip(
+                "Show the names of the path's high-symmetry points along the "
+                "top of the cut, with a dashed line at each "
+                + ", ".join(label for _d, label in self.path_points) + ".")
+            self.points_box.toggled.connect(lambda *_: self._show_path_points())
+        self.build_toolbar([self.points_box] if self.points_box else ())
+
+        self.view = FrameImageView()
+        # Titled from the axes themselves: a cut read from a file is an
+        # E-vs-angle spectrum, but one computed along a path is energy
+        # against distance, and the title should say so.
+        title = (f"{scan.labels.get('y', 'E')} vs {scan.labels.get('x', 'k')}"
+                 if scan.labels.get("x") else "E vs k (single cut)")
+        self.panel = ImagePanel(title, self.view, curves=True, parent=self)
+        self.root.addWidget(self.panel, stretch=1)
+
+        self.view.set_axis_labels(scan.labels.get("x"), scan.labels.get("y"))
+        self.view.set_frame(data.cut_frame, scan.x, scan.y)
+        self.view.enable_selection_action(False)
+        self._mark_path_corners()
+        self._point_lines = []
+        self._show_path_points()
+        self.set_colormap(colormap, flip)
+        self.apply_display_options()
+
+    def _show_path_points(self):
+        """The path's high-symmetry points on the top axis, with a dashed
+        line at each, or none (the box unticked)."""
+        if not self.path_points:
+            return
+        for line in self._point_lines:
+            self.view.view_box.removeItem(line)
+        self._point_lines = []
+        top = self.view.plot.getAxis("top")
+        shown = self.points_box is None or self.points_box.isChecked()
+        if shown:
+            top.setTicks([[(float(d), str(label)) for d, label in self.path_points], []])
+            top.setStyle(showValues=True)
+            for d, _label in self.path_points:
+                line = pg.InfiniteLine(pos=float(d), angle=90, pen=pg.mkPen(
+                    "#ffffff", width=1, style=Qt.DashLine))
+                line.setZValue(24)
+                self.view.view_box.addItem(line, ignoreBounds=True)
+                self._point_lines.append(line)
+        else:
+            top.setTicks(None)
+            top.setStyle(showValues=False)
+
+    def image_panels(self):
+        return (self.panel,)
+
+    def exportable_panels(self):
+        scan = self.data.scan
+        if self.view.last_frame is None:
+            return []
+        return [("Cut", self.view.last_frame, scan.x, scan.y,
+                 scan.labels.get("x", "k"), scan.labels.get("y", "E"))]
+
+    # -- angle -> momentum -------------------------------------------------
+    def open_cut_k_conversion(self, bound: bool = False):
+        """The conversion dialog, modeless like the map's: the cut stays
+        readable -- and its Γ line draggable -- while the angles are being
+        settled. ``bound``: this window was opened for the conversion alone
+        (the launcher's tool panel), so the two close together."""
+        existing = getattr(self, "_cut_k_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+        dialog = CutKConversionDialog(self)
+        self._cut_k_dialog = dialog
+
+        def on_accepted():
+            settings, name = dialog.settings(), dialog.output_name()
+            self._cut_k_dialog = None
+            self.run_cut_k_conversion(settings, name=name)
+            if bound:
+                self.close()
+
+        def on_rejected():
+            self._cut_k_dialog = None
+            if bound:
+                self.close()
+
+        dialog.accepted.connect(on_accepted)
+        dialog.rejected.connect(on_rejected)
+        if bound:
+            self.closed.connect(lambda *_: dialog.isVisible() and dialog.reject())
+        dialog.show()
+        dialog.raise_()
+        return dialog
+
+    def open_mdc_edc_fit(self, mode: str = "mdc"):
+        """The MDC fit (``"mdc"``) or EDC fit (``"edc"``) panel on this cut.
+        Modeless and a window of its own, because a fit is worked at over
+        several minutes and the cut behind it is what the seeds are read
+        from. One of each can be open."""
+        from arpes_viewer.ui.panels.fit import (FitPanel, momentum_cut_reason,
+                                   edc_cut_reason, FIT_MODES)
+
+        reason = (momentum_cut_reason if mode == "mdc" else edc_cut_reason)(self.data)
+        if reason:
+            QMessageBox.information(self, FIT_MODES[mode], reason + ".")
+            return None
+        attribute = f"_fit_panel_{mode}"
+        existing = getattr(self, attribute, None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+        panel = FitPanel(self.data, self.filename, self,
+                         self.colormap, self.flip, mode=mode)
+        setattr(self, attribute, panel)
+        panel.closed.connect(lambda *_: setattr(self, attribute, None))
+        panel.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        panel.show()
+        panel.raise_()
+        return panel
+
+    def run_cut_k_conversion(self, settings: dict, name: str = None):
+        """Convert and list the result. Separate from the dialog so the
+        conversion can be driven without one, which is how it is tested."""
+        from arpes_viewer.tools.momentum.cutk import convert_cut, K_LABEL, K_RADIAL_LABEL
+
+        scan = self.data.scan
+        self.statusBar().showMessage("Converting the cut to k-space...")
+        try:
+            k_axis, energy, values, report = jobs.busy_work(
+                self, "Converting the cut to k-space", convert_cut,
+                scan.x, scan.y, self.data.cut_frame, **settings)
+        except Exception as exc:
+            QMessageBox.warning(self, "Cut k conversion", f"Conversion failed:\n{exc}")
+            self.statusBar().showMessage("Cut k conversion failed")
+            return None
+        if subtracted_fermi_level(self.data):
+            # The offset was added only to give k its kinetic energies; the
+            # result stays on the E - E_F axis the cut was on.
+            energy = (np.asarray(energy, dtype=float)
+                      - float(settings.get("energy_offset_eV", 0.0)))
+
+        parameters = dict(settings)
+        # The distance from Gamma is the one number the axes cannot carry,
+        # and the whole reason this conversion needs a reference: it travels
+        # with the result so a cut reopened next week still says where it ran.
+        parameters.update({key: report[key] for key in
+                           ("k_perp", "k_perp_min", "k_perp_max", "bow",
+                            "energy_drift", "k_step", "measured_fraction")})
+        source_info = {key: value for key, value in scan.info.items()
+                       if not key.startswith("kcut.")}
+        result = MemoryData(
+            "cut", (np.asarray(k_axis, dtype=float), np.asarray(energy, dtype=float)),
+            np.asarray(values, dtype=float),
+            {"x": K_RADIAL_LABEL if settings.get("radial") else K_LABEL,
+             "y": scan.labels.get("y", "Energy (eV)")},
+            source_label=name or f"{self.filename} [k]",
+            parameters=parameters, prefix="kcut",
+            source_path=getattr(self.data, "path", ""),
+            source_info=source_info,
+            source_motors=dict(scan.fourd_info))
+        self.datasetCreated.emit(result)
+        self.statusBar().showMessage(
+            f"Converted to k: {values.shape[0]}x{values.shape[1]}, "
+            f"{report['measured_fraction'] * 100:.0f}% measured, "
+            f"k⊥ = {abs(report['k_perp']):.4g} Å⁻¹ "
+            f"-- added to the file list")
+        return result
+
+    def _mark_path_corners(self):
+        """A cut taken along a path of several segments records where one
+        segment ends and the next begins; mark them, as the MATLAB dialog's
+        "boundary" option does, so a kink in a band is not mistaken for
+        physics when it is only a corner in the path."""
+        joints = self.data.scan.info.get("arbcut.joints")
+        if joints is None:
+            return
+        for position in np.atleast_1d(joints):
+            line = pg.InfiniteLine(pos=float(position), angle=90,
+                                   pen=pg.mkPen("#2f7a3f", width=2, style=Qt.DashLine))
+            line.setZValue(25)
+            self.view.view_box.addItem(line, ignoreBounds=True)
+
+    # -- Fermi-surface correction -----------------------------------------
+    def fs_angle_axis(self):
+        return self.data.scan.x
+
+    def fs_angle_label(self) -> str:
+        return self.data.scan.labels.get("x", "angle")
+
+    # -- the detector grid ----------------------------------------------------
+    def open_degrid(self):
+        """The De-grid window for this cut (see :mod:`ui.panels.degrid`).
+        Not in this window's menu -- it is the tool panel's -- but kept for
+        scripts and tests."""
+        from arpes_viewer.ui.panels.degrid import open_degrid
+        return self._show_degrid(open_degrid(
+            self, self.data, self.filename,
+            entries=getattr(self, "_dataset_entries", None),
+            loader=getattr(self, "_dataset_loader", None),
+            existing_names=self.existing_names, colormap=self.colormap,
+            flip=self.flip))
+
+    def fs_correction_target(self):
+        """The cut itself: (angle, energy), corrected into a new cut."""
+        scan = self.data.scan
+        return (np.asarray(self.data.cut_frame, dtype=float), scan.x, scan.y,
+                0, 1, "cut", lambda new_energy: (np.asarray(scan.x, dtype=float),
+                                                 new_energy))
+
+
+# --------------------------------------------------------------------------
+# Deflector map: contour first, cuts on demand
+# --------------------------------------------------------------------------
+@fits_screen
+class KConversionDialog(QDialog):
+    """Settings for converting a Map from angle space to momentum space.
+
+    Opens with the k-space origin already filled in from the readout cursor
+    on the constant-energy contour -- picking the point that should become
+    k = (0, 0) is the one thing the conversion genuinely needs from the user,
+    and reading it off the contour is easier than typing two angles. The
+    boxes stay editable, and keep following the cursor until the moment the
+    user types into one of them (after that their value is theirs, and the
+    "Read cursor" button is how they ask for the cursor's again).
+
+    The remaining fields mirror the MATLAB dialog's, minus the parts that do
+    not apply here: no lattice constant (the output is in A^-1, not pi/a),
+    no k_z offset and no Ek (the 2-D-only box). A single Cut has its own
+    dialog (:class:`CutKConversionDialog`), because it needs something a
+    map does not: to be told where Gamma is.
+    """
+
+    def __init__(self, contour: "ContourWindow"):
+        super().__init__(contour)
+        self.contour = contour
+        self.setWindowTitle("Convert map to momentum (k)")
+        self._user_edited = False
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            "Pick the point on the constant-energy contour that should become "
+            "the k-space origin (drag the readout cursor); its angles appear "
+            "below and can be edited. Press OK to convert.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        form = QFormLayout()
+        self.name_box = QLineEdit(self._default_name())
+        self.name_box.setToolTip(
+            "Name for the converted dataset in the file list. Converting the "
+            "same map twice would otherwise give two identically-named rows, "
+            "so this is pre-filled with a name that is not in use yet.")
+        form.addRow("Name", self.name_box)
+
+        self.theta_box = self._angle_box("Angle of the origin along the "
+                                          "deflector axis (contour x).")
+        self.phi_box = self._angle_box("Angle of the origin along the slit "
+                                        "axis (contour y).")
+        self.azimuth_box = self._angle_box(
+            "Sample rotation about the surface normal. Leave at 0 unless the "
+            "sample's axes are rotated against the analyser's.")
+        # Called by what they are -- where Gamma sits on each angle axis --
+        # and named as in the cut conversion, which asks for the same two
+        # numbers. (They were "theta/phi offset", after the MATLAB dialog.)
+        form.addRow("Γ deflector angle (deg)", self.theta_box)
+        form.addRow("Γ slit angle (deg)", self.phi_box)
+        form.addRow("Sample rotation (deg)", self.azimuth_box)
+
+        self.rotation_button = QPushButton("Set rotation from contour...")
+        self.rotation_button.setToolTip(
+            "Pick a direction on the contour that should end up vertical: click "
+            "two points along it (or one, and the line from the origin to it is "
+            "used), and the rotation that stands it upright is filled in above.\n\n"
+            "The two points mark a line, not an arrow, so the order you click "
+            "them in and which side of the origin they sit on make no "
+            "difference. What comes back is the smaller of the two turns that "
+            "stand that line vertical, between -90 and +90 degrees.")
+        self.rotation_button.setCheckable(True)
+        self.rotation_button.toggled.connect(self._toggle_rotation_picking)
+        form.addRow("", self.rotation_button)
+        self.rotation_note = QLabel("")
+        self.rotation_note.setWordWrap(True)
+        self.rotation_note.setMinimumHeight(34)
+        form.addRow("", self.rotation_note)
+        self._rotation_points = []
+
+        self.energy_offset_box = QDoubleSpinBox()
+        self.energy_offset_box.setDecimals(4)
+        self.energy_offset_box.setRange(-10000.0, 10000.0)
+        self.energy_offset_box.setSingleStep(0.1)
+        self.energy_offset_box.setToolTip(
+            "Added to the kinetic energy before converting, for when the axis "
+            "is not already a true kinetic energy.")
+        form.addRow("Energy offset (eV)", self.energy_offset_box)
+        shifted = subtracted_fermi_level(contour.data)
+        if shifted:
+            # A map shifted to E - E_F: add E_F back, or every energy at or
+            # below the Fermi level would have no momentum at all.
+            self.energy_offset_box.setValue(shifted)
+            self.energy_offset_box.setToolTip(
+                self.energy_offset_box.toolTip() +
+                f"\n\nThis map's energy axis is E − E_F; E_F = {shifted:.4f} eV "
+                f"is filled in so the conversion uses kinetic energies.")
+
+        # The output grid, asked for either way round: how many points, or
+        # how far apart. Counts are the default because they say exactly how
+        # big the result will be; a resolution says what it is worth
+        # resolving, which is the question when comparing scans. One of the
+        # two is always disabled, so there is never a pair of numbers
+        # disagreeing about the same axis.
+        n_e = len(contour.E)
+        self.by_count = QRadioButton("by number of points")
+        self.by_resolution = QRadioButton("by step size")
+        self.by_count.setChecked(True)
+        mode_row = QWidget()
+        mode_box = QHBoxLayout(mode_row)
+        mode_box.setContentsMargins(0, 0, 0, 0)
+        mode_box.addWidget(self.by_count)
+        mode_box.addWidget(self.by_resolution)
+        mode_box.addStretch(1)
+        form.addRow("Output grid", mode_row)
+
+        # As many points as were measured along each angle, as the cut
+        # conversion does: a fixed 100 threw away most of a slit's channels.
+        n_defl = max(len(contour.angle_defl), 2)
+        n_slit = max(len(contour.angle_slit), 2)
+        self.nkx_box = self._count_box(
+            n_defl, f"Number of kx points. Defaults to the measured {n_defl} "
+                    f"deflector angles.")
+        self.nky_box = self._count_box(
+            n_slit, f"Number of ky points. Defaults to the measured {n_slit} "
+                    f"slit angles.")
+        self.ne_box = self._count_box(
+            n_e, f"Number of energy points. Defaults to the measured {n_e}; "
+                 f"lower it to shrink the result.")
+        form.addRow("kx points", self.nkx_box)
+        form.addRow("ky points", self.nky_box)
+        form.addRow("E points", self.ne_box)
+
+        # The two halves describe the same grid: whichever is chosen above is
+        # typed, and the other (greyed) follows it -- see _sync_grid.
+        self.dkx_box = self._resolution_box(0.01, 5, "\u00c5\u207b\u00b9",
+                                            "Spacing between kx points.")
+        self.dky_box = self._resolution_box(0.01, 5, "\u00c5\u207b\u00b9",
+                                            "Spacing between ky points.")
+        energy_step = abs(float(contour.E[1] - contour.E[0])) * 1000 if n_e > 1 else 10.0
+        self.de_box = self._resolution_box(
+            max(round(energy_step, 3), 0.001), 3, "meV",
+            "Spacing between energy points. The measurement's own step is "
+            f"{energy_step:.4g} meV.")
+        form.addRow("kx step (\u00c5\u207b\u00b9)", self.dkx_box)
+        form.addRow("ky step (\u00c5\u207b\u00b9)", self.dky_box)
+        form.addRow("E step (meV)", self.de_box)
+
+        # Only for a setting that defines no grid at all; the values
+        # themselves are in the boxes.
+        self.grid_note = QLabel("")
+        self.grid_note.setWordWrap(True)
+        form.addRow("", self.grid_note)
+
+        # Half precision by default: the converted cube is the largest thing
+        # this program makes, and float16 resolves far finer than the
+        # counting noise of the measurement it came from.
+        self.precision_combo = QComboBox()
+        self.precision_combo.addItem("float16 (half the memory and file size)", "float16")
+        self.precision_combo.addItem("float32", "float32")
+        self.precision_combo.setToolTip(
+            "Precision the converted cube is stored in. The interpolation "
+            "itself is always done in double precision.")
+        form.addRow("Output precision", self.precision_combo)
+        precision_note = QLabel(
+            "float16 keeps about 3 significant digits (0.05 % steps), far "
+            "finer than the counting noise of any measured point, so "
+            "contours, cuts and fits are unchanged at half the storage. "
+            "Values outside float16's range stay float32 automatically.")
+        precision_note.setWordWrap(True)
+        layout.addLayout(form)
+        # Below the form at full width, not in its value column: a form row
+        # does not grow with a wrapped label, and clipped this note would be
+        # worse than none.
+        layout.addWidget(precision_note)
+
+        for radio in (self.by_count, self.by_resolution):
+            radio.toggled.connect(self._update_grid_mode)
+        # The origin, rotation and energy offset move the k range, and with it
+        # the spacing a given number of points works out to.
+        for box in (self.dkx_box, self.dky_box, self.de_box,
+                    self.nkx_box, self.nky_box, self.ne_box,
+                    self.theta_box, self.phi_box, self.azimuth_box,
+                    self.energy_offset_box):
+            box.valueChanged.connect(self._sync_grid)
+        self._update_grid_mode()
+
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        layout.addWidget(self.note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Convert")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        for box in (self.theta_box, self.phi_box):
+            box.valueChanged.connect(self._mark_edited)
+
+        # A map of the same size as one converted before is, nearly always,
+        # the same sample measured again (another photon energy, another
+        # polarisation): start from that conversion's settings.
+        from arpes_viewer.tools.runtime import remembered
+        self.restored = remembered.recall(self.REMEMBERED, self._shape())
+        if self.restored:
+            self.restore(self.restored)
+
+    #: the key the settings are remembered under (tools.runtime.remembered)
+    REMEMBERED = "map_k_conversion"
+
+    def _shape(self):
+        contour = self.contour
+        return (len(contour.angle_defl), len(contour.angle_slit), len(contour.E))
+
+    def remembered_settings(self) -> dict:
+        """What carries over to the next map of this size: Γ, the rotation,
+        the grid and the precision -- not the energy offset, which is this
+        map's own E_F, nor the name."""
+        return {"theta": self.theta_box.value(), "phi": self.phi_box.value(),
+                "azimuth": self.azimuth_box.value(),
+                "by_count": self.by_count.isChecked(),
+                "nkx": self.nkx_box.value(), "nky": self.nky_box.value(),
+                "ne": self.ne_box.value(), "dkx": self.dkx_box.value(),
+                "dky": self.dky_box.value(), "de": self.de_box.value(),
+                "precision": self.precision_combo.currentData()}
+
+    def restore(self, settings: dict):
+        """Fill the boxes from remembered settings (see
+        :meth:`remembered_settings`); anything missing keeps its default."""
+        boxes = {"theta": self.theta_box, "phi": self.phi_box,
+                 "azimuth": self.azimuth_box, "nkx": self.nkx_box,
+                 "nky": self.nky_box, "ne": self.ne_box, "dkx": self.dkx_box,
+                 "dky": self.dky_box, "de": self.de_box}
+        for name, box in boxes.items():
+            if name in settings:
+                box.blockSignals(True)
+                box.setValue(type(box.value())(settings[name]))
+                box.blockSignals(False)
+        if "by_count" in settings:
+            (self.by_count if settings["by_count"] else self.by_resolution).setChecked(True)
+        index = self.precision_combo.findData(settings.get("precision"))
+        if index >= 0:
+            self.precision_combo.setCurrentIndex(index)
+        # The origin is now the remembered one, not the cursor's.
+        self._user_edited = True
+        self._update_grid_mode()
+        self.note.setText(
+            "Settings from the last conversion of a map of this size "
+            "(Γ, rotation, grid). The energy offset is this map's own.")
+
+    def accept(self):
+        from arpes_viewer.tools.runtime import remembered
+        remembered.remember(self.REMEMBERED, self._shape(),
+                            self.remembered_settings())
+        super().accept()
+
+    def _default_name(self) -> str:
+        """A name for the result that is not already taken.
+
+        The launcher owns the list, so it is asked what is in use; when the
+        dialog is exercised without one (in tests), the plain name is fine.
+        """
+        base = f"{self.contour.filename} [k]"
+        taken = set()
+        naming = getattr(self.contour, "existing_names", None)
+        if callable(naming):
+            taken = set(naming())
+        if base not in taken:
+            return base
+        n = 2
+        while f"{base} {n}" in taken:
+            n += 1
+        return f"{base} {n}"
+
+    def output_name(self) -> str:
+        return self.name_box.text().strip() or self._default_name()
+
+    # -- the output grid ---------------------------------------------------
+    @staticmethod
+    def _resolution_box(value, decimals, unit, tip):
+        box = QDoubleSpinBox()
+        box.setDecimals(decimals)
+        box.setRange(10.0 ** -decimals, 1e6)
+        box.setSingleStep(10.0 ** -(decimals - 1))
+        box.setValue(value)
+        box.setToolTip(f"{tip} In {unit}.")
+        return box
+
+    def _update_grid_mode(self, *_):
+        by_count = self.by_count.isChecked()
+        for box in (self.nkx_box, self.nky_box, self.ne_box):
+            box.setEnabled(by_count)
+        for box in (self.dkx_box, self.dky_box, self.de_box):
+            box.setEnabled(not by_count)
+        self._sync_grid()
+
+    def k_extent(self):
+        """The (kx, ky) box the current settings would produce, so a
+        resolution can be turned into a point count. Returns None if the
+        settings do not describe a conversion at all."""
+        from arpes_viewer.tools.momentum.kspace import k_extent
+        try:
+            return k_extent(self.contour.angle_defl, self.contour.angle_slit,
+                            self.contour.E,
+                            theta_offset_deg=self.theta_box.value(),
+                            phi_offset_deg=self.phi_box.value(),
+                            azimuth_deg=self.azimuth_box.value(),
+                            energy_offset_eV=self.energy_offset_box.value())
+        except Exception:
+            return None
+
+    def grid_counts(self):
+        """(n_kx, n_ky, n_E), whichever way the user asked for them."""
+        if self.by_count.isChecked():
+            return (int(self.nkx_box.value()), int(self.nky_box.value()),
+                    int(self.ne_box.value()))
+        extent = self.k_extent()
+        if extent is None:
+            raise ValueError("the conversion settings do not define a k range yet")
+        kx_lo, kx_hi, ky_lo, ky_hi = extent
+        n_kx = int(round((kx_hi - kx_lo) / self.dkx_box.value())) + 1
+        n_ky = int(round((ky_hi - ky_lo) / self.dky_box.value())) + 1
+        energy = np.asarray(self.contour.E, dtype=float)
+        span_meV = abs(float(energy[-1] - energy[0])) * 1000.0
+        n_e = int(round(span_meV / self.de_box.value())) + 1
+        return max(n_kx, 2), max(n_ky, 2), max(n_e, 2)
+
+    def _sync_grid(self, *_):
+        """Show the other half of the grid setting in its (greyed) boxes.
+
+        Points and spacings are one choice seen two ways. Whichever the
+        user is typing decides; the other always shows what that works out
+        to -- the spacing the typed counts give over the current k range,
+        or the counts the typed spacings round to -- so a greyed box never
+        holds a stale number that looks like a result.
+        """
+        try:
+            n_kx, n_ky, n_e = self.grid_counts()
+            extent = self.k_extent()
+            if extent is None:
+                raise ValueError("the conversion settings do not define a k range yet")
+        except Exception as exc:
+            self.grid_note.setText(str(exc))
+            return
+        self.grid_note.setText("")
+        kx_lo, kx_hi, ky_lo, ky_hi = extent
+        energy = np.asarray(self.contour.E, dtype=float)
+        span_meV = abs(float(energy[-1] - energy[0])) * 1000.0
+        if self.by_count.isChecked():
+            shown = ((self.dkx_box, (kx_hi - kx_lo) / max(n_kx - 1, 1)),
+                     (self.dky_box, (ky_hi - ky_lo) / max(n_ky - 1, 1)),
+                     (self.de_box, span_meV / max(n_e - 1, 1)))
+        else:
+            shown = ((self.nkx_box, n_kx), (self.nky_box, n_ky), (self.ne_box, n_e))
+        for box, value in shown:
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+
+    # -- sample rotation from the contour ---------------------------------
+    def _toggle_rotation_picking(self, on: bool):
+        if on:
+            self._rotation_points = []
+            self.contour.view.clear_overlays()
+            self.contour.view.start_point_picking(self._add_rotation_point)
+            self.rotation_note.setText(
+                "Click one or two points on the contour along the direction "
+                "that should end up vertical.")
+        else:
+            self.contour.view.stop_point_picking()
+            self.contour.view.clear_overlays()
+            if not self._rotation_points:
+                self.rotation_note.setText("")
+            # The readout cursor's own picking is not restored: it never used
+            # clicks, only dragging, so nothing was taken away.
+
+    def origin_point(self):
+        """Where k = (0, 0) currently sits on the contour, in its own angles.
+
+        That is the theta/phi offsets -- the point picked with the readout
+        cursor -- not the contour's (0, 0). A single rotation point is
+        measured from here, so the direction it defines is the one that will
+        actually run through the origin of the converted map.
+        """
+        return float(self.theta_box.value()), float(self.phi_box.value())
+
+    def _add_rotation_point(self, x: float, y: float):
+        from arpes_viewer.tools.momentum.kspace import points_to_azimuth
+        self._rotation_points.append((x, y))
+        if len(self._rotation_points) > 2:
+            self._rotation_points = self._rotation_points[-1:]
+        xs = [p[0] for p in self._rotation_points]
+        ys = [p[1] for p in self._rotation_points]
+        self.contour.view.show_picked_points(xs, ys)
+        if len(self._rotation_points) == 1:
+            ox, oy = self.origin_point()
+            pair = [(ox, oy), (xs[0], ys[0])]
+        else:
+            pair = list(self._rotation_points)
+        try:
+            rotation = points_to_azimuth(pair)
+        except ValueError as exc:
+            self.rotation_note.setText(str(exc))
+            return
+        self.azimuth_box.setValue(rotation)
+        if len(self._rotation_points) == 1:
+            ox, oy = pair[0]
+            self.contour.view.show_overlay_path([ox, xs[0]], [oy, ys[0]])
+            self.rotation_note.setText(
+                f"One point: the line from the k-space origin "
+                f"({ox:.3g}, {oy:.3g}) to it is taken as the direction "
+                f"\u2192 {rotation:.3f}\u00b0 (the smaller turn; the line has "
+                f"no direction). Click a second point to use the line between "
+                f"the two instead.")
+        else:
+            self.contour.view.show_overlay_path(xs, ys)
+            self.rotation_note.setText(
+                f"Two points \u2192 {rotation:.3f}\u00b0 stands that line "
+                f"vertical (along ky). The line has no direction, so clicking "
+                f"the pair the other way round gives the same number.")
+        self._sync_grid()
+
+    def _angle_box(self, tip):
+        box = QDoubleSpinBox()
+        box.setDecimals(4)
+        box.setRange(-180.0, 180.0)
+        box.setSingleStep(0.1)
+        box.setToolTip(tip)
+        return box
+
+    @staticmethod
+    def _count_box(value, tip):
+        box = QSpinBox()
+        box.setRange(2, 20000)
+        box.setValue(int(value))
+        box.setToolTip(tip)
+        return box
+
+    def _mark_edited(self, *_):
+        self._user_edited = True
+
+    def follow_cursor(self):
+        """Track the contour's readout cursor, until the user types a value
+        of their own."""
+        if not self._user_edited:
+            self.read_cursor(mark=False)
+
+    def read_cursor(self, mark=True):
+        """Copy the readout cursor's position into the offset boxes.
+
+        There is no button for this any more: the boxes follow the cursor by
+        themselves for as long as the user has not typed a value of their
+        own, which is every moment the button would have been useful in.
+        """
+        position = self.contour.readout_position()
+        if position is None:
+            self.note.setText("No readout cursor on the contour yet -- "
+                              "right-click it and choose \"Readout cursor\".")
+            return
+        theta, phi = position
+        for box, value in ((self.theta_box, theta), (self.phi_box, phi)):
+            box.blockSignals(True)
+            box.setValue(float(value))
+            box.blockSignals(False)
+        self.note.setText(f"Origin taken from the cursor: "
+                          f"deflector {theta:.4g} deg, slit {phi:.4g} deg.")
+        if mark:
+            self._user_edited = True
+        # The boxes were set with their signals blocked; the origin moves the
+        # k range, so the greyed half of the grid follows by hand.
+        self._sync_grid()
+
+    def settings(self) -> dict:
+        n_kx, n_ky, n_energy = self.grid_counts()
+        return {
+            "theta_offset_deg": self.theta_box.value(),
+            "phi_offset_deg": self.phi_box.value(),
+            "azimuth_deg": self.azimuth_box.value(),
+            "energy_offset_eV": self.energy_offset_box.value(),
+            "n_kx": n_kx,
+            "n_ky": n_ky,
+            "n_energy": n_energy,
+            "precision": self.precision_combo.currentData(),
+        }
+
+    def closeEvent(self, event):
+        # Picking must not outlive the dialog: a contour that still swallowed
+        # clicks afterwards would be a puzzle with no visible cause.
+        if self.rotation_button.isChecked():
+            self.rotation_button.setChecked(False)
+        else:
+            self.contour.view.stop_point_picking()
+            self.contour.view.clear_overlays()
+        super().closeEvent(event)
+
+
+class _OrbitViewBox(pg.ViewBox):
+    """A ViewBox whose left-drag turns a 3-D scene around instead of panning
+    the 2-D picture it is really showing.
+
+    The Brillouin-zone preview is a hand-projected wireframe rather than a
+    real 3-D scene graph (see :class:`CutPlanePreviewDialog` for why), so
+    "rotate the view" has to mean "change the two angles the projection is
+    computed from and redraw" -- this is where the drag gets turned into
+    those two numbers. Right-drag is left alone, so the inherited zoom still
+    works.
+    """
+
+    orbited = pyqtSignal(float, float)      # delta azimuth, delta elevation
+
+    def mouseDragEvent(self, ev, axis=None):
+        if ev.button() != Qt.LeftButton:
+            super().mouseDragEvent(ev, axis)
+            return
+        ev.accept()
+        delta = ev.screenPos() - ev.lastScreenPos()
+        self.orbited.emit(-0.4 * delta.x(), 0.4 * delta.y())
+
+
+class CutPlanePreviewDialog(QDialog):
+    """A turnable 3-D view of the Brillouin zone with the cutting plane in
+    it, so that "(h k l) = (1 0 1), offset 0.2" can be *seen* rather than
+    imagined.
+
+    Drawn by projecting the zone's own face loops onto the screen by hand --
+    an orthographic camera in a dozen lines -- rather than through
+    ``pyqtgraph.opengl``, which would add PyOpenGL to a program that
+    currently installs with pip and no compiler, for one preview window. The
+    faces pointing away from the camera are drawn faint and dashed and those
+    facing it solid, which gives the shape enough depth to read without any
+    hidden-surface machinery.
+
+    What is drawn: the zone (or the irreducible wedge, whichever the dialog
+    is set to), the plane as a dashed square, the polygon where the plane
+    actually cuts the zone -- filled, and it is this polygon that becomes
+    the overlay on the contour -- the plane's normal as an arrow from Gamma,
+    and the three reciprocal-lattice vectors for orientation. And the
+    named high-symmetry points (:mod:`tools.crystal.highsym`): every copy in the
+    zone as a faint dot, one of each labelled, and those the plane passes
+    through ringed in the plane's colour, so it can be seen which offset
+    puts the cut through Z, L, M ...
+    """
+
+    def __init__(self, parent: "BrillouinZoneDialog"):
+        super().__init__(parent)
+        self.bz_dialog = parent
+        self.setModal(False)
+        self.setWindowTitle("Cut plane in 3D")
+        self.resize(560, 620)
+        self._azimuth, self._elevation = 35.0, 22.0
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            "Drag to turn the zone; right-drag to zoom. The filled polygon is "
+            "the cut that goes onto the contour. Yellow: high-symmetry points "
+            "(one of each named); ringed in pink: the ones this plane holds.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        self.view_box = _OrbitViewBox(lockAspect=True, enableMenu=False)
+        self.view_box.orbited.connect(self._orbit)
+        self.plot = pg.PlotWidget(viewBox=self.view_box)
+        self.plot.hideAxis("left")
+        self.plot.hideAxis("bottom")
+        layout.addWidget(self.plot, stretch=1)
+
+        controls = QHBoxLayout()
+        self.azimuth_box = self._angle_box(self._azimuth, -360.0, 360.0)
+        self.elevation_box = self._angle_box(self._elevation, -89.0, 89.0)
+        for label, box in (("Azimuth", self.azimuth_box),
+                           ("Elevation", self.elevation_box)):
+            controls.addWidget(QLabel(label))
+            controls.addWidget(box)
+            box.valueChanged.connect(self._angles_typed)
+        reset = QPushButton("Reset view")
+        reset.clicked.connect(self._reset_view)
+        controls.addWidget(reset)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        self.note.setMinimumHeight(34)
+        layout.addWidget(self.note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.close)
+        layout.addWidget(buttons)
+
+        self._frame_the_cut()
+        for box, value in ((self.azimuth_box, self._azimuth),
+                           (self.elevation_box, self._elevation)):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self.refresh()
+
+    @staticmethod
+    def _angle_box(value, low, high):
+        box = QDoubleSpinBox()
+        box.setDecimals(1)
+        box.setRange(low, high)
+        box.setSingleStep(5.0)
+        box.setValue(value)
+        box.setKeyboardTracking(False)
+        return box
+
+    def _orbit(self, d_azimuth: float, d_elevation: float):
+        self._azimuth = (self._azimuth + d_azimuth) % 360.0
+        self._elevation = float(np.clip(self._elevation + d_elevation, -89.0, 89.0))
+        for box, value in ((self.azimuth_box, self._azimuth),
+                           (self.elevation_box, self._elevation)):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self.refresh()
+
+    def _angles_typed(self, *_):
+        self._azimuth = self.azimuth_box.value()
+        self._elevation = self.elevation_box.value()
+        self.refresh()
+
+    def _reset_view(self):
+        self._frame_the_cut()
+        for box, value in ((self.azimuth_box, self._azimuth),
+                           (self.elevation_box, self._elevation)):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self.plot.enableAutoRange()
+        self.refresh()
+
+    def _frame_the_cut(self):
+        """Point the camera about 55 degrees away from the cut plane's own
+        normal.
+
+        A fixed starting view is fine until the plane's normal happens to
+        point at the camera -- a (1 1 1) cut of a cubic crystal very nearly
+        does -- and then the cut is seen face-on or edge-on, which is the
+        one thing this window exists to avoid. Tilting off the normal by a
+        fixed angle keeps every orientation legible without the user having
+        to drag the view around first.
+        """
+        try:
+            *_, normal, _point, _u, _v = self.bz_dialog.cut_geometry()
+        except Exception:
+            self._azimuth, self._elevation = 35.0, 22.0
+            return
+        normal_azimuth = float(np.degrees(np.arctan2(normal[1], normal[0])))
+        normal_elevation = float(np.degrees(np.arcsin(np.clip(normal[2], -1.0, 1.0))))
+        tilt = -55.0 if normal_elevation >= 0.0 else 55.0
+        self._azimuth = (normal_azimuth + 25.0) % 360.0
+        self._elevation = float(np.clip(normal_elevation + tilt, -89.0, 89.0))
+
+    # -- projection --------------------------------------------------------
+    def _camera(self):
+        azimuth = np.radians(self._azimuth)
+        elevation = np.radians(self._elevation)
+        eye = np.array([np.cos(elevation) * np.cos(azimuth),
+                        np.cos(elevation) * np.sin(azimuth),
+                        np.sin(elevation)])
+        up_reference = np.array([0.0, 0.0, 1.0])
+        right = np.cross(up_reference, eye)
+        if np.linalg.norm(right) < 1e-9:       # looking straight down z
+            right = np.array([1.0, 0.0, 0.0])
+        right = right / np.linalg.norm(right)
+        return eye, right, np.cross(eye, right)
+
+    def _project(self, points, camera=None):
+        eye, right, up = camera or self._camera()
+        points = np.atleast_2d(np.asarray(points, dtype=float))
+        return points @ right, points @ up
+
+    # -- drawing -----------------------------------------------------------
+    def refresh(self):
+        """Rebuild the picture from the dialog's current settings."""
+        self.plot.clear()
+        try:
+            scene = self.bz_dialog.cut_geometry()
+        except Exception as exc:
+            self.note.setText(f"Nothing to show: {exc}")
+            return
+
+        zone, _b, b_conventional, normal, point, u, v = scene
+
+        # A viewpoint chosen for one cut plane is not necessarily a useful
+        # one for the next: swinging the normal round to (1 1 1) can leave
+        # the old camera staring straight down it, which shows nothing. So
+        # the view re-frames itself when the *normal* changes, and otherwise
+        # leaves alone whatever the user has dragged it to.
+        previous = getattr(self, "_framed_normal", None)
+        if previous is None or not np.allclose(previous, normal, atol=1e-9):
+            self._framed_normal = np.array(normal, dtype=float)
+            self._frame_the_cut()
+            for box, value in ((self.azimuth_box, self._azimuth),
+                               (self.elevation_box, self._elevation)):
+                box.blockSignals(True)
+                box.setValue(value)
+                box.blockSignals(False)
+            self.plot.enableAutoRange()
+
+        camera = self._camera()
+        extent = float(np.max(np.linalg.norm(zone.vertices, axis=1))) or 1.0
+
+        # the zone itself, front faces solid and back faces faint
+        eye = camera[0]
+        for loop in zone.faces:
+            centre = loop[:-1].mean(axis=0)
+            facing = float(np.dot(centre, eye)) >= 0.0
+            xs, ys = self._project(loop, camera)
+            pen = pg.mkPen("#7fd4ff" if facing else "#2f5a70",
+                           width=1.6 if facing else 1.0,
+                           style=Qt.SolidLine if facing else Qt.DashLine)
+            self.plot.addItem(pg.PlotDataItem(xs, ys, pen=pen))
+
+        # the plane, as a dashed square a little larger than the zone
+        from arpes_viewer.tools.crystal.bz3d import plane_basis, cut_points_3d
+        u_axis, v_axis = plane_basis(normal)
+        half = 1.05 * extent
+        corners = np.array([point + su * half * u_axis + sv * half * v_axis
+                            for su, sv in ((1, 1), (-1, 1), (-1, -1), (1, -1), (1, 1))])
+        xs, ys = self._project(corners, camera)
+        self.plot.addItem(pg.PlotDataItem(
+            xs, ys, pen=pg.mkPen("#ff3ce0", width=1.0, style=Qt.DashLine)))
+
+        # where it actually cuts, filled: this polygon is the overlay
+        if u is not None:
+            cut = cut_points_3d(u, v, normal, point)
+            xs, ys = self._project(cut, camera)
+            path = QPainterPath()
+            path.moveTo(float(xs[0]), float(ys[0]))
+            for x, y in zip(xs[1:], ys[1:]):
+                path.lineTo(float(x), float(y))
+            path.closeSubpath()
+            patch = QGraphicsPathItem(path)
+            patch.setBrush(pg.mkBrush(255, 60, 224, 70))
+            patch.setPen(pg.mkPen("#ff3ce0", width=2.0))
+            self.plot.addItem(patch)
+
+        # the normal from Gamma to the plane, and the reciprocal axes
+        tip = point + normal * 0.55 * extent
+        xs, ys = self._project(np.array([np.zeros(3), point, tip]), camera)
+        self.plot.addItem(pg.PlotDataItem(
+            xs, ys, pen=pg.mkPen("#ffd166", width=2.0)))
+        self.plot.addItem(pg.PlotDataItem(
+            [xs[-1]], [ys[-1]], symbol="o", symbolSize=7,
+            symbolBrush="#ffd166", pen=None))
+        # the *conventional* reciprocal axes, because those are the ones the
+        # (h k l) boxes are read against (see BrillouinZoneDialog._zone_3d)
+        for vector, name, colour in zip(b_conventional, ("a*", "b*", "c*"),
+                                        ("#ff6b6b", "#7bd88f", "#8fa2ff")):
+            scaled = vector / np.linalg.norm(vector) * 0.5 * extent
+            xs, ys = self._project(np.array([np.zeros(3), scaled]), camera)
+            self.plot.addItem(pg.PlotDataItem(xs, ys, pen=pg.mkPen(colour, width=1.4)))
+            label = pg.TextItem(name, color=colour, anchor=(0.5, 0.5))
+            label.setPos(float(xs[-1]), float(ys[-1]))
+            self.plot.addItem(label)
+        gamma = pg.TextItem("Γ", color="#dddddd", anchor=(1.2, 1.2))
+        gamma.setPos(*[float(c[0]) for c in self._project(np.zeros(3), camera)])
+        self.plot.addItem(gamma)
+
+        in_plane = self._draw_high_symmetry(camera)
+
+        text = self.bz_dialog.cut_description()
+        if in_plane:
+            text += f"\nIn this plane: {', '.join(in_plane)}."
+        self.note.setText(text)
+
+    def _draw_high_symmetry(self, camera):
+        """The named points: every copy in the zone as a small dot, one of
+        each labelled, and the ones the plane passes through ringed and
+        labelled in the plane's colour -- which is what tells you the offset
+        has landed where you meant. Returns the names in the plane."""
+        try:
+            representatives, copies = self.bz_dialog.high_symmetry()
+            on_plane = self.bz_dialog.points_in_plane()
+        except Exception:                                  # noqa: BLE001
+            return []
+        if copies:
+            xs, ys = self._project(np.array([p.k for p in copies]), camera)
+            self.plot.addItem(pg.ScatterPlotItem(
+                xs, ys, size=4, pen=None, brush=pg.mkBrush(255, 209, 102, 110)))
+        shown = set()
+        for point in representatives:
+            if point.label == "Γ":
+                continue
+            x, y = (float(c[0]) for c in self._project(point.k, camera))
+            self.plot.addItem(pg.ScatterPlotItem(
+                [x], [y], size=7, pen=pg.mkPen("#111111"),
+                brush=pg.mkBrush("#ffd166")))
+            label = pg.TextItem(point.label, color="#ffd166", anchor=(-0.2, 1.0))
+            label.setPos(x, y)
+            self.plot.addItem(label)
+            shown.add(tuple(np.round(point.k, 6)))
+        names = []
+        if on_plane:
+            xs, ys = self._project(np.array([k for _label, k in on_plane]), camera)
+            self.plot.addItem(pg.ScatterPlotItem(
+                xs, ys, size=11, pen=pg.mkPen("#ff3ce0", width=2.0),
+                brush=pg.mkBrush(0, 0, 0, 0)))
+            for (label, k), x, y in zip(on_plane, xs, ys):
+                if label not in names:
+                    names.append(label)
+                if tuple(np.round(k, 6)) in shown or label == "Γ":
+                    continue
+                item = pg.TextItem(label, color="#ff8cf0", anchor=(-0.2, 0.0))
+                item.setPos(float(x), float(y))
+                self.plot.addItem(item)
+        return names
+
+    def closeEvent(self, event):
+        self.bz_dialog.preview_closed()
+        super().closeEvent(event)
+
+
+@fits_screen
+class BrillouinZoneDialog(QDialog):
+    """Overlay a Brillouin zone -- one crystal, or two twisted/mismatched
+    layers' moire zone -- on a k-space constant-energy contour.
+
+    Modeless, like the other contour tools that read points off the picture
+    (:class:`KConversionDialog`, :class:`ArbitraryCutDialog`): the "Pick
+    direction from contour..." button needs the contour to stay live behind
+    it. Nothing is drawn until **Plot** is pressed, though: the settings
+    here describe a crystal, and a half-typed lattice constant is not one,
+    so redrawing on every keystroke would spend its time showing zones
+    nobody asked for. What does update as you type is the reference text --
+    which Bravais lattice the space group implies, how far along its normal
+    the cut plane has been slid -- and the 3-D preview window, if it is
+    open, since looking at the cut is the whole reason it exists.
+
+    The drawn zone is deliberately left in place when this dialog is closed
+    (see :meth:`_InteractiveImageBase.set_bz_layer`); "Clear overlay" is the
+    explicit way to take it off again.
+
+    Only ever opened on a k-space map (the tool panel's button takes only
+    k-maps and converted kz maps): a Brillouin zone is a statement about
+    the crystal's momentum-space periodicity, so it only means something
+    once the contour's axes are actually momenta. Each Plot keeps the zone
+    with the dataset (:meth:`ContourWindow.bz_recorded`).
+
+    On a converted photon-energy scan (``kz_map_k``) the contour is the
+    plane holding the surface normal and the slit, ``(k_z, k_par)``, so
+    there the (h k l) is the *surface normal* and a k_par direction is asked
+    for too; the zone is cut by that plane (:func:`tools.crystal.bz3d.kz_zone_cuts`)
+    for any surface, not only (001) -- see :meth:`_adapt_to_kz_map`.
+
+    Two modes and two kinds of zone
+    -------------------------------
+    **3D crystal** starts from the space-group number, and the space group
+    then decides which of the six cell parameters are the user's to choose:
+    a cubic group offers one length and no angles, a hexagonal group two
+    lengths and no angles, P1 all six. The rest are disabled and follow
+    along, so a cell that contradicts its own space group cannot be typed in
+    the first place (which is a better answer than the warning this used to
+    print underneath it). A rhombohedral group is offered in hexagonal axes
+    only -- see :func:`tools.crystal.lattice.free_parameters`.
+
+    **2D layer** is three numbers for a surface lattice with no third axis,
+    and is also where the moire mode lives: a moire pattern is two stacked
+    *layers*, so asking for it from a 3-D crystal would mean guessing which
+    2-D sublattice the chosen cut plane exposes, which is a different (and
+    unrequested) calculation.
+
+    Either mode draws the **conventional** zone -- the first Brillouin zone,
+    i.e. the Wigner-Seitz cell of the reciprocal lattice -- or the
+    **irreducible** one, the wedge of it that the crystal's own symmetry
+    repeats into the whole zone (:func:`tools.crystal.bz3d.irreducible_wedge`,
+    :func:`tools.crystal.bz2d.irreducible_cell_2d`). In 3-D the symmetry comes from
+    the space group's point group plus inversion (the Laue class, since time
+    reversal gives ``E(k) = E(-k)`` even in a non-centrosymmetric crystal);
+    in 2-D there is no space group to ask, so the plane lattice's own
+    holohedry is used and the dialog says so, because a layer whose basis is
+    less symmetric than its lattice has a larger wedge than the one drawn.
+
+    Only the first zone is ever drawn, repeated by translation across the
+    field of view if asked -- never a second- or higher-order zone.
+    """
+
+    #: Where the last settings used anywhere are kept, so the dialog opened
+    #: on the next dataset -- or after a restart -- starts from the crystal
+    #: of the last one: an experiment is usually one crystal, and typing its
+    #: space group and cell again for every map is the chore this saves.
+    #: A dataset's own saved ``bz.*`` settings still win over it. Beside
+    #: the program's config.json; ``ARPES_VIEWER_CONFIG_DIR`` moves it
+    #: (the tests point it at a temporary folder).
+    LAST_USED_NAME = "brillouin_zone.json"
+
+    @classmethod
+    def last_used_path(cls) -> str:
+        folder = os.environ.get("ARPES_VIEWER_CONFIG_DIR") or os.path.join(
+            os.path.expanduser("~"), ".arpes_viewer")
+        return os.path.join(folder, cls.LAST_USED_NAME)
+
+    #: Settings that belong to one dataset rather than to the crystal, and
+    #: so are not carried over: the offset follows the photon energy (k_z)
+    #: of the map it was set on.
+    _NOT_CARRIED = ("offset",)
+
+    #: flat "bz.<key>" keys in scan.info, matching the app's own
+    #: "kconv.*"/"arbcut.*" convention -- save_dataset only ever writes
+    #: scalars (see loader.nxs_file.save_dataset), so settings are flattened
+    #: rather than kept as one nested dict.
+    _PREFIX = "bz."
+
+    def __init__(self, contour: "ContourWindow"):
+        super().__init__(contour)
+        self.contour = contour
+        self.setModal(False)
+        self.setWindowTitle("Brillouin zone")
+        # A converted photon-energy scan: its contour is (k_z, k_par), a
+        # plane holding the surface normal, not one perpendicular to it.
+        self._kz_map = getattr(contour.data, "kind", None) == "kz_map_k"
+        self._direction_points = []
+        self._zone_cache = None
+        self._preview = None
+
+        layout = QVBoxLayout(self)
+
+        # -- mode ---------------------------------------------------------
+        mode_row = QWidget()
+        mode_box = QHBoxLayout(mode_row)
+        mode_box.setContentsMargins(0, 0, 0, 0)
+        self.mode_3d = QRadioButton("3D crystal (space group)")
+        self.mode_2d = QRadioButton("2D layer (surface lattice)")
+        self.mode_3d.setChecked(True)
+        mode_box.addWidget(self.mode_3d)
+        mode_box.addWidget(self.mode_2d)
+        mode_box.addStretch(1)
+        layout.addWidget(mode_row)
+
+        # -- 3D crystal: the space group first, then what it leaves free ---
+        self.group_3d = QGroupBox("Crystal")
+        form3d = QFormLayout(self.group_3d)
+        self.spacegroup_box = QSpinBox()
+        self.spacegroup_box.setRange(1, 230)
+        self.spacegroup_box.setValue(1)
+        self.spacegroup_box.setKeyboardTracking(False)
+        self.spacegroup_box.setToolTip(
+            "International Tables (1-230) space-group number. Choose this "
+            "first: it fixes which cell parameters below are yours to set.")
+        form3d.addRow("Space group no.", self.spacegroup_box)
+        self.spacegroup_label = QLabel("")
+        self.spacegroup_label.setWordWrap(True)
+        # Three lines: name and Bravais lattice, point group, constraints. A
+        # wrapped label in a form layout is not given the height it wraps to,
+        # so with room for two the constraints line was cut in half.
+        self.spacegroup_label.setMinimumHeight(
+            3 * self.spacegroup_label.fontMetrics().lineSpacing() + 6)
+        form3d.addRow("", self.spacegroup_label)
+
+        self.a_box = self._length_box(3.0)
+        self.b_box = self._length_box(3.0)
+        self.c_box = self._length_box(3.0)
+        self.alpha_box = self._angle_box_180(90.0)
+        self.beta_box = self._angle_box_180(90.0)
+        self.gamma_box = self._angle_box_180(90.0)
+        for text, box in (("a (Å)", self.a_box), ("b (Å)", self.b_box),
+                          ("c (Å)", self.c_box),
+                          ("alpha (deg)", self.alpha_box),
+                          ("beta (deg)", self.beta_box),
+                          ("gamma (deg)", self.gamma_box)):
+            box.setToolTip("Greyed out means the space group fixes this one.")
+            form3d.addRow(text, box)
+        layout.addWidget(self.group_3d)
+
+        # -- 3D crystal: the cut plane -------------------------------------
+        self.group_cut = QGroupBox("Cut plane")
+        form_cut = QFormLayout(self.group_cut)
+        normal_row = QWidget()
+        normal_box = QHBoxLayout(normal_row)
+        normal_box.setContentsMargins(0, 0, 0, 0)
+        self.h_box = self._miller_box(0)
+        self.k_box = self._miller_box(0)
+        self.l_box = self._miller_box(1)
+        for text, box in (("h", self.h_box), ("k", self.k_box), ("l", self.l_box)):
+            normal_box.addWidget(QLabel(text))
+            normal_box.addWidget(box)
+        normal_box.addStretch(1)
+        normal_row.setToolTip(
+            "The plane's normal as Miller indices, read against the "
+            "conventional reciprocal axes: h*a* + k*b* + l*c* (for a "
+            "rhombohedral group, the hexagonal axes' a*, b*, c*). (0, 0, 1) "
+            "is the usual surface-normal cut.")
+        form_cut.addRow("Normal (hkl)", normal_row)
+        self._normal_row = normal_row
+
+        # Only for a k_z map: which way the slit ran in the surface.
+        kpar_row = QWidget()
+        kpar_box = QHBoxLayout(kpar_row)
+        kpar_box.setContentsMargins(0, 0, 0, 0)
+        self.kpar_h_box = self._miller_box(0)
+        self.kpar_k_box = self._miller_box(0)
+        self.kpar_l_box = self._miller_box(0)
+        for text, box in (("h", self.kpar_h_box), ("k", self.kpar_k_box),
+                          ("l", self.kpar_l_box)):
+            kpar_box.addWidget(QLabel(text))
+            kpar_box.addWidget(box)
+        kpar_box.addStretch(1)
+        kpar_row.setToolTip(
+            "The reciprocal-lattice direction the analyser slit ran along; "
+            "only its part perpendicular to the surface normal is used. "
+            "(0 0 0) picks the first of a*, b*, c* not along the normal.")
+        form_cut.addRow("k_par along (hkl)", kpar_row)
+        self._kpar_row = kpar_row
+
+        self.offset_box = QDoubleSpinBox()
+        self.offset_box.setDecimals(4)
+        self.offset_box.setRange(-20.0, 20.0)
+        self.offset_box.setSingleStep(0.01)
+        self.offset_box.setKeyboardTracking(False)
+        self.offset_box.setToolTip(
+            "How far to slide the plane along its own normal, from Gamma. "
+            "0 cuts through Gamma. This is a geometric offset in A^-1: "
+            "turning a photon energy into a kz that belongs here needs an "
+            "inner potential, which is the separate kz feature's job.")
+        form_cut.addRow("Offset along normal (Å⁻¹)", self.offset_box)
+        self._form_cut = form_cut
+        #: The offset a preset below put in the box, unrounded. The box
+        #: shows four decimals, and a plane rounded a hair past the face it
+        #: was meant to lie in (the top of the zone, at Z) misses the zone.
+        self._exact_offset = None
+        self.offset_points_combo = QComboBox()
+        self.offset_points_combo.setToolTip(
+            "Offsets along this normal at which the plane passes through a "
+            "high-symmetry point of the first zone. Choosing one sets the "
+            "offset above; the points the plane then holds are marked in the "
+            "3-D view and labelled on the contour.")
+        self.offset_points_combo.activated.connect(self._offset_point_chosen)
+        form_cut.addRow("Through point", self.offset_points_combo)
+        self._offset_presets_key = None
+        self.offset_label = QLabel("")
+        self.offset_label.setWordWrap(True)
+        self.offset_label.setMinimumHeight(34)
+        form_cut.addRow("", self.offset_label)
+
+        self.preview_button = QPushButton("Show cut plane in 3D...")
+        self.preview_button.setToolTip(
+            "Open a turnable 3-D view of the zone with this plane in it.")
+        self.preview_button.clicked.connect(self.open_preview)
+        form_cut.addRow("", self.preview_button)
+        layout.addWidget(self.group_cut)
+
+        # -- 2D layer -------------------------------------------------------
+        self.group_2d = QGroupBox("Layer lattice")
+        form2d = QFormLayout(self.group_2d)
+        self.a2_box = self._length_box(3.0)
+        self.b2_box = self._length_box(3.0)
+        self.gamma2_box = self._angle_box_180(120.0)
+        form2d.addRow("a (Å)", self.a2_box)
+        form2d.addRow("b (Å)", self.b2_box)
+        form2d.addRow("gamma (deg)", self.gamma2_box)
+        layout.addWidget(self.group_2d)
+
+        # -- which zone ------------------------------------------------------
+        zone_group = QGroupBox("Zone")
+        zone_form = QFormLayout(zone_group)
+        zone_row = QWidget()
+        zone_box = QHBoxLayout(zone_row)
+        zone_box.setContentsMargins(0, 0, 0, 0)
+        self.zone_conventional = QRadioButton("Conventional")
+        self.zone_irreducible = QRadioButton("Irreducible")
+        self.zone_conventional.setChecked(True)
+        self.zone_conventional.setToolTip(
+            "The first Brillouin zone: the Wigner-Seitz cell of the "
+            "reciprocal lattice.")
+        self.zone_irreducible.setToolTip(
+            "The wedge of the zone that the crystal's symmetry repeats into "
+            "the whole of it.")
+        zone_box.addWidget(self.zone_conventional)
+        zone_box.addWidget(self.zone_irreducible)
+        zone_box.addStretch(1)
+        zone_form.addRow("", zone_row)
+        self.zone_label = QLabel("")
+        self.zone_label.setWordWrap(True)
+        self.zone_label.setMinimumHeight(34)
+        zone_form.addRow("", self.zone_label)
+        layout.addWidget(zone_group)
+
+        # -- orientation ----------------------------------------------------
+        orient_group = QGroupBox("Orientation")
+        orient_form = QFormLayout(orient_group)
+        self.azimuth_box = QDoubleSpinBox()
+        self.azimuth_box.setDecimals(3)
+        self.azimuth_box.setRange(-360.0, 360.0)
+        self.azimuth_box.setSingleStep(1.0)
+        self.azimuth_box.setKeyboardTracking(False)
+        self.azimuth_box.setToolTip(
+            "Rotates the drawn zone (counter-clockwise) about k = (0, 0) to "
+            "line it up with the data -- the zone's own axes have no fixed "
+            "relation to kx/ky until this is set.")
+        orient_form.addRow("Azimuth (deg)", self.azimuth_box)
+        self._orient_form = orient_form
+        self.direction_button = QPushButton("Pick direction from contour...")
+        self.direction_button.setCheckable(True)
+        self.direction_button.setToolTip(
+            "Click one or two points on the contour along a direction whose "
+            "crystallographic azimuth you already know. The angle shown is "
+            "only reported, not applied -- set Azimuth above by hand to "
+            "whatever value should put that direction there.")
+        self.direction_button.toggled.connect(self._toggle_direction_picking)
+        orient_form.addRow("", self.direction_button)
+        self.direction_note = QLabel("")
+        self.direction_note.setWordWrap(True)
+        self.direction_note.setMinimumHeight(34)
+        orient_form.addRow("", self.direction_note)
+        self.tile_cb = QCheckBox("Repeat across the field of view")
+        self.tile_cb.setChecked(True)
+        self.tile_cb.setToolTip(
+            "Draw every copy of the same zone that overlaps the visible k "
+            "range, not only the one at the origin -- never a higher-order "
+            "zone, only repeats of this one.")
+        orient_form.addRow("", self.tile_cb)
+        self.labels_cb = QCheckBox("Label high-symmetry points")
+        self.labels_cb.setChecked(True)
+        self.labels_cb.setToolTip(
+            "Write the names of the high-symmetry points the plane holds "
+            "(Γ, M, K, Z, ...) on the contour, so the azimuth can be set by "
+            "eye. 3-D crystal only.")
+        orient_form.addRow("", self.labels_cb)
+        layout.addWidget(orient_group)
+
+        # -- moire (2D layers only) -------------------------------------------
+        self.moire_cb = QCheckBox("Moire (two twisted/mismatched layers)")
+        self.moire_cb.setToolTip(
+            "Uses the layer lattice above as the top layer and asks for a "
+            "bottom layer below. Layers only: a moire pattern is two stacked "
+            "2-D lattices, so this is not offered for a 3-D crystal.")
+        layout.addWidget(self.moire_cb)
+        self.moire_group = QGroupBox("Second (bottom) layer")
+        moire_form = QFormLayout(self.moire_group)
+        self.moire_same_cb = QCheckBox("Same lattice, twisted")
+        self.moire_same_cb.setChecked(True)
+        self.moire_same_cb.setToolTip(
+            "On: the bottom layer is the same a/b/gamma as the top, just "
+            "rotated by Twist -- the common case (e.g. twisted bilayer "
+            "graphene). Off: give the bottom layer its own a/b/gamma below.")
+        moire_form.addRow("", self.moire_same_cb)
+        self.a2b_box = self._length_box(3.0)
+        self.b2b_box = self._length_box(3.0)
+        self.gamma2b_box = self._angle_box_180(120.0)
+        moire_form.addRow("bottom a (Å)", self.a2b_box)
+        moire_form.addRow("bottom b (Å)", self.b2b_box)
+        moire_form.addRow("bottom gamma (deg)", self.gamma2b_box)
+        self.twist_box = QDoubleSpinBox()
+        self.twist_box.setDecimals(3)
+        self.twist_box.setRange(-180.0, 180.0)
+        self.twist_box.setSingleStep(0.1)
+        self.twist_box.setKeyboardTracking(False)
+        self.twist_box.setToolTip("Bottom layer's rotation relative to the top.")
+        moire_form.addRow("Twist (deg)", self.twist_box)
+        self.show_top_cb = QCheckBox("Show top-layer zone")
+        self.show_top_cb.setChecked(True)
+        self.show_bottom_cb = QCheckBox("Show bottom-layer zone")
+        self.show_bottom_cb.setChecked(True)
+        self.show_moire_cb = QCheckBox("Show moire zone")
+        self.show_moire_cb.setChecked(True)
+        for box in (self.show_top_cb, self.show_bottom_cb, self.show_moire_cb):
+            moire_form.addRow("", box)
+        layout.addWidget(self.moire_group)
+
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        self.note.setMinimumHeight(34)
+        layout.addWidget(self.note)
+
+        buttons_row = QHBoxLayout()
+        self.plot_button = QPushButton("Plot")
+        self.plot_button.setDefault(True)
+        self.plot_button.setToolTip(
+            "Work out the zone from these settings and draw it on the "
+            "contour. Nothing is drawn until this is pressed.")
+        self.plot_button.clicked.connect(self.plot)
+        # Enter in any of its fields redraws -- never anything else
+        self.enter_redraws = self.plot
+        self.clear_button = QPushButton("Clear overlay")
+        self.clear_button.setToolTip("Remove the drawn zone(s) from the contour.")
+        self.clear_button.clicked.connect(self._clear_overlay)
+        buttons_row.addWidget(self.plot_button)
+        buttons_row.addWidget(self.clear_button)
+        buttons_row.addStretch(1)
+        layout.addLayout(buttons_row)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.close)
+        layout.addWidget(buttons)
+
+        # -- wiring ------------------------------------------------------------
+        # Note what is *not* wired here: nothing recomputes the overlay. These
+        # only keep the dialog's own reference text (and the 3-D preview, if
+        # it is open) honest while the user types.
+        self.spacegroup_box.valueChanged.connect(self._space_group_changed)
+        self.a_box.valueChanged.connect(self._sync_mirrored_lengths)
+        self.mode_3d.toggled.connect(self._toggle_mode)
+        self.moire_cb.toggled.connect(self._toggle_moire)
+        self.moire_same_cb.toggled.connect(self._toggle_moire_same)
+        for box in (self.a2_box, self.b2_box, self.gamma2_box):
+            box.valueChanged.connect(self._sync_moire_bottom)
+        for box in (self.a_box, self.b_box, self.c_box, self.alpha_box,
+                    self.beta_box, self.gamma_box, self.h_box, self.k_box,
+                    self.l_box, self.offset_box, self.kpar_h_box,
+                    self.kpar_k_box, self.kpar_l_box, self.azimuth_box):
+            box.valueChanged.connect(self._refresh_info)
+        for box in (self.zone_conventional, self.zone_irreducible):
+            box.toggled.connect(self._refresh_info)
+
+        if self._kz_map:
+            self._adapt_to_kz_map()
+        self._load_saved_settings()
+        if self._kz_map:
+            self.mode_3d.setChecked(True)
+            self.moire_cb.setChecked(False)
+        self._apply_constraints()
+        self._toggle_mode()
+        self._toggle_moire()
+        self._toggle_moire_same()
+        self._refresh_info()
+
+    def _adapt_to_kz_map(self):
+        """Re-read the controls for a (k_z, k_par) contour.
+
+        Same crystal, different plane: a constant-energy map is the plane
+        *perpendicular* to the surface normal, a k_z map the plane that
+        *holds* it, together with the slit direction. So the normal becomes
+        the k_z axis, a k_par direction is asked for, the azimuth turns
+        k_par about the normal instead of turning the picture, and the
+        offset moves the plane out of the slit direction. A 2-D layer has
+        no k_z to draw and a moire is two layers, so both are hidden.
+        """
+        self.mode_2d.setVisible(False)
+        self.mode_3d.setText("3D crystal (space group) -- k_z map")
+        self._form_cut.labelForField(self._normal_row).setText(
+            "Surface normal = k_z (hkl)")
+        self._form_cut.labelForField(self.offset_box).setText(
+            "Offset out of the slit plane (Å⁻¹)")
+        self.offset_points_combo.setToolTip(
+            "Offsets out of the slit plane at which the measured plane "
+            "passes through a high-symmetry point of the first zone.")
+        self.offset_box.setToolTip(
+            "How far the measured plane sits from Gamma along the third "
+            "axis, perpendicular to both k_z and k_par -- 0 for a scan "
+            "through normal emission.")
+        self._orient_form.labelForField(self.azimuth_box).setText(
+            "Rotate k_par about k_z (deg)")
+        self.azimuth_box.setToolTip(
+            "Turns the k_par direction about the surface normal, for a slit "
+            "that is not along a named direction.")
+        self.direction_button.setVisible(False)
+        self.direction_note.setVisible(False)
+        self.group_cut.setTitle("Measured plane (k_z, k_par)")
+
+    # -- small widget factories --------------------------------------------
+    @staticmethod
+    def _length_box(value):
+        box = QDoubleSpinBox()
+        box.setDecimals(5)
+        box.setRange(0.01, 1000.0)
+        box.setSingleStep(0.01)
+        box.setValue(value)
+        box.setKeyboardTracking(False)
+        return box
+
+    @staticmethod
+    def _angle_box_180(value):
+        box = QDoubleSpinBox()
+        box.setDecimals(3)
+        box.setRange(1.0, 179.0)
+        box.setSingleStep(0.5)
+        box.setValue(value)
+        box.setKeyboardTracking(False)
+        return box
+
+    @staticmethod
+    def _miller_box(value):
+        box = QSpinBox()
+        box.setRange(-20, 20)
+        box.setValue(value)
+        box.setKeyboardTracking(False)
+        return box
+
+    # -- what the space group leaves free -----------------------------------
+    def _length_boxes(self):
+        return {"a": self.a_box, "b": self.b_box, "c": self.c_box}
+
+    def _angle_boxes(self):
+        return {"alpha": self.alpha_box, "beta": self.beta_box,
+                "gamma": self.gamma_box}
+
+    def _apply_constraints(self):
+        """Disable and drive the cell parameters the space group fixes.
+
+        The alternative -- letting anything be typed and printing a warning
+        afterwards -- puts the user in the position of having to know the
+        constraint anyway, so the boxes that are not theirs to set are
+        switched off and follow the ones that are.
+        """
+        from arpes_viewer.tools.crystal.lattice import free_parameters
+        constraints = free_parameters(int(self.spacegroup_box.value()))
+        self._mirrors = dict(constraints.mirrors)
+
+        lengths = self._length_boxes()
+        for name, box in lengths.items():
+            source = constraints.mirrors.get(name)
+            box.setEnabled(source is None)
+        for name, box in self._angle_boxes().items():
+            fixed = constraints.fixed_angles.get(name)
+            box.setEnabled(fixed is None)
+            if fixed is not None:
+                box.blockSignals(True)
+                box.setValue(float(fixed))
+                box.blockSignals(False)
+        self._sync_mirrored_lengths()
+
+    def _sync_mirrored_lengths(self, *_):
+        lengths = self._length_boxes()
+        for target, source in getattr(self, "_mirrors", {}).items():
+            box = lengths[target]
+            box.blockSignals(True)
+            box.setValue(lengths[source].value())
+            box.blockSignals(False)
+
+    def _space_group_changed(self, *_):
+        self._apply_constraints()
+        self._refresh_info()
+
+    # -- mode/section visibility ---------------------------------------------
+    def _toggle_mode(self, *_):
+        is_3d = self.mode_3d.isChecked()
+        self.group_3d.setVisible(is_3d)
+        self.group_cut.setVisible(is_3d)
+        # Qt 5's QFormLayout has no setRowVisible: hide the field and its
+        # label separately.
+        self._kpar_row.setVisible(self._kz_map)
+        self._form_cut.labelForField(self._kpar_row).setVisible(self._kz_map)
+        self.group_2d.setVisible(not is_3d)
+        # A moire pattern is two stacked layers, so it belongs to the 2-D
+        # mode only; hiding rather than disabling keeps the 3-D panel from
+        # implying there is a 3-D moire calculation being withheld.
+        self.moire_cb.setVisible(not is_3d)
+        self.moire_group.setVisible(not is_3d and self.moire_cb.isChecked())
+        if is_3d is False and self._preview is not None:
+            self._preview.close()
+        self._refresh_info()
+
+    def _toggle_moire(self, *_):
+        self.moire_group.setVisible(self.moire_cb.isChecked()
+                                    and not self.mode_3d.isChecked())
+
+    def _toggle_moire_same(self, *_):
+        same = self.moire_same_cb.isChecked()
+        for box in (self.a2b_box, self.b2b_box, self.gamma2b_box):
+            box.setEnabled(not same)
+        self._sync_moire_bottom()
+
+    def _sync_moire_bottom(self, *_):
+        """With "same lattice" on, the greyed bottom-layer boxes show the
+        top layer's a/b/gamma -- the lattice actually used -- rather than
+        whatever they held, which read as a second lattice that was not.
+        Unticking it then starts the bottom layer from the top one."""
+        if not self.moire_same_cb.isChecked():
+            return
+        for target, source in ((self.a2b_box, self.a2_box), (self.b2b_box, self.b2_box),
+                               (self.gamma2b_box, self.gamma2_box)):
+            target.blockSignals(True)
+            target.setValue(source.value())
+            target.blockSignals(False)
+
+    def zone_kind(self) -> str:
+        return "irreducible" if self.zone_irreducible.isChecked() else "conventional"
+
+    # -- reference text, and the 3-D preview ---------------------------------
+    def _refresh_info(self, *_):
+        """Keep the labels (and the preview window) current. Draws nothing on
+        the contour -- that only happens on Plot."""
+        from arpes_viewer.tools.crystal.spacegroups import spacegroup_info
+        from arpes_viewer.tools.crystal.lattice import free_parameters
+
+        if self.mode_3d.isChecked():
+            try:
+                number = int(self.spacegroup_box.value())
+                info = spacegroup_info(number)
+                self.spacegroup_label.setText(
+                    f"{info.symbol} (#{info.number}) — {info.crystal_system}, "
+                    f"Bravais {info.bravais_symbol}, point group "
+                    f"{info.point_group}\n{free_parameters(number).note}")
+            except Exception as exc:
+                self.spacegroup_label.setText(str(exc))
+            self._refresh_offset_presets()
+            self.offset_label.setText(self.cut_description())
+        else:
+            self.spacegroup_label.setText("")
+            self.offset_label.setText("")
+
+        self.zone_label.setText(self._zone_description())
+        if self._preview is not None and self._preview.isVisible():
+            self._preview.refresh()
+
+    def _zone_description(self) -> str:
+        if self.zone_kind() == "conventional":
+            return ("The first Brillouin zone: the Wigner-Seitz cell of the "
+                    "reciprocal lattice.")
+        if self.mode_3d.isChecked():
+            try:
+                from arpes_viewer.tools.crystal.lattice import point_group_operations
+                order = len(point_group_operations(self.lattice_params()))
+            except Exception as exc:
+                return f"Irreducible zone unavailable: {exc}"
+            return (f"1/{order} of the zone: the wedge the Laue class repeats "
+                    "into the whole of it (the point group plus inversion, "
+                    "since time reversal makes E(k) = E(-k)).")
+        return ("The wedge of the zone repeated by the plane lattice's own "
+                "symmetry. With no space group for a layer, the lattice's "
+                "holohedry is assumed -- a layer whose basis is less "
+                "symmetric than its lattice has a larger wedge than this.")
+
+    def open_preview(self):
+        """The 3-D view of the cut plane, in its own window."""
+        if self._preview is not None and self._preview.isVisible():
+            self._preview.raise_()
+            self._preview.activateWindow()
+            return self._preview
+        self._preview = CutPlanePreviewDialog(self)
+        self._preview.show()
+        self._preview.raise_()
+        return self._preview
+
+    def preview_closed(self):
+        self._preview = None
+
+    # -- geometry ------------------------------------------------------------
+    @staticmethod
+    def _rotate_xy(x, y, deg):
+        r = np.radians(deg)
+        c, s = np.cos(r), np.sin(r)
+        x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+        return x * c - y * s, x * s + y * c
+
+    def _view_window(self):
+        """A square half-extent ``(-half, half)`` for both axes, ``half``
+        being the farthest any point of the contour's actual (kx, ky) range
+        can be from the origin.
+
+        Used as the tiling window in the zone's own (pre-azimuth-rotation)
+        frame: a square of half-width R centred on the origin contains every
+        point within distance R of the origin regardless of how that square
+        is itself rotated (a disk of radius R fits inside any square of
+        half-width R around the same centre) -- so tiling against this
+        square, then rotating the result by the azimuth, is guaranteed to
+        cover the true (kx, ky) viewport, whatever the azimuth turns out to
+        be. It can only over-cover (a few extra tiles get computed and
+        clipped away by the plot itself), never under-cover.
+        """
+        kx = np.asarray(self.contour.angle_defl, dtype=float)
+        ky = np.asarray(self.contour.angle_slit, dtype=float)
+        half = float(np.hypot(np.max(np.abs(kx)), np.max(np.abs(ky))))
+        return (-max(half, 1e-6), max(half, 1e-6)), (-max(half, 1e-6), max(half, 1e-6))
+
+    def lattice_params(self):
+        from arpes_viewer.tools.crystal.lattice import LatticeParams
+        return LatticeParams(
+            self.a_box.value(), self.b_box.value(), self.c_box.value(),
+            self.alpha_box.value(), self.beta_box.value(), self.gamma_box.value(),
+            space_group=int(self.spacegroup_box.value()))
+
+    def _zone_3d(self):
+        """``(zone, b_primitive, b_conventional)`` for the current crystal
+        and zone kind, cached.
+
+        Two reciprocal bases, because they answer two different questions
+        and confusing them is a real trap for a centred lattice:
+
+        * ``b_primitive`` is the reciprocal of the *primitive* cell. It is
+          the lattice the Brillouin zone is the Wigner-Seitz cell of, and
+          the one whose translations tile copies of that zone across the
+          field of view.
+        * ``b_conventional`` is the reciprocal of the *conventional* cell,
+          and it is what Miller indices mean. ``(0 0 1)`` on an FCC crystal
+          is the cubic face everyone calls (001); read against the primitive
+          basis the same three numbers would instead point along a <111>,
+          which is not what anyone typing them intends.
+
+        Cached because three different things ask for it while the user
+        works -- the offset readout, the 3-D preview, and Plot itself -- and
+        building a Wigner-Seitz cell (and then carving a wedge out of it) is
+        the one genuinely non-trivial computation here.
+        """
+        from arpes_viewer.tools.crystal.lattice import (primitive_vectors,
+                                           conventional_vectors,
+                                           reciprocal_vectors,
+                                           point_group_operations)
+        from arpes_viewer.tools.crystal.bz3d import wigner_seitz_cell, irreducible_wedge
+
+        params = self.lattice_params()
+        kind = self.zone_kind()
+        key = (params.a, params.b, params.c, params.alpha, params.beta,
+               params.gamma, params.space_group, kind)
+        if self._zone_cache is not None and self._zone_cache[0] == key:
+            return self._zone_cache[1], self._zone_cache[2], self._zone_cache[3]
+
+        b = reciprocal_vectors(primitive_vectors(params))
+        b_conventional = reciprocal_vectors(conventional_vectors(params))
+        zone = wigner_seitz_cell(b)
+        if kind == "irreducible":
+            zone = irreducible_wedge(zone, point_group_operations(params))
+        self._zone_cache = (key, zone, b, b_conventional)
+        return zone, b, b_conventional
+
+    def cut_geometry(self):
+        """``(zone, b, b_conventional, normal, point, u, v)`` for the
+        current 3-D settings: the zone, the primitive reciprocal vectors
+        that tile it, the conventional ones the Miller indices are read
+        against, the cut plane's unit normal and a point on it, and the cut
+        polygon in the plane's own coordinates (``None`` if the plane misses
+        the zone).
+
+        Shared by Plot and the 3-D preview so that what the preview shows is
+        by construction the polygon that gets drawn on the contour, rather
+        than a second calculation that could drift from it.
+        """
+        from arpes_viewer.tools.crystal.bz3d import plane_cut
+        if not self.mode_3d.isChecked():
+            raise ValueError("there is no cut plane in 2D-layer mode")
+        zone, b, b_conventional = self._zone_3d()
+        if self._kz_map:
+            _kz, _kpar, across = self.kz_frame()
+            point = across * self.offset_value()
+            u, v = plane_cut(zone.faces, across, point)
+            return zone, b, b_conventional, across, point, u, v
+        normal = (self.h_box.value() * b_conventional[0]
+                  + self.k_box.value() * b_conventional[1]
+                  + self.l_box.value() * b_conventional[2])
+        length = float(np.linalg.norm(normal))
+        if length < 1e-9:
+            raise ValueError("the cut plane normal (h, k, l) cannot be (0, 0, 0)")
+        normal = normal / length
+        point = normal * self.offset_value()
+        u, v = plane_cut(zone.faces, normal, point)
+        return zone, b, b_conventional, normal, point, u, v
+
+    def offset_value(self) -> float:
+        """The offset along the normal: the box's value, or the unrounded
+        one a preset put there if the box still shows it."""
+        shown = float(self.offset_box.value())
+        exact = self._exact_offset
+        step = 10.0 ** -self.offset_box.decimals()
+        if exact is not None and abs(exact - shown) <= 0.51 * step:
+            return float(exact)
+        return shown
+
+    def high_symmetry(self):
+        """``(representatives, copies)`` of the named points for the current
+        crystal (see :mod:`tools.crystal.highsym`): one of each, and every copy in
+        the first zone. Cached with the zone, since both follow the cell."""
+        from arpes_viewer.tools.crystal.highsym import (high_symmetry_points,
+                                           equivalent_points)
+        from arpes_viewer.tools.crystal.lattice import reciprocal_vectors, primitive_vectors
+        from arpes_viewer.tools.crystal.bz3d import wigner_seitz_cell
+        params = self.lattice_params()
+        key = (params.a, params.b, params.c, params.alpha, params.beta,
+               params.gamma, params.space_group)
+        cached = getattr(self, "_highsym_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1], cached[2]
+        representatives = high_symmetry_points(params)
+        # the full zone's copies whichever zone is drawn: an irreducible
+        # wedge is a part of the same zone, and its corners are among them
+        full = wigner_seitz_cell(reciprocal_vectors(primitive_vectors(params)))
+        copies = equivalent_points(params, representatives, full)
+        self._highsym_cache = (key, representatives, copies)
+        return representatives, copies
+
+    def _plane_normal(self):
+        """The unit vector the offset is measured along: the cut normal, or
+        for a k_z map the axis out of the measured plane."""
+        if self._kz_map:
+            return self.kz_frame()[2]
+        normal = np.array([self.h_box.value(), self.k_box.value(),
+                           self.l_box.value()], dtype=float) @ self._zone_3d()[2]
+        length = float(np.linalg.norm(normal))
+        if length < 1e-9:
+            raise ValueError("the cut plane normal (h, k, l) cannot be (0, 0, 0)")
+        return normal / length
+
+    #: the most offsets offered at once; a low-symmetry normal passes
+    #: through a different point every few hundredths of an Å⁻¹
+    _MAX_PRESETS = 24
+
+    def _refresh_offset_presets(self):
+        """Fill the "Through point" list for the current crystal and normal."""
+        from arpes_viewer.tools.crystal.highsym import plane_offsets
+        combo = self.offset_points_combo
+        try:
+            normal = self._plane_normal()
+            key = (tuple(np.round(normal, 9)), self.lattice_params())
+            if key == self._offset_presets_key:
+                return
+            _representatives, copies = self.high_symmetry()
+            presets = plane_offsets(copies, normal)
+        except Exception as exc:                          # noqa: BLE001
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(f"(unavailable: {exc})", None)
+            combo.blockSignals(False)
+            self._offset_presets_key = None
+            return
+        self._offset_presets_key = key
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Choose a high-symmetry point...", None)
+        for offset, labels in presets[:self._MAX_PRESETS]:
+            combo.addItem(f"{', '.join(labels)}   ({offset:.4f} Å⁻¹)", offset)
+        if len(presets) > self._MAX_PRESETS:
+            combo.addItem(f"... {len(presets) - self._MAX_PRESETS} more, "
+                          "further out", None)
+        combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
+    def _offset_point_chosen(self, index: int):
+        offset = self.offset_points_combo.itemData(index)
+        if offset is None:
+            return
+        self._exact_offset = float(offset)
+        # setValue emits valueChanged, which refreshes the text and preview
+        self.offset_box.setValue(float(offset))
+        if abs(self.offset_box.value() - float(offset)) < 1e-12:
+            self._refresh_info()
+
+    def points_in_plane(self):
+        """The copies of the named points lying in the current plane, with
+        their position: ``[(label, k), ...]`` (Cartesian)."""
+        from arpes_viewer.tools.crystal.highsym import points_on_plane
+        _representatives, copies = self.high_symmetry()
+        normal = self._plane_normal()
+        return [(p.label, p.k) for p in
+                points_on_plane(copies, normal, self.offset_value(), tol=1e-4)]
+
+    def _contour_labels(self, tiled: bool):
+        """``[(label, x, y), ...]`` to write on the contour: the named points
+        the plane holds, in the contour's own coordinates (after the azimuth
+        for a constant-energy map; (k_z, k_par) for a k_z map)."""
+        from arpes_viewer.tools.crystal.highsym import points_in_frame
+        from arpes_viewer.tools.crystal.bz3d import plane_basis
+        _zone, b, _b_conv = self._zone_3d()
+        _representatives, copies = self.high_symmetry()
+        if self._kz_map:
+            along_kz, along_kpar, across = self.kz_frame()
+            kz = np.asarray(self.contour.angle_defl, dtype=float)
+            kpar = np.asarray(self.contour.angle_slit, dtype=float)
+            x_range = (float(np.nanmin(kz)), float(np.nanmax(kz)))
+            y_range = (float(np.nanmin(kpar)), float(np.nanmax(kpar)))
+            found = points_in_frame(copies, b, across * self.offset_value(),
+                                    along_kz, along_kpar, x_range, y_range,
+                                    tol=1e-4)
+            return found
+        normal = self._plane_normal()
+        point = normal * self.offset_value()
+        u_axis, v_axis = plane_basis(normal)
+        if tiled:
+            u_range, v_range = self._view_window()
+            found = points_in_frame(copies, b, point, u_axis, v_axis,
+                                    u_range, v_range, tol=1e-4)
+        else:
+            found = [(label, float(np.dot(k - point, u_axis)),
+                      float(np.dot(k - point, v_axis)))
+                     for label, k in self.points_in_plane()]
+        azimuth = self.azimuth_box.value()
+        out = []
+        for label, x, y in found:
+            rx, ry = self._rotate_xy(x, y, azimuth)
+            out.append((label, float(rx), float(ry)))
+        return out
+
+    def kz_frame(self):
+        """``(along_kz, along_kpar, across)`` for a k_z map, as unit
+        vectors (see :func:`tools.crystal.bz3d.kz_frame`)."""
+        from arpes_viewer.tools.crystal.bz3d import kz_frame
+        return kz_frame(self.lattice_params(),
+                        (self.h_box.value(), self.k_box.value(),
+                         self.l_box.value()),
+                        (self.kpar_h_box.value(), self.kpar_k_box.value(),
+                         self.kpar_l_box.value()),
+                        float(self.azimuth_box.value()))
+
+    @staticmethod
+    def _distance_to_boundary(zone, normal) -> float:
+        """How far the plane can slide along ``normal`` before it leaves the
+        zone -- the number that makes an offset in A^-1 mean something."""
+        from arpes_viewer.tools.crystal.bz3d import face_planes
+        normals, offsets = face_planes(zone.faces)
+        along = normals @ normal
+        ahead = along > 1e-12
+        if not np.any(ahead):
+            return float("inf")
+        return float(np.min(offsets[ahead] / along[ahead]))
+
+    def cut_description(self) -> str:
+        """One line about where the cut plane currently sits, for the dialog
+        and for the preview window's own caption."""
+        try:
+            zone, _b, _b_conv, normal, _point, u, _v = self.cut_geometry()
+        except Exception as exc:
+            return str(exc)
+        offset = self.offset_value()
+        if self._kz_map:
+            along_kz, along_kpar, _across = self.kz_frame()
+            text = (f"k_z along ({self.h_box.value()} {self.k_box.value()} "
+                    f"{self.l_box.value()}), k_par along "
+                    f"{np.round(along_kpar, 3).tolist()} (Cartesian, "
+                    f"a along x), offset {offset:.4g} Å⁻¹ out of that plane")
+            if u is None:
+                text += " — the plane misses the zone at Γ."
+            return text
+        reach = self._distance_to_boundary(zone, normal)
+        extent = float(np.max(np.linalg.norm(zone.vertices, axis=1)))
+        text = (f"({self.h_box.value()} {self.k_box.value()} {self.l_box.value()}) "
+                f"normal, offset {offset:.4g} Å⁻¹")
+        if not np.isfinite(reach) or reach <= 1e-9 * max(extent, 1.0):
+            # A wedge has its apex at Gamma, so along a normal that points
+            # straight out of one of its own faces there is no room at all
+            # to slide the plane -- worth saying, rather than printing a
+            # fraction of something that is numerically zero.
+            text += (" — this zone does not extend from Γ along that "
+                     "normal at all (an irreducible wedge has its apex "
+                     "there), so only offset 0 meets it")
+        else:
+            text += (f" = {offset / reach:.3f} of the {reach:.4g} "
+                     f"Å⁻¹ from Γ to the zone edge along it")
+        if u is None:
+            top = float(np.max(zone.vertices @ normal))
+            if abs(offset - top) < 1e-4:
+                text += (" — the plane only touches this zone at a corner or "
+                         "an edge; with Repeat on, the copies beside it are "
+                         "cut there.")
+            else:
+                text += " — the plane misses the zone entirely."
+        else:
+            text += f"; the cut is a {len(u) - 1}-sided polygon."
+        return text
+
+    def _zone_2d(self, a, b_length, gamma_deg):
+        """``(polygons, g1, g2)`` for a plane lattice: the zone (or its
+        irreducible wedge), tiled and rotated ready to draw."""
+        from arpes_viewer.tools.crystal.bz2d import (reciprocal_vectors_2d,
+                                        wigner_seitz_cell_2d, tile_2d,
+                                        lattice_point_group_2d,
+                                        irreducible_cell_2d)
+        a1 = np.array([a, 0.0])
+        a2 = np.array([b_length * np.cos(np.radians(gamma_deg)),
+                       b_length * np.sin(np.radians(gamma_deg))])
+        g1, g2 = reciprocal_vectors_2d(a1, a2)
+        polygon = wigner_seitz_cell_2d(g1, g2)
+        if self.zone_kind() == "irreducible":
+            polygon = irreducible_cell_2d(polygon, lattice_point_group_2d(g1, g2))
+        if self.tile_cb.isChecked():
+            x_range, y_range = self._view_window()
+            tiles = tile_2d(polygon, g1, g2, x_range, y_range)
+        else:
+            tiles = [polygon]
+        azimuth = self.azimuth_box.value()
+        return ([self._rotate_xy(t[:, 0], t[:, 1], azimuth) for t in tiles],
+                g1, g2)
+
+    # -- picking a direction off the contour ----------------------------------
+    def _toggle_direction_picking(self, on: bool):
+        if on:
+            self._direction_points = []
+            self.contour.view.clear_overlays()
+            self.contour.view.start_point_picking(self._add_direction_point)
+            self.direction_note.setText(
+                "Click one or two points on the contour along the direction "
+                "you want the angle of.")
+        else:
+            self.contour.view.stop_point_picking()
+            self.contour.view.clear_overlays()
+
+    @staticmethod
+    def _angle_of(p0, p1) -> float:
+        dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+        if abs(dx) < 1e-12 and abs(dy) < 1e-12:
+            raise ValueError("the two points coincide")
+        return float(np.degrees(np.arctan2(dy, dx)))
+
+    @staticmethod
+    def _upright_of(p0, p1) -> float:
+        """The smallest turn that stands the picked line along ky.
+
+        Reported beside the raw direction because it is the number that gets
+        typed into a rotation: the raw angle depends on which point was
+        clicked first and which side of the origin they sit on, and a line
+        has neither. Same definition as the k-conversion dialog's, from the
+        same function, so the two cannot drift apart.
+        """
+        from arpes_viewer.tools.momentum.kspace import points_to_azimuth
+
+        return points_to_azimuth([p0, p1])
+
+    def _add_direction_point(self, x: float, y: float):
+        self._direction_points.append((x, y))
+        if len(self._direction_points) > 2:
+            self._direction_points = self._direction_points[-1:]
+        xs = [p[0] for p in self._direction_points]
+        ys = [p[1] for p in self._direction_points]
+        self.contour.view.show_picked_points(xs, ys)
+        if len(self._direction_points) == 1:
+            pair = [(0.0, 0.0), (xs[0], ys[0])]
+        else:
+            pair = list(self._direction_points)
+        try:
+            angle = self._angle_of(pair[0], pair[1])
+            upright = self._upright_of(pair[0], pair[1])
+        except ValueError as exc:
+            self.direction_note.setText(str(exc))
+            return
+        if len(self._direction_points) == 1:
+            self.contour.view.show_overlay_path([0.0, xs[0]], [0.0, ys[0]])
+            self.direction_note.setText(
+                f"One point: the line from k = (0, 0) to it sits at "
+                f"{angle:.3f}° (counter-clockwise from kx); the smallest "
+                f"rotation standing it upright is {upright:.3f}°. Click a "
+                "second point to use the line between the two instead.")
+        else:
+            self.contour.view.show_overlay_path(xs, ys)
+            self.direction_note.setText(
+                f"Two points: {angle:.3f}° counter-clockwise from kx, which "
+                f"depends on the order you clicked them; the smallest "
+                f"rotation standing that line upright is {upright:.3f}°, "
+                f"which does not.")
+
+    # -- drawing, on request only ----------------------------------------------
+    def plot(self):
+        """Work out the zone and draw it. The only thing here that touches
+        the contour."""
+        try:
+            if self.moire_cb.isChecked() and not self.mode_3d.isChecked():
+                message = self._plot_moire()
+            else:
+                message = self._plot_single()
+        except Exception as exc:
+            # The old drawing is taken away rather than left behind: an
+            # overlay that no longer matches the settings beside it is worse
+            # than no overlay.
+            self.contour.view.clear_bz_overlay()
+            self.note.setText(f"Could not plot: {exc}")
+            return None
+        self.note.setText(message)
+        self.contour.statusBar().showMessage(message)
+        self._save_settings()
+        return message
+
+    def _plot_single(self) -> str:
+        if self.mode_3d.isChecked():
+            from arpes_viewer.tools.crystal.bz3d import tile_and_cut, kz_zone_cuts
+            zone, b, _b_conv, normal, point, u, v = self.cut_geometry()
+            if self._kz_map:
+                # Already in the contour's own (k_z, k_par) axes: the
+                # azimuth turned k_par about the normal inside kz_frame, so
+                # there is no picture rotation left to apply.
+                kz = np.asarray(self.contour.angle_defl, dtype=float)
+                kpar = np.asarray(self.contour.angle_slit, dtype=float)
+                polygons = kz_zone_cuts(
+                    zone, b, self.kz_frame(),
+                    (float(np.nanmin(kz)), float(np.nanmax(kz))),
+                    (float(np.nanmin(kpar)), float(np.nanmax(kpar))),
+                    offset=self.offset_value(),
+                    tile=self.tile_cb.isChecked())
+                if not polygons:
+                    raise ValueError(
+                        "no copy of the zone meets this k_z map's plane -- "
+                        "reduce the offset, or check the (h k l) normal")
+            else:
+                if self.tile_cb.isChecked():
+                    u_range, v_range = self._view_window()
+                    cuts = tile_and_cut(zone, b, normal, point, u_range, v_range)
+                else:
+                    cuts = [] if u is None else [(u, v)]
+                if not cuts:
+                    raise ValueError(
+                        "the cut plane does not meet the zone -- reduce the "
+                        "offset, or check the (h k l) normal")
+                azimuth = self.azimuth_box.value()
+                polygons = [self._rotate_xy(cu, cv, azimuth) for cu, cv in cuts]
+        else:
+            polygons, _g1, _g2 = self._zone_2d(
+                self.a2_box.value(), self.b2_box.value(), self.gamma2_box.value())
+
+        for name in ("bz_top", "bz_bottom", "bz_moire"):
+            self.contour.view.set_bz_layer(name, [])
+        self.contour.view.set_bz_layer("bz_main", polygons, color="#39c2ff")
+        labels = []
+        if self.mode_3d.isChecked() and self.labels_cb.isChecked():
+            try:
+                labels = self._contour_labels(self.tile_cb.isChecked())
+            except Exception:                              # noqa: BLE001
+                labels = []     # the zone is the point; names are a help
+        self.contour.view.set_bz_labels(labels)
+        text = (f"{self.zone_kind()} zone: {len(polygons)} polygon(s) drawn "
+                f"on the contour.")
+        if labels:
+            names = sorted({label for label, _x, _y in labels})
+            text += f" Points labelled: {', '.join(names)}."
+        return text
+
+    def _plot_moire(self) -> str:
+        from arpes_viewer.tools.crystal.bz2d import (reciprocal_vectors_2d,
+                                        wigner_seitz_cell_2d, tile_2d,
+                                        lattice_point_group_2d,
+                                        irreducible_cell_2d)
+        from arpes_viewer.tools.crystal.moire import hex_moire_lattice_fast, moire_bz
+
+        a_top, b_top, gamma_top = (self.a2_box.value(), self.b2_box.value(),
+                                   self.gamma2_box.value())
+        if self.moire_same_cb.isChecked():
+            a_bot, b_bot, gamma_bot = a_top, b_top, gamma_top
+        else:
+            a_bot, b_bot, gamma_bot = (self.a2b_box.value(), self.b2b_box.value(),
+                                       self.gamma2b_box.value())
+        twist = self.twist_box.value()
+        azimuth = self.azimuth_box.value()
+        irreducible = self.zone_kind() == "irreducible"
+
+        top_polygons, g1_top, g2_top = self._zone_2d(a_top, b_top, gamma_top)
+
+        # The bottom layer is built rotated by the twist: that is the
+        # *relative* angle between the layers, while the dialog's azimuth
+        # turns the finished picture as a whole, so the two must not be
+        # rolled into one rotation.
+        a1_bot = np.array([a_bot, 0.0])
+        a2_bot = np.array([b_bot * np.cos(np.radians(gamma_bot)),
+                           b_bot * np.sin(np.radians(gamma_bot))])
+        radians = np.radians(twist)
+        rotation = np.array([[np.cos(radians), -np.sin(radians)],
+                             [np.sin(radians), np.cos(radians)]])
+        a1_bot, a2_bot = rotation @ a1_bot, rotation @ a2_bot
+        g1_bot, g2_bot = reciprocal_vectors_2d(a1_bot, a2_bot)
+
+        def drawn(polygon, g1, g2):
+            if irreducible:
+                polygon = irreducible_cell_2d(polygon, lattice_point_group_2d(g1, g2))
+            if self.tile_cb.isChecked():
+                x_range, y_range = self._view_window()
+                tiles = tile_2d(polygon, g1, g2, x_range, y_range)
+            else:
+                tiles = [polygon]
+            return [self._rotate_xy(t[:, 0], t[:, 1], azimuth) for t in tiles]
+
+        bottom_polygons = drawn(wigner_seitz_cell_2d(g1_bot, g2_bot), g1_bot, g2_bot)
+        gm1, gm2, moire_polygon = moire_bz(g1_top, g2_top, g1_bot, g2_bot)
+        moire_polygons = drawn(moire_polygon, gm1, gm2)
+
+        am1, _am2 = reciprocal_vectors_2d(gm1, gm2)
+        moire_period = float(np.linalg.norm(am1))
+
+        self.contour.view.set_bz_layer(
+            "bz_top", top_polygons if self.show_top_cb.isChecked() else [],
+            color="#39c2ff")
+        self.contour.view.set_bz_layer(
+            "bz_bottom", bottom_polygons if self.show_bottom_cb.isChecked() else [],
+            color="#ff9c39")
+        self.contour.view.set_bz_layer(
+            "bz_moire", moire_polygons if self.show_moire_cb.isChecked() else [],
+            color="#ff3ce0")
+        self.contour.view.set_bz_layer("bz_main", [])
+        self.contour.view.set_bz_labels([])
+
+        message = (f"moire real-space period ≈ {moire_period:.4g} Å "
+                   f"({len(top_polygons)} top, {len(bottom_polygons)} bottom, "
+                   f"{len(moire_polygons)} moire polygon(s))")
+        hexagonal = (lambda length, other, angle:
+                     abs(length - other) < 1e-6 * max(length, 1e-9)
+                     and abs(angle - 120.0) < 0.5)
+        if (hexagonal(a_top, b_top, gamma_top)
+                and hexagonal(a_bot, b_bot, gamma_bot)):
+            try:
+                fast, _rotation = hex_moire_lattice_fast(a_top, a_bot, twist)
+                message += f"; closed-form (hexagonal) fast path: {fast:.4g} Å"
+                if abs(twist) > 30.0 and np.isclose(a_top, a_bot):
+                    message += (" (only exact for |twist| <= 30 deg; the general "
+                                "method used for the drawing folds correctly "
+                                "beyond that, see tools/crystal/moire.py)")
+            except Exception:
+                pass
+        return message
+
+    def _clear_overlay(self):
+        self.contour.view.clear_bz_overlay()
+        # Cleared on purpose: the dataset forgets it too.
+        self.contour.bz_recorded(None)
+        self.note.setText("Overlay cleared.")
+
+    # -- persistence: data.scan.info["bz.*"], flat scalars like kconv/arbcut -
+    def _settings_widgets(self):
+        return (self.mode_3d, self.mode_2d, self.a_box, self.b_box, self.c_box,
+                self.alpha_box, self.beta_box, self.gamma_box,
+                self.spacegroup_box, self.h_box, self.k_box, self.l_box,
+                self.kpar_h_box, self.kpar_k_box, self.kpar_l_box,
+                self.offset_box, self.a2_box, self.b2_box, self.gamma2_box,
+                self.azimuth_box, self.tile_cb, self.labels_cb, self.moire_cb,
+                self.moire_same_cb, self.a2b_box, self.b2b_box,
+                self.gamma2b_box, self.twist_box, self.show_top_cb,
+                self.show_bottom_cb, self.show_moire_cb,
+                self.zone_conventional, self.zone_irreducible)
+
+    def _load_saved_settings(self):
+        widgets = self._settings_widgets()
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            info = self.contour.data.scan.info
+            last = self._last_used()
+
+            # The azimuth turns the picture on a constant-energy map and
+            # k_par about the normal on a k_z map: not the same number, so
+            # it only carries over between two maps of the same kind.
+            skipped = set(self._NOT_CARRIED)
+            if int(last.get("kz_map", 0)) != int(self._kz_map):
+                skipped.add("azimuth_deg")
+
+            def saved(key, default):
+                if key not in skipped:
+                    default = last.get(key, default)
+                return info.get(self._PREFIX + key, default)
+
+            # Not setChecked(False) on whichever radio is currently checked:
+            # for an exclusive pair, Qt refuses to leave both unchecked, so
+            # unchecking the sole checked one is a silent no-op -- checking
+            # the *other* one is what actually switches the pair.
+            if saved("mode", "3d") == "2d":
+                self.mode_2d.setChecked(True)
+            else:
+                self.mode_3d.setChecked(True)
+            if saved("zone", "conventional") == "irreducible":
+                self.zone_irreducible.setChecked(True)
+            else:
+                self.zone_conventional.setChecked(True)
+            self.spacegroup_box.setValue(int(saved("space_group", 1)))
+            self.a_box.setValue(float(saved("a", 3.0)))
+            self.b_box.setValue(float(saved("b", 3.0)))
+            self.c_box.setValue(float(saved("c", 3.0)))
+            self.alpha_box.setValue(float(saved("alpha", 90.0)))
+            self.beta_box.setValue(float(saved("beta", 90.0)))
+            self.gamma_box.setValue(float(saved("gamma", 90.0)))
+            self.h_box.setValue(int(saved("h", 0)))
+            self.k_box.setValue(int(saved("k", 0)))
+            self.l_box.setValue(int(saved("l", 1)))
+            self.kpar_h_box.setValue(int(saved("kpar_h", 0)))
+            self.kpar_k_box.setValue(int(saved("kpar_k", 0)))
+            self.kpar_l_box.setValue(int(saved("kpar_l", 0)))
+            self.offset_box.setValue(float(saved("offset", 0.0)))
+            self.a2_box.setValue(float(saved("a2", 3.0)))
+            self.b2_box.setValue(float(saved("b2", 3.0)))
+            self.gamma2_box.setValue(float(saved("gamma2", 120.0)))
+            self.azimuth_box.setValue(float(saved("azimuth_deg", 0.0)))
+            self.tile_cb.setChecked(bool(int(saved("tile", 1))))
+            self.labels_cb.setChecked(bool(int(saved("labels", 1))))
+            self.moire_cb.setChecked(bool(int(saved("moire", 0))))
+            self.moire_same_cb.setChecked(bool(int(saved("moire_same", 1))))
+            self.a2b_box.setValue(float(saved("a2b", 3.0)))
+            self.b2b_box.setValue(float(saved("b2b", 3.0)))
+            self.gamma2b_box.setValue(float(saved("gamma2b", 120.0)))
+            self.twist_box.setValue(float(saved("twist_deg", 0.0)))
+            self.show_top_cb.setChecked(bool(int(saved("show_top", 1))))
+            self.show_bottom_cb.setChecked(bool(int(saved("show_bottom", 1))))
+            self.show_moire_cb.setChecked(bool(int(saved("show_moire", 1))))
+        except Exception:
+            pass    # a first-ever use of the tool has nothing to load yet
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
+
+    @classmethod
+    def _last_used(cls) -> dict:
+        from arpes_viewer.tools.runtime.system import load_config
+        try:
+            return load_config(cls.last_used_path(), {})
+        except Exception:                                  # noqa: BLE001
+            return {}
+
+    @classmethod
+    def _remember(cls, values: dict):
+        from arpes_viewer.tools.runtime.system import dump_config
+        try:
+            dump_config(cls.last_used_path(),
+                        {key: value for key, value in values.items()
+                         if key not in cls._NOT_CARRIED})
+        except Exception:                                  # noqa: BLE001
+            pass    # a convenience: an unwritable home must not stop Plot
+
+    def _save_settings(self):
+        """Keep the settings with the dataset, and as the last used -- and
+        the zone as drawn, which makes it a property of the dataset: its
+        viewers can show it again, and its exports draw it, without this
+        dialog working it out anew."""
+        values = self._current_settings()
+        info = self.contour.data.scan.info
+        for key, value in values.items():
+            info[self._PREFIX + key] = value
+        self._remember(values)
+        self.contour.bz_recorded(self.contour.view.bz_overlay_state(),
+                                 {self._PREFIX + k: v for k, v in values.items()})
+
+    def _current_settings(self) -> dict:
+        return {
+            "mode": "3d" if self.mode_3d.isChecked() else "2d",
+            "zone": self.zone_kind(),
+            "space_group": int(self.spacegroup_box.value()),
+            "a": self.a_box.value(), "b": self.b_box.value(), "c": self.c_box.value(),
+            "alpha": self.alpha_box.value(), "beta": self.beta_box.value(),
+            "gamma": self.gamma_box.value(),
+            "h": int(self.h_box.value()), "k": int(self.k_box.value()),
+            "l": int(self.l_box.value()),
+            "kpar_h": int(self.kpar_h_box.value()),
+            "kpar_k": int(self.kpar_k_box.value()),
+            "kpar_l": int(self.kpar_l_box.value()),
+            "offset": self.offset_value(),
+            "a2": self.a2_box.value(), "b2": self.b2_box.value(),
+            "gamma2": self.gamma2_box.value(),
+            "azimuth_deg": self.azimuth_box.value(),
+            "tile": int(self.tile_cb.isChecked()),
+            "labels": int(self.labels_cb.isChecked()),
+            "moire": int(self.moire_cb.isChecked()),
+            "moire_same": int(self.moire_same_cb.isChecked()),
+            "a2b": self.a2b_box.value(), "b2b": self.b2b_box.value(),
+            "gamma2b": self.gamma2b_box.value(),
+            "twist_deg": self.twist_box.value(),
+            "show_top": int(self.show_top_cb.isChecked()),
+            "show_bottom": int(self.show_bottom_cb.isChecked()),
+            "show_moire": int(self.show_moire_cb.isChecked()),
+            "kz_map": int(self._kz_map),
+        }
+
+    def closeEvent(self, event):
+        # Remembered on close too, not only on Plot: typing the crystal in
+        # and closing again is setting it up for the next map.
+        self._remember(self._current_settings())
+        # Same rule as the other picking dialogs: picking must not outlive
+        # the dialog. The drawn zone itself is untouched -- it is meant to
+        # stay on the contour after this closes.
+        if self.direction_button.isChecked():
+            self.direction_button.setChecked(False)
+        else:
+            self.contour.view.stop_point_picking()
+            self.contour.view.clear_overlays()
+        if self._preview is not None:
+            self._preview.close()
+        super().closeEvent(event)
+
+
+class ContourWindow(ViewerWindow):
+    """The constant-energy contour of a deflector map -- what a map file
+    opens on by default, since that is the view you navigate the cube from.
+
+    The two buttons open the orthogonal cuts, each in its own window, so a
+    contour and one or both cuts can sit side by side rather than competing
+    for space in one layout. Re-clicking a button raises the window that is
+    already open instead of making a duplicate.
+
+    "Map k conversion" turns the measurement into a momentum-space map (see
+    ``tools.momentum.kspace``); the result is emitted on :attr:`kMapCreated` for the
+    launcher to list, rather than replacing what this window shows.
+    """
+
+    #: a converted k-space map, for the launcher to add to its list
+    kMapCreated = pyqtSignal(object)
+
+    def __init__(self, data, filename, colormap, flip):
+        super().__init__(data, filename, colormap, flip)
+        self.angle_defl, self.angle_slit, self.E, cube = data.angle_cube
+        # Read from the file once browsing starts, not once per slice: a
+        # constant-energy plane touches every page of the file, so each
+        # tick of the energy slider used to cost a whole-file read
+        # (loader.cubecache).
+        self.cube = CubeCache(cube)
+        labels = data.scan.labels
+        self.defl_label = labels.get("x", "angle (deflector)")
+        self.slit_label = labels.get("k", "angle (along slit)")
+        self.energy_label = labels.get("z", "Energy (eV)")
+        self.cut_windows = {}
+
+        # Kept on the window itself: the two cuts are how a map is navigated.
+        # "Scan-axis", not "deflector": the map's first axis is whatever was
+        # scanned -- a deflector angle, a manipulator rotation, or a photon
+        # energy in a kz map -- and the tooltip names the one this map has.
+        self.defl_cut_button = QPushButton("Scan-axis cut")
+        self.defl_cut_button.setToolTip(
+            f"Open the cut along the scanned axis ({self.defl_label}) against "
+            f"energy, integrated over the slit-angle window.")
+        self.slit_cut_button = QPushButton("Slit cut")
+        self.slit_cut_button.setToolTip(
+            "Open the slit-vs-energy cut, integrated over the deflector-angle window.")
+        self.defl_cut_button.clicked.connect(lambda: self.open_cut("deflector"))
+        self.slit_cut_button.clicked.connect(lambda: self.open_cut("slit"))
+        # The Brillouin zone once overlaid on this dataset (tool panel:
+        # Brillouin zone...), kept with it: shown or hidden here.
+        self.bz_check = QCheckBox("Brillouin zone")
+        self.bz_check.setToolTip(
+            "Show the Brillouin zone overlaid on this dataset before. To draw "
+            "another, use Brillouin zone... in the tool panel.")
+        self.bz_check.toggled.connect(self._show_saved_zone)
+        self.bz_check.setVisible(self.saved_zone() is not None)
+
+        # Everything else is in the Functions menu.
+        self.arbcut_action = self.add_function(
+            "Arbitrary cut...", self.open_arbitrary_cut,
+            "Cut along a path of up to six points picked on this contour, "
+            "instead of along one of the two axes.")
+        # The k and kz conversions, aligning a kz map's Fermi levels,
+        # de-gridding, overlaying a Brillouin zone and the slice series
+        # figure are the launcher tool panel's; a zone overlaid before is
+        # shown with the tick box above.
+        self.build_toolbar((self.defl_cut_button, self.slit_cut_button,
+                            self.bz_check))
+        self.figure_windows = []
+
+        self.e_control = _SliceControl("Energy (eV)", "eV", 0.05, self)
+        self.root.addWidget(self.e_control)
+
+        self.view = FrameImageView()
+        self.panel = ImagePanel(
+            f"Constant-E contour: {self.defl_label} vs {self.slit_label}",
+            self.view, equal_ratio_option=True, lock_ratio=True, parent=self)
+        self.root.addWidget(self.panel, stretch=1)
+
+        self.view.set_axis_labels(self.defl_label, self.slit_label)
+        self.view.enable_selection_action(False)
+        self.e_control.configure(len(self.E), self.E)
+        self.e_control.changed.connect(self.refresh_contour)
+        self.refresh_contour()
+        self.set_colormap(colormap, flip)
+        self.apply_display_options()
+        # Open at the contour's own aspect so the 1:1 lock has nothing to
+        # stretch; without this a tall-narrow map leaves wide empty margins.
+        self.size_to_data_aspect(self.view)
+        self.view.fit_to_data()
+
+        # One cursor for this contour and its cut windows (ui.viewers.cursorlink):
+        # red for the deflector axis, green for the slit, blue for energy.
+        self.panel.set_axis_colors(AXIS_COLORS["defl"], AXIS_COLORS["slit"])
+        self.cursor_link = CursorLink(self)
+        self.cursor_link.add(self, self.panel, x_axis="defl", y_axis="slit",
+                             control=self.e_control, control_axis="energy")
+
+    def image_panels(self):
+        return (self.panel,)
+
+    @staticmethod
+    def index_window(axis, centre_idx, half_width):
+        centre_idx = int(np.clip(centre_idx, 0, len(axis) - 1))
+        if half_width <= 0:
+            return np.array([centre_idx])
+        centre = axis[centre_idx]
+        idxs = np.nonzero((axis >= centre - half_width) & (axis <= centre + half_width))[0]
+        return idxs if idxs.size else np.array([centre_idx])
+
+    def slab(self, key):
+        """``self.cube[key]``, with a wait cursor while the one read of the
+        whole cube happens (see :class:`loader.cubecache.CubeCache`)."""
+        if not self.cube.load_pending():
+            return self.cube[key]
+        self.statusBar().showMessage("Reading the map into memory...")
+        try:
+            jobs.busy_work(self, "Reading the map into memory", self.cube.load)
+        finally:
+            self.statusBar().clearMessage()
+        return self.cube[key]
+
+    def full_cube(self):
+        """The whole cube as a real numpy array.
+
+        ``self.cube`` wraps a :class:`loader.nxs_file.LazyCube` reading
+        from the file as it is sliced, which is what makes opening a map
+        instant and lets a browsed-but-unused map cost nothing; once the map
+        is being browsed it is held in memory, and this is a copy of that
+        rather than another read of the file. An algorithm
+        that needs every point -- a k conversion, an arbitrary cut, a page
+        of slices -- has to have it read, and says so here rather than
+        relying on a lazy array quacking like an ndarray in every last
+        respect (it forwards indexing and ``np.asarray``, not ndarray's own
+        methods).
+        """
+        return np.asarray(self.cube)
+
+    def refresh_contour(self):
+        ei = self.e_control.index
+        idxs = self.index_window(self.E, ei, self.e_control.half_width)
+        self.e_control.show_value(self.E[ei], idxs, self.E)
+        self.view.set_frame(self.e_control.combine(self.slab((slice(None), slice(None), idxs)), 2),
+                            self.angle_defl, self.angle_slit)
+        self.panel.sync_level_range()
+        self.set_colormap(self.colormap, self.flip)
+
+    def open_kz_conversion(self):
+        """Angle and photon energy to k_par and k_z, with the inner
+        potential chosen against the lattice's own periodicity.
+
+        Modeless, like the other cube tools: the preview and the two-point
+        period measurement happen inside the dialog, but the contour behind
+        it stays usable for comparison.
+        """
+        from arpes_viewer.ui.panels.kzconv import KzConversionDialog
+
+        existing = getattr(self, "_kzconv_dialog", None)
+        if existing is not None:
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+        dialog = KzConversionDialog(self)
+        dialog.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        self._kzconv_dialog = dialog
+        dialog.finished.connect(lambda *_: setattr(self, "_kzconv_dialog", None))
+        dialog.show()
+        return dialog
+
+    def open_kz_processing(self):
+        """Calibrate a photon-energy scan against its own Fermi edges.
+
+        Modeless, and for a reason that is not the usual one: the box it
+        works from is dragged on the *slit cut* window, which this opens
+        alongside. A modal dialog would make that impossible.
+        """
+        from arpes_viewer.ui.panels.kzmap import KzMapProcessDialog
+
+        existing = getattr(self, "_kz_dialog", None)
+        if existing is not None:
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+        dialog = KzMapProcessDialog(self)
+        dialog.datasetsCreated.connect(
+            lambda made: [self.datasetCreated.emit(one) for one in made])
+        self._kz_dialog = dialog
+        dialog.finished.connect(lambda *_: setattr(self, "_kz_dialog", None))
+        dialog.show()
+        return dialog
+
+    def open_degrid(self):
+        """De-grid the whole map (see :mod:`ui.panels.degrid`). Not in this
+        window's menu -- it is the tool panel's -- but kept for scripts and
+        tests."""
+        from arpes_viewer.ui.panels.degrid import open_degrid
+        return self._show_degrid(open_degrid(
+            self, self.data, self.filename, existing_names=self.existing_names,
+            colormap=self.colormap, flip=self.flip))
+
+    def _cut_closed(self, which: str):
+        """A cut window went. A contour that was never put on screen -- made
+        only so that a cut could be opened from the main list -- has nothing
+        left to do once its last cut is gone, so it closes too (releasing
+        the file)."""
+        self.cut_windows.pop(which, None)
+        if (not self.cut_windows and not self.isVisible()
+                and not getattr(self, "_closing", False)
+                and not getattr(self, "_released", False)):
+            self.close()
+
+    def show_map(self):
+        """Put the contour on screen (for a cut opened from the list)."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def closeEvent(self, event):
+        self._closing = True
+        # The cut windows are views into this map -- they follow its cursor
+        # and hand their De-grid button to it -- so they close with it.
+        # Leaving them open would also leave them reachable only through
+        # this closed window, which the cycle collector then reclaims while
+        # they are still on screen (a hard crash in pyqtgraph).
+        for window in list(self.cut_windows.values()):
+            try:
+                window.close()
+            except RuntimeError:
+                pass
+        self.cut_windows.clear()
+        super().closeEvent(event)
+
+    def open_cut(self, which: str):
+        window = self.cut_windows.get(which)
+        if window is not None:
+            window.raise_()
+            window.activateWindow()
+            return window
+        window = MapCutWindow(self, which)
+        self.adopt_child(window)
+        window.closed.connect(lambda w, key=which: self._cut_closed(key))
+        self.cut_windows[which] = window
+        window.set_colormap(self.colormap, self.flip)
+        # Its cursor is this contour's, seen from the side: the slit cut's
+        # horizontal axis is the slit angle and its slider the deflector
+        # angle; the deflector cut the other way round.
+        along, across = (("slit", "defl") if which == "slit" else ("defl", "slit"))
+        self.cursor_link.add(window, window.panel, x_axis=along, y_axis="energy",
+                             control=window.control, control_axis=across)
+        window.show()
+        return window
+
+    def exportable_panels(self):
+        if self.view.last_frame is None:
+            return []
+        return [("ConstE_contour", self.view.last_frame, self.angle_defl, self.angle_slit,
+                 self.defl_label, self.slit_label)]
+
+    def slice_label(self) -> str:
+        idx = self.e_control.index
+        return f"{self.E[idx]:.4g} eV (ind {idx + 1})"
+
+    # -- arbitrary-direction cut -------------------------------------------
+    # -- a page of slices, as one figure ----------------------------------
+    def slice_axes(self):
+        """``(axes, labels)`` of the cube in the order it is stored, which
+        is what the slicing dialog and :func:`slice_panels` work in."""
+        labels = (self.defl_label, self.slit_label, self.energy_label)
+        return (self.angle_defl, self.angle_slit, self.E), labels
+
+    def open_slice_figure(self):
+        """The MATLAB tool's ``massplott_3D``: cut the cube along one axis
+        at a series of positions and lay the results out as a figure."""
+        from arpes_viewer.ui.panels.figure import (SliceSeriesDialog, FigureWindow,
+                                      slice_panels)
+
+        axes, labels = self.slice_axes()
+        dialog = SliceSeriesDialog(self, axes, labels, kind=self.data.kind)
+        if dialog.exec_() != QDialog.Accepted:
+            return None
+        settings = dialog.settings()
+        try:
+            cube = jobs.busy_work(self, "Reading the map", self.full_cube)
+        except Exception as exc:
+            QMessageBox.warning(self, "Slice figure", f"Could not read it:\n{exc}")
+            return None
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            panels = slice_panels(
+                cube, axes, labels, axis=settings["axis"],
+                values=settings["values"], half_width=settings["half_width"],
+                titles=settings["titles"], colormap=self.colormap,
+                flip=self.flip)
+        except Exception as exc:
+            QMessageBox.warning(self, "Slice figure", f"Could not slice it:\n{exc}")
+            return None
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not panels:
+            return None
+
+        window = FigureWindow(panels, f"Slice series — {self.filename}",
+                              parent=None, dataset_source=self._figure_source())
+        window.figure.fit_grid(settings["cols"])
+        window.figure.letter_panels()
+        window.figure.style.shared_levels = settings["shared"]
+        # Both axes of a constant-energy slice are angles or momenta, so an
+        # equal scale is the honest default there and nowhere else.
+        window.figure.style.equal_aspect = settings["axis"] == 2
+        window.refresh()
+        window.closed.connect(lambda w: self.figure_windows.remove(w)
+                              if w in self.figure_windows else None)
+        self.figure_windows.append(window)
+        window.show()
+        self.statusBar().showMessage(
+            f"{len(panels)} slices laid out as a figure")
+        return window
+
+    def _figure_source(self):
+        entries = getattr(self, "_dataset_entries", None)
+        loader = getattr(self, "_dataset_loader", None)
+        if callable(entries) and callable(loader):
+            return {"entries": entries, "loader": loader}
+        return None
+
+    def open_arbitrary_cut(self):
+        """Collect the path, then cut along it. Modeless, like the other
+        picking dialogs: the points are picked on the contour behind it."""
+        existing = getattr(self, "_arbcut_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return None
+
+        dialog = ArbitraryCutDialog(self)
+        self._arbcut_dialog = dialog
+        self.statusBar().showMessage(
+            "Click the contour to place the path's points, then press Plot cut.")
+
+        def on_accepted():
+            points, name = dialog.points(), dialog.name_box.text().strip()
+            separate = dialog.separate_cb.isChecked()
+            self._arbcut_dialog = None
+            self.run_arbitrary_cut(points, name=name, separate=separate)
+
+        dialog.accepted.connect(on_accepted)
+        dialog.rejected.connect(lambda: setattr(self, "_arbcut_dialog", None))
+        dialog.show()
+        dialog.raise_()
+        return dialog
+
+    def run_arbitrary_cut(self, points, name: str = None, separate: bool = False,
+                          open_window: bool = True):
+        """Sample the cube along ``points`` and list the result.
+
+        Split from the dialog so it can be driven directly (which is how the
+        tests exercise it). Returns the datasets it created.
+        """
+        name = name or f"{self.filename} [arb cut]"
+        unit = _unit_of(self.defl_label)
+        distance_label = f"Distance along path ({unit})" if unit else "Distance along path"
+        try:
+            full_cube = self.full_cube
+            distance, energy, values, joints = jobs.busy_work(
+                self, "Cutting the map along the path",
+                lambda: arbitrary_cut(self.angle_defl, self.angle_slit, self.E,
+                                      full_cube(), points))
+        except Exception as exc:
+            QMessageBox.warning(self, "Arbitrary cut", f"The cut failed:\n{exc}")
+            return []
+
+        source_info = {k: v for k, v in self.data.scan.info.items()
+                       if not k.startswith("arbcut.")}
+        created = []
+        if separate:
+            # One dataset per segment, each starting from distance 0 -- the
+            # MATLAB dialog's "separate" option.
+            edges = list(joints) + [float(distance[-1])]
+            start = 0.0
+            for i, end in enumerate(edges):
+                mask = (distance >= start - 1e-9) & (distance <= end + 1e-9)
+                seg_points = [points[i], points[i + 1]]
+                created.append(self._make_cut_dataset(
+                    f"{name} {i + 1}", distance[mask] - distance[mask][0], energy,
+                    values[mask], distance_label,
+                    {"points": seg_points, "segment": i + 1}, source_info))
+                start = end
+        else:
+            created.append(self._make_cut_dataset(
+                name, distance, energy, values, distance_label,
+                {"points": list(points), "joints": list(map(float, joints))},
+                source_info))
+
+        for data in created:
+            self.datasetCreated.emit(data)
+        self.statusBar().showMessage(
+            f"Arbitrary cut: {len(points)} points, {values.shape[0]} samples "
+            f"-- added {len(created)} dataset(s) to the file list")
+        if open_window and created:
+            self.open_computed(created[0])
+        return created
+
+    def _make_cut_dataset(self, name, distance, energy, values, distance_label,
+                          parameters, source_info):
+        return MemoryData(
+            "cut", (np.asarray(distance, dtype=float), np.asarray(energy, dtype=float)),
+            np.asarray(values, dtype=float),
+            {"x": distance_label, "y": self.energy_label},
+            source_label=name, parameters=parameters, prefix="arbcut",
+            source_path=getattr(self.data, "path", ""),
+            source_info=source_info,
+            source_motors=dict(self.data.scan.fourd_info))
+
+    # -- angle -> momentum ------------------------------------------------
+    def readout_position(self):
+        """The readout cursor's (deflector angle, slit angle), or None if it
+        is not switched on. This is what the conversion dialog reads to place
+        the k-space origin."""
+        cursor = getattr(self.view, "readout_cursor", None)
+        if cursor is None:
+            return None
+        x, y = cursor.pos()
+        return float(x), float(y)
+
+    def open_k_conversion(self, bound: bool = False):
+        """Ask for the conversion settings, then convert this map to k-space.
+
+        ``bound``: this window was opened for the conversion alone (the
+        launcher's tool panel does that), so it closes with the dialog --
+        once the conversion it started has finished -- and the dialog
+        closes with it.
+
+        The dialog is deliberately **modeless**: its whole premise is that
+        the user drags the readout cursor on the contour behind it to choose
+        the origin, and a modal dialog would swallow those clicks -- the
+        contour could only be touched by closing the dialog first. So it is
+        shown rather than exec'd, and the conversion runs from its
+        ``accepted`` signal.
+
+        The readout cursor is switched on first if it is not already, since
+        an empty pair of offset boxes would be a poor way to ask for a point.
+        """
+        existing = getattr(self, "_kconv_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return None
+
+        if getattr(self.view, "readout_cursor", None) is None:
+            self.view.set_readout_cursor_visible(True)
+        self.statusBar().showMessage(
+            "Drag the readout cursor to the point that should become "
+            "k = (0, 0), then press Convert.")
+
+        dialog = KConversionDialog(self)
+        dialog.setModal(False)
+        self._kconv_dialog = dialog
+        dialog.follow_cursor()
+        if dialog.restored:
+            # Show where the remembered Γ is on this map.
+            self.view.move_readout_to(dialog.theta_box.value(),
+                                      dialog.phi_box.value())
+        self._close_after_conversion = bound
+
+        # Keep the boxes on the cursor while the user drags it around, until
+        # they type a value of their own.
+        follow = lambda *_: dialog.follow_cursor()
+        self.view.readoutMoved.connect(follow)
+
+        def cleanup(clear_cursor: bool = False):
+            try:
+                self.view.readoutMoved.disconnect(follow)
+            except TypeError:
+                pass
+            self._kconv_dialog = None
+            # The picking overlays and the cursor exist to set up *this*
+            # conversion; once it has run they are leftovers on the contour,
+            # so the picture goes back to what it was.
+            self.view.stop_point_picking()
+            self.view.clear_overlays()
+            if clear_cursor:
+                self.view.set_readout_cursor_visible(False)
+                action = getattr(self.view, "action_readout", None)
+                if action is not None and action.isChecked():
+                    action.blockSignals(True)
+                    action.setChecked(False)
+                    action.blockSignals(False)
+
+        def on_accepted():
+            settings = dialog.settings()
+            name = dialog.output_name()
+            cleanup(clear_cursor=True)
+            self.run_k_conversion(settings, name=name)
+
+        def on_rejected():
+            cleanup()
+            self.statusBar().showMessage("k conversion cancelled")
+            if bound:
+                self.close()
+
+        dialog.accepted.connect(on_accepted)
+        dialog.rejected.connect(on_rejected)
+        if bound:
+            self.closed.connect(lambda *_: dialog.isVisible() and dialog.reject())
+        dialog.show()
+        dialog.raise_()
+        return dialog
+
+    def _conversion_over(self):
+        """A conversion this window was opened for has ended: close it."""
+        if getattr(self, "_close_after_conversion", False):
+            self._close_after_conversion = False
+            self.close()
+
+    def first_axis_is_an_angle(self) -> bool:
+        """Whether this map's first axis is an emission angle.
+
+        The same acquisition records a photon-energy, temperature or
+        gate-voltage series, and the loader asks which it is. Converting any
+        of the others to momentum would produce a picture that looks
+        entirely plausible and means nothing, so the k conversion checks.
+        """
+        from arpes_viewer.loader import registry
+        return registry.role_is_angle(self.data.scan)
+
+    def run_k_conversion(self, settings: dict, name: str = None,
+                         background: bool = True):
+        """Do the conversion and hand the result to whoever is listening.
+
+        Split from :meth:`open_k_conversion` so the conversion can be driven
+        without a dialog (which is how the tests exercise it, with
+        ``background=False`` so the answer is back when the call returns).
+
+        The conversion itself is the longest thing this program does on a
+        map -- it interpolates the whole cube onto a new grid -- so it goes
+        to a worker thread. The cube is read *before* the thread starts: the
+        GUI keeps slicing the same file to repaint, and HDF5 here is not
+        built for two threads at once.
+        """
+        from arpes_viewer.ui.common import jobs
+        from arpes_viewer.tools.momentum.kspace import convert_map
+
+        if not self.first_axis_is_an_angle():
+            role = self.data.scan.info.get("axis0.role", "not an angle")
+            QMessageBox.information(
+                self, "k conversion",
+                f"This map's first axis was loaded as “{role}”, not an "
+                f"emission angle, so converting it to momentum would not "
+                f"mean anything.\n\nIf that is wrong, re-open the file from "
+                f"the loader and set the first axis to an angle.")
+            self._conversion_over()
+            return None
+
+        defl, slit, energy_axis = self.angle_defl, self.angle_slit, self.E
+        full_cube = self.full_cube
+
+        def work(report):
+            # the read of the whole cube is the slow part of a big map: in
+            # the job too, so the progress window shows it
+            report(None, "Reading the cube...")
+            cube = full_cube()
+            report(None, "Converting to k-space...")
+            return convert_map(defl, slit, energy_axis, cube, **settings)
+
+        if background:
+            started = jobs.run_job(
+                self, "k conversion", work,
+                on_done=lambda result: (self._finish_k_conversion(result, settings, name),
+                                        self._conversion_over()),
+                on_error=lambda exc: (self._failed_k_conversion(exc),
+                                      self._conversion_over()),
+                on_cancel=lambda: (self.statusBar().showMessage("k conversion cancelled"),
+                                   self._conversion_over()))
+            if started:
+                self.statusBar().showMessage("Converting to k-space...")
+                return None
+
+        try:
+            result = work(lambda *a, **k: None)
+        except Exception as exc:
+            self._failed_k_conversion(exc)
+            self._conversion_over()
+            return None
+        finished = self._finish_k_conversion(result, settings, name)
+        self._conversion_over()
+        return finished
+
+    def _failed_k_conversion(self, exc):
+        QMessageBox.warning(self, "k conversion", f"Conversion failed:\n{exc}")
+        self.statusBar().showMessage("k conversion failed")
+
+    def _finish_k_conversion(self, result, settings: dict, name: str = None):
+        """Wrap the converted cube up as a dataset and announce it. Runs on
+        the GUI thread, whether the conversion ran here or on a worker."""
+        kx, ky, energy, cube = result
+        shifted = subtracted_fermi_level(self.data)
+        if shifted:
+            # The offset was added only to give k its kinetic energies; the
+            # result stays on the E - E_F axis the map was on.
+            energy = (np.asarray(energy, dtype=float)
+                      - float(settings.get("energy_offset_eV", 0.0)))
+
+        source_info = {k: v for k, v in self.data.scan.info.items()
+                       if not k.startswith("kconv.")}
+        kdata = KMapData(kx, ky, energy, cube,
+                         source_label=name or f"{self.filename} [k]",
+                         parameters=settings,
+                         source_path=getattr(self.data, "path", ""),
+                         source_info=source_info,
+                         source_motors=dict(self.data.scan.fourd_info))
+        if shifted:
+            kdata.scan.labels["z"] = self.energy_label
+        self.kMapCreated.emit(kdata)
+        finite = float(np.isfinite(cube).mean() * 100.0)
+        stored = np.dtype(cube.dtype).name
+        if settings.get("precision") == "float16" and stored != "float16":
+            stored += " (values out of float16's range)"
+        self.statusBar().showMessage(
+            f"Converted to k-space: {cube.shape[0]}x{cube.shape[1]}x{cube.shape[2]} "
+            f"{stored}, {finite:.0f}% inside the light cone -- added to the file list")
+        return kdata
+
+    # -- Brillouin-zone overlay ---------------------------------------------
+    #: where the drawn zone is kept in the dataset's info, as JSON
+    BZ_KEY = "bz.overlay"
+
+    def saved_zone(self):
+        """The zone overlaid on this dataset before, or None."""
+        import json
+        text = (self.data.scan.info or {}).get(self.BZ_KEY)
+        if not text:
+            return None
+        try:
+            return json.loads(text) if isinstance(text, str) else None
+        except ValueError:
+            return None
+
+    def _show_saved_zone(self, on: bool):
+        self.view.show_bz_overlay(self.saved_zone() if on else None)
+
+    def bz_recorded(self, state, settings=None):
+        """The Brillouin-zone dialog drew ``state`` (None: cleared): keep it
+        with the dataset -- here, and on its row in the launcher's list, so
+        it outlives this window and the dataset being re-read -- and offer
+        it in the tick box."""
+        import json
+        text = json.dumps(state, separators=(",", ":")) if state else None
+        info = self.data.scan.info
+        if text:
+            info[self.BZ_KEY] = text
+        else:
+            info.pop(self.BZ_KEY, None)
+        properties = dict(settings or {})
+        properties[self.BZ_KEY] = text
+        keep = getattr(self, "_set_row_properties", None)
+        if callable(keep):
+            keep(properties)
+        self.bz_check.blockSignals(True)
+        self.bz_check.setChecked(bool(text))
+        self.bz_check.blockSignals(False)
+        self.bz_check.setVisible(bool(text) and not getattr(self, "_picture_only", False))
+
+    def open_brillouin_zone(self, bound: bool = False):
+        """Open the Brillouin-zone dialog, or raise it if already open.
+
+        Modeless and left running, like ``open_arbitrary_cut``'s dialog:
+        there is no result to collect on close, since every change already
+        redraws the contour directly.
+        """
+        existing = getattr(self, "_bz_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+
+        dialog = BrillouinZoneDialog(self)
+        self._bz_dialog = dialog
+        dialog.finished.connect(lambda *_: setattr(self, "_bz_dialog", None))
+        if bound:
+            # Opened for the zone alone (the tool panel): the two close
+            # together. The zone stays with the dataset.
+            dialog.finished.connect(lambda *_: self.close())
+            self.closed.connect(lambda *_: dialog.isVisible() and dialog.close())
+            saved = self.saved_zone()
+            if saved:
+                self.view.show_bz_overlay(saved)
+        dialog.show()
+        dialog.raise_()
+        return dialog
+
+
+class MapCutWindow(ViewerWindow):
+    """One orthogonal cut through a deflector map, opened from the contour
+    window's buttons. ``which`` is "deflector" (angle-deflector vs E,
+    integrated over slit angle) or "slit" (angle-slit vs E, integrated over
+    deflector angle)."""
+
+    def __init__(self, contour: ContourWindow, which: str):
+        # Take a reference of its own: the cut window and the contour share
+        # one dataset and either may be closed first. Only file-backed data
+        # is reference counted -- a converted k-map holds no file, so there
+        # is nothing to keep alive.
+        if hasattr(contour.data, "_refs"):
+            contour.data._refs += 1
+        super().__init__(contour.data, contour.filename, contour.colormap, contour.flip)
+        self.contour = contour
+        self.which = which
+
+        if which == "deflector":
+            self.x_axis, self.x_label = contour.angle_defl, contour.defl_label
+            self.sum_axis, sum_label = contour.angle_slit, contour.slit_label
+            title = f"{contour.defl_label} vs {contour.energy_label}"
+        else:
+            self.x_axis, self.x_label = contour.angle_slit, contour.slit_label
+            self.sum_axis, sum_label = contour.angle_defl, contour.defl_label
+            title = f"{contour.slit_label} vs {contour.energy_label}"
+        self.setWindowTitle(f"{contour.filename}  [{title}]")
+        self.resize(900, 760)
+
+        # The correction is fitted along the analyser's slit, because that is
+        # the direction its curvature lives in; a deflector-vs-E cut is a
+        # different axis entirely, so the button is only offered here.
+        if which == "slit":
+            self.fs_action = self.add_function(
+                "Straighten bands (FS correction)...", self.open_fs_correction,
+                "Straighten a curved feature along the slit and apply the same "
+                "shift to the whole cube, giving a corrected map in the file list.")
+        # A cut can be opened straight from the main list, with its contour
+        # kept off screen; this brings the contour up.
+        self.show_map_action = self.add_function(
+            "Show the map (constant-E contour)", lambda: self.contour.show_map(),
+            "Bring up the constant-energy contour this cut is taken from; "
+            "its cursor and this cut's are one.", section="Visualization")
+        self.build_toolbar()
+        self.control = _SliceControl(f"Integrate over {sum_label}",
+                                     _unit_of(sum_label) or "deg", 0.1, self)
+        self.root.addWidget(self.control)
+
+        self.view = FrameImageView()
+        # No 1:1 default, even for a cut of a converted k-map: this panel is
+        # momentum against *energy*, and an equal scale between A^-1 and eV
+        # is not a shape, it is a coincidence of the numbers. (The contour
+        # it was cut from is kx against ky and does open at 1:1, which is
+        # where that default belongs.)
+        self.panel = ImagePanel(title, self.view, curves=True, parent=self)
+        self.root.addWidget(self.panel, stretch=1)
+
+        self.view.set_axis_labels(self.x_label, contour.energy_label)
+        self.view.enable_selection_action(False)
+        self.panel.set_axis_colors(AXIS_COLORS["slit" if which == "slit" else "defl"],
+                                   AXIS_COLORS["energy"])
+        self.control.configure(len(self.sum_axis), self.sum_axis)
+        self.control.changed.connect(self.refresh_cut)
+        self.refresh_cut()
+        self.apply_display_options()
+
+    def image_panels(self):
+        return (self.panel,)
+
+    def refresh_cut(self):
+        idx = self.control.index
+        idxs = ContourWindow.index_window(self.sum_axis, idx, self.control.half_width)
+        self.control.show_value(self.sum_axis[idx], idxs, self.sum_axis)
+        slab = self.contour.slab
+        # cube is (deflector, slit, E): collapse whichever angle axis this
+        # cut integrates over.
+        frame = (self.control.combine(slab((slice(None), idxs, slice(None))), 1)
+                 if self.which == "deflector"
+                 else self.control.combine(slab((idxs, slice(None), slice(None))), 0))
+        self.view.set_frame(frame, self.x_axis, self.contour.E)
+        self.panel.sync_curve_source()
+        self.panel.sync_level_range()
+        self.set_colormap(self.colormap, self.flip)
+
+    def slice_label(self) -> str:
+        idx = self.control.index
+        return f"{self.sum_axis[idx]:.4g} (ind {idx + 1})"
+
+    # -- Fermi-edge fitting ----------------------------------------------------
+    def show_picture_only(self):
+        """Keep only the picture and how it is displayed: no Functions menu,
+        no plot tools, no cut buttons. For a window opened to serve one tool
+        (a k conversion picks Γ on it), where anything else on offer would
+        be a way to wander off from the job."""
+        self._picture_only = True
+        for widget in getattr(self, "_toolbar_tools", ()):
+            widget.setVisible(False)
+        return self
+
+    def fermi_frame(self):
+        """The cut on screen, at the slider's position and width."""
+        frame = self.view.last_frame
+        if frame is None:
+            self.refresh_cut()
+            frame = self.view.last_frame
+        return (np.asarray(self.x_axis, dtype=float),
+                np.asarray(self.contour.E, dtype=float),
+                np.asarray(frame, dtype=float), self.x_label,
+                self.contour.energy_label)
+
+    def cut_position(self):
+        """``(position, indices)``: where along the map's first axis the cut
+        on screen is, and the slices it sums."""
+        idx = self.control.index
+        idxs = ContourWindow.index_window(self.sum_axis, idx, self.control.half_width)
+        return float(self.sum_axis[idx]), idxs
+
+    # -- Fermi-surface correction -----------------------------------------
+    def fs_angle_axis(self):
+        return self.x_axis
+
+    def fs_angle_label(self) -> str:
+        return self.x_label
+
+    def fs_correction_target(self):
+        """The whole cube, corrected along the slit axis.
+
+        The fit is made on this window's slit-vs-E image (integrated over the
+        deflector), and the resulting shift is applied to every deflector
+        position -- which is the point: one fit straightens the entire map,
+        exactly as ``correction.m`` corrects the whole 3D array from a single
+        slice.
+        """
+        if self.which != "slit":
+            return None
+        contour = self.contour
+        scan = contour.data.scan
+        return (np.asarray(contour.full_cube(), dtype=float), contour.angle_slit, contour.E,
+                1, 2, contour.data.kind,
+                lambda new_energy: (np.asarray(contour.angle_defl, dtype=float),
+                                    np.asarray(contour.angle_slit, dtype=float),
+                                    new_energy))
+
+    def exportable_panels(self):
+        if self.view.last_frame is None:
+            return []
+        suffix = "Deflector_vs_E" if self.which == "deflector" else "Slit_vs_E"
+        return [(suffix, self.view.last_frame, self.x_axis, self.contour.E,
+                 self.x_label, self.contour.energy_label)]
+
+
+# --------------------------------------------------------------------------
+# Picking points off a picture: the arbitrary cut and the FS correction
+# --------------------------------------------------------------------------
+def _unit_of(label: str) -> str:
+    """The unit in an axis label, e.g. "Angle, deflector (deg)" -> "deg"."""
+    if label and "(" in label and label.rstrip().endswith(")"):
+        return label[label.rfind("(") + 1:-1]
+    return ""
+
+
+class _PickerDialog(QDialog):
+    """Shared plumbing for the two dialogs that collect points off an image.
+
+    Both are **modeless** for the same reason the k-conversion dialog is:
+    their whole premise is that the user works on the picture behind them.
+    While one is open, left-clicking the image adds a point, the picked
+    points are drawn on it, and closing the dialog (however it closes)
+    takes the overlays away again.
+    """
+
+    def __init__(self, window, view, title: str):
+        super().__init__(window)
+        self.window_ = window
+        self.view = view
+        self.setModal(False)
+        self.setWindowTitle(title)
+        self.finished.connect(lambda *_: self._release())
+
+    def _begin_picking(self):
+        self.view.start_point_picking(self.add_point)
+
+    def _release(self):
+        try:
+            self.view.stop_point_picking()
+            self.view.clear_overlays()
+        except RuntimeError:        # the window went first
+            pass
+
+    def add_point(self, x: float, y: float):
+        raise NotImplementedError
+
+
+class ArbitraryCutDialog(_PickerDialog):
+    """Up to six points defining a path across the constant-energy contour;
+    the cut follows that path, segment by segment.
+
+    Same shape as ``arbi_cut_plot_demo.m``: six numbered point rows, each
+    with its own enable box, a "plot" that joins the segments end to end,
+    and the choice of keeping the result as one dataset or one per segment.
+    What is different is where the points come from -- MATLAB's ``getline``
+    freezes the figure until you press Enter, while here the contour stays
+    live: click it to fill the next free row, then drag the numbers if the
+    click was off.
+    """
+
+    MAX_POINTS = 6
+
+    def __init__(self, contour):
+        super().__init__(contour, contour.view, "Arbitrary cut")
+        self.contour = contour
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            "Click the contour to place up to six points; the cut runs "
+            "through them in order. Values can be typed or corrected here.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        unit = _unit_of(contour.defl_label) or "axis units"
+        grid = QFormLayout()
+        self.rows = []
+        for i in range(self.MAX_POINTS):
+            row = QWidget()
+            box = QHBoxLayout(row)
+            box.setContentsMargins(0, 0, 0, 0)
+            enable = QCheckBox()
+            enable.setToolTip("Include this point in the path.")
+            x_box, y_box = QDoubleSpinBox(), QDoubleSpinBox()
+            for spin, axis in ((x_box, contour.angle_defl), (y_box, contour.angle_slit)):
+                spin.setDecimals(4)
+                spin.setRange(float(np.min(axis)), float(np.max(axis)))
+                spin.setKeyboardTracking(False)
+                spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
+                spin.setMaximumWidth(92)
+                spin.valueChanged.connect(self._refresh_overlay)
+            enable.toggled.connect(self._refresh_overlay)
+            box.addWidget(enable)
+            box.addWidget(QLabel("x"))
+            box.addWidget(x_box)
+            box.addWidget(QLabel("y"))
+            box.addWidget(y_box)
+            box.addStretch(1)
+            grid.addRow(f"P{i + 1}", row)
+            self.rows.append((enable, x_box, y_box))
+        layout.addLayout(grid)
+        layout.addWidget(QLabel(f"Coordinates are in {unit}."))
+
+        buttons_row = QHBoxLayout()
+        self.clear_button = QPushButton("Clear points")
+        self.clear_button.clicked.connect(self.clear_points)
+        buttons_row.addWidget(self.clear_button)
+        buttons_row.addStretch(1)
+        layout.addLayout(buttons_row)
+
+        form = QFormLayout()
+        self.name_box = QLineEdit(self._default_name())
+        form.addRow("Name", self.name_box)
+        layout.addLayout(form)
+
+        self.separate_cb = QCheckBox("One dataset per segment")
+        self.separate_cb.setToolTip(
+            "Off: the segments are laid end to end as a single cut, with the "
+            "corners recorded so the viewer can mark them. On: each segment "
+            "is listed on its own, starting from distance 0.")
+        layout.addWidget(self.separate_cb)
+
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        layout.addWidget(self.note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Plot cut")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._begin_picking()
+        self._refresh_overlay()
+
+    # -- points ----------------------------------------------------------
+    def _default_name(self) -> str:
+        base = f"{self.contour.filename} [arb cut]"
+        taken = set(self.contour.existing_names())
+        if base not in taken:
+            return base
+        n = 2
+        while f"{base} {n}" in taken:
+            n += 1
+        return f"{base} {n}"
+
+    def add_point(self, x: float, y: float):
+        """A click on the contour fills the first row that is still free; a
+        seventh click is ignored rather than silently overwriting one."""
+        for enable, x_box, y_box in self.rows:
+            if not enable.isChecked():
+                for box, value in ((x_box, x), (y_box, y)):
+                    box.blockSignals(True)
+                    box.setValue(value)
+                    box.blockSignals(False)
+                enable.setChecked(True)      # triggers the overlay refresh
+                return
+        self.note.setText("All six points are in use -- clear one to add another.")
+
+    def points(self):
+        return [(x_box.value(), y_box.value())
+                for enable, x_box, y_box in self.rows if enable.isChecked()]
+
+    def clear_points(self):
+        for enable, _, _ in self.rows:
+            enable.blockSignals(True)
+            enable.setChecked(False)
+            enable.blockSignals(False)
+        self.note.setText("")
+        self._refresh_overlay()
+
+    def _refresh_overlay(self, *_):
+        pts = self.points()
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        self.view.show_picked_points(xs, ys)
+        self.view.show_overlay_path(xs if len(pts) > 1 else None,
+                                    ys if len(pts) > 1 else None)
+        if len(pts) < 2:
+            self.note.setText("At least two points are needed.")
+        else:
+            length = float(np.sum(np.hypot(np.diff(xs), np.diff(ys))))
+            self.note.setText(f"{len(pts)} points, {len(pts) - 1} segment(s), "
+                              f"{length:.4g} {_unit_of(self.contour.defl_label)} long.")
+
+    def _on_accept(self):
+        if len(self.points()) < 2:
+            QMessageBox.warning(self, "Arbitrary cut",
+                                "Place at least two points on the contour first.")
+            return
+        self.accept()
+
+
+class FSCorrectionDialog(_PickerDialog):
+    """Points along a feature that should be flat, and the polynomial fitted
+    through them.
+
+    ``correction.m`` asks for the points with ``getpts`` and fits a
+    parabola; here the points are clicked on the live image, listed in a
+    table where they can be corrected, and the fit is drawn over the data as
+    it is built, so a bad point is obvious before anything is computed.
+    """
+
+    def __init__(self, window, view, angle_label: str, energy_label: str):
+        super().__init__(window, view, "Fermi-surface correction")
+        self.angle_label = angle_label
+        self.energy_label = energy_label
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            "Click along the feature that should be flat (a Fermi edge, a band "
+            "bottom). The fitted curve is drawn as you go; every energy column "
+            "is then shifted to straighten it.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels([angle_label, energy_label])
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setMaximumHeight(190)
+        self.table.itemChanged.connect(lambda *_: self._refresh_overlay())
+        layout.addWidget(self.table)
+
+        row = QHBoxLayout()
+        self.reference_button = QPushButton("From a reference (Au)...")
+        self.reference_button.setToolTip(
+            "Measure the curvature instead of clicking it: fit the Fermi edge "
+            "of a gold reference channel by channel and use those points.")
+        self.reference_button.clicked.connect(self.from_reference)
+        self.remove_button = QPushButton("Remove selected")
+        self.remove_button.clicked.connect(self.remove_selected)
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.clicked.connect(self.clear_points)
+        row.addWidget(self.reference_button)
+        row.addWidget(self.remove_button)
+        row.addWidget(self.clear_button)
+        row.addStretch(1)
+        row.addWidget(QLabel("Fit order"))
+        self.order_box = QSpinBox()
+        self.order_box.setRange(1, 4)
+        self.order_box.setValue(2)
+        self.order_box.setToolTip(
+            "Polynomial order. 2 (a parabola) is what the MATLAB tool uses and "
+            "what analyser curvature normally looks like; an order-n fit needs "
+            "at least n+1 points.")
+        self.order_box.valueChanged.connect(lambda *_: self._refresh_overlay())
+        row.addWidget(self.order_box)
+        layout.addLayout(row)
+
+        form = QFormLayout()
+        self.name_box = QLineEdit(self._default_name())
+        form.addRow("Name", self.name_box)
+        layout.addLayout(form)
+
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        layout.addWidget(self.note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Correct")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._begin_picking()
+        self._refresh_overlay()
+
+    def _default_name(self) -> str:
+        base = f"{self.window_.filename} [FS corr]"
+        taken = set(self.window_.existing_names()) if hasattr(self.window_, "existing_names") else set()
+        if base not in taken:
+            return base
+        n = 2
+        while f"{base} {n}" in taken:
+            n += 1
+        return f"{base} {n}"
+
+    # -- points ----------------------------------------------------------
+    def add_point(self, x: float, y: float):
+        row = self.table.rowCount()
+        self.table.blockSignals(True)
+        self.table.insertRow(row)
+        for column, value in enumerate((x, y)):
+            self.table.setItem(row, column, QTableWidgetItem(f"{value:.5g}"))
+        self.table.blockSignals(False)
+        self._refresh_overlay()
+
+    def points(self):
+        out = []
+        for row in range(self.table.rowCount()):
+            try:
+                x = float(self.table.item(row, 0).text())
+                y = float(self.table.item(row, 1).text())
+            except (AttributeError, ValueError):
+                continue
+            out.append((x, y))
+        return out
+
+    def remove_selected(self):
+        rows = sorted({item.row() for item in self.table.selectedItems()}, reverse=True)
+        self.table.blockSignals(True)
+        for row in rows:
+            self.table.removeRow(row)
+        self.table.blockSignals(False)
+        self._refresh_overlay()
+
+    def clear_points(self):
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        self.table.blockSignals(False)
+        self._refresh_overlay()
+
+    # -- points measured on a reference, rather than clicked ---------------
+    def from_reference(self):
+        """Fit a reference sample's edge channel by channel and put the
+        result in the points table, where it is smoothed by the same
+        polynomial as hand-picked points -- and can be inspected and pruned
+        the same way."""
+        entries = getattr(self.window_, "_dataset_entries", None)
+        loader = getattr(self.window_, "_dataset_loader", None)
+        if not callable(entries) or not callable(loader):
+            QMessageBox.information(self, "Fermi surface from a reference",
+                                     "No dataset list is available here.")
+            return None
+        listed = entries()
+        if not listed:
+            QMessageBox.information(self, "Fermi surface from a reference",
+                                     "Load the reference measurement first.")
+            return None
+
+        chooser = AuReferenceDialog(self, listed, loader,
+                                     metadata_temperature(self.window_.data))
+        if chooser.exec_() != QDialog.Accepted:
+            return None
+        data = chooser.selected_data()
+        settings = chooser.settings()
+        if data is None:
+            return None
+        try:
+            angles, energy, frame, _a_label, _e_label = reference_frame(data)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Fermi surface from a reference", str(exc))
+            return None
+
+        result = run_channel_fit(
+            self, angles, energy, frame,
+            temperature=settings["temperature"], window=(None, None),
+            half_width=settings["half_width"], step=settings["step"],
+            draw_on=None,
+            title=f"Fitting {settings['label']} channel by channel")
+        if result is None:
+            return None
+        angles, ef, ok = result
+        if not ok.any():
+            QMessageBox.warning(self, "Fermi surface from a reference",
+                                 "No channel of that reference could be fitted.")
+            return None
+
+        target = np.asarray(self.window_.fs_angle_axis(), dtype=float)
+        if (angles.size != target.size
+                or not np.allclose(angles, target, rtol=1e-3, atol=1e-6)):
+            # A reference taken on a different angle grid still describes the
+            # same analyser, so its points are kept as they are -- the
+            # polynomial is evaluated on whatever axis the data being
+            # corrected has.
+            self.note.setText(
+                f"note: the reference's {angles.size} channels do not match this "
+                f"data's {target.size}; the fitted curve is used through the "
+                f"polynomial, which is defined everywhere.")
+        self.clear_points()
+        self.table.blockSignals(True)
+        for angle, value in zip(angles[ok], ef[ok]):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(f"{angle:.5g}"))
+            self.table.setItem(row, 1, QTableWidgetItem(f"{value:.6g}"))
+        self.table.blockSignals(False)
+        self._refresh_overlay()
+        spread = float(np.nanmax(ef[ok]) - np.nanmin(ef[ok]))
+        self.window_.statusBar().showMessage(
+            f"{int(ok.sum())} channels fitted on {settings['label']}; "
+            f"E_F varies by {spread * 1000:.3g} meV across the detector")
+        return result
+
+    def coefficients(self):
+        order = self.order_box.value()
+        pts = self.points()
+        if len(pts) < order + 1:
+            return None
+        return fit_feature(pts, order=order)
+
+    def _refresh_overlay(self, *_):
+        pts = self.points()
+        self.view.show_picked_points([p[0] for p in pts], [p[1] for p in pts])
+        coeffs = self.coefficients()
+        if coeffs is None:
+            self.view.show_overlay_path(None, None)
+            need = self.order_box.value() + 1
+            self.note.setText(f"{len(pts)} point(s); an order-{self.order_box.value()} "
+                              f"fit needs {need}.")
+            return
+        axis = np.asarray(self.window_.fs_angle_axis(), dtype=float)
+        xs = np.linspace(float(axis.min()), float(axis.max()), 200)
+        self.view.show_overlay_path(xs, np.polyval(coeffs, xs), dashed=True)
+        fitted = np.polyval(coeffs, axis)
+        span = float(np.max(fitted) - np.min(fitted))
+        self.note.setText(
+            f"{len(pts)} points fitted; the feature spans {span:.4g} "
+            f"{_unit_of(self.energy_label) or 'eV'} and will be flattened.")
+
+    def _on_accept(self):
+        if self.coefficients() is None:
+            QMessageBox.warning(self, "Fermi-surface correction",
+                                f"An order-{self.order_box.value()} fit needs at least "
+                                f"{self.order_box.value() + 1} points.")
+            return
+        self.accept()
+
+
+# --------------------------------------------------------------------------
+# Fermi-edge fitting
+# --------------------------------------------------------------------------
+def reference_frame(data):
+    """An (angle, energy) frame and its axes from a dataset, for fitting the
+    edge channel by channel.
+
+    A cut is already that; a map is summed over the deflector, because the
+    curvature being measured is the analyser's along its slit and every
+    deflector position sees the same one.
+    """
+    scan = data.scan
+    if data.kind == "cut":
+        return (np.asarray(scan.x, dtype=float), np.asarray(scan.y, dtype=float),
+                np.asarray(scan.value, dtype=float),
+                scan.labels.get("x", "angle"), scan.labels.get("y", "E"))
+    if data.kind in CUBE_KINDS:
+        cube = np.asarray(scan.value, dtype=float)
+        return (np.asarray(scan.k, dtype=float), np.asarray(scan.z, dtype=float),
+                np.nansum(cube, axis=0),
+                scan.labels.get("k", "angle"), scan.labels.get("z", "E"))
+    raise ValueError(f"{data.kind} has no angle-vs-energy frame to fit")
+
+
+def metadata_temperature(data, default: float = 30.0) -> float:
+    """The sample temperature the file recorded, for holding T at.
+
+    The fields are named differently from one beamline version to the next,
+    so anything that looks like a sample temperature in kelvin is accepted;
+    a reading far outside a cryostat's range is ignored rather than fitted
+    from, since a wrong temperature quietly becomes a wrong resolution.
+    """
+    info = dict(getattr(data.scan, "info", {}) or {})
+    info.update(getattr(data.scan, "fourd_info", {}) or {})
+    for key, value in info.items():
+        name = str(key).lower()
+        if "temp" not in name or "setpoint" in name:
+            continue
+        try:
+            number = float(np.asarray(value).reshape(-1)[0])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if 1.0 <= number <= 1000.0:
+            return number
+    return float(default)
+
+
+# --------------------------------------------------------------------------
+# k conversion for a single Cut
+# --------------------------------------------------------------------------
+def cut_deflector_angle(data, default: float = 0.0) -> float:
+    """The deflector position a cut was taken at, as the file recorded it.
+
+    Half the geometry a cut's k conversion needs comes for free: the file
+    knows which deflector position this was, even though the axis was
+    dropped when the single-position scan became a plain 2-D cut. The other
+    half -- where Gamma is -- cannot come from the file, because where
+    normal emission sits is a beamline convention, not a measurement.
+    """
+    info = dict(getattr(data.scan, "info", {}) or {})
+    for key in ("DeflectorAngle_deg", "kcut.deflector_deg"):
+        if key in info:
+            try:
+                return float(np.asarray(info[key]).reshape(-1)[0])
+            except (TypeError, ValueError, IndexError):
+                pass
+    return float(default)
+
+
+def subtracted_fermi_level(data) -> float:
+    """The kinetic energy that "Offset energy axis" moved to zero, or 0.
+
+    A dataset shifted to E - E_F no longer has kinetic energies on its
+    axis, which is what a k conversion needs; the shift is recorded, so the
+    conversion can add it back by default instead of failing on negative
+    energies.
+    """
+    info = getattr(getattr(data, "scan", None), "info", {}) or {}
+    try:
+        value = float(np.asarray(info.get("fitEF.ef_subtracted", 0.0)).reshape(-1)[0])
+    except (TypeError, ValueError, IndexError):
+        return 0.0
+    return value if np.isfinite(value) else 0.0
+
+
+def cut_k_conversion_blocked(data):
+    """Why this cut cannot be converted from angle to momentum, or None.
+
+    The conversion assumes what a measured Cut is: intensity against the
+    angle along the slit, at one deflector position. Several things in this
+    program are also "cuts" without being that -- one already in momentum,
+    one taken along an arbitrary path through a map, one sliced out of a map
+    along the deflector axis -- and converting those would produce a picture
+    whose axis means nothing. Checked from the metadata the producers leave
+    behind rather than guessed from the numbers.
+    """
+    info = dict(getattr(data.scan, "info", {}) or {})
+    if any(str(key).startswith("kcut.") for key in info):
+        return "this cut is already in momentum"
+    if any(str(key).startswith("arbcut.") for key in info):
+        return ("this cut was taken along a path through a map, not at one "
+                "deflector position — convert the map instead, then cut it")
+    panel = str(info.get("slice.panel", ""))
+    if panel and "slit" not in panel.lower() and "cut" not in panel.lower():
+        return f"this is a slice through a map ({panel}), not a slit cut"
+    label = str(getattr(data.scan, "labels", {}).get("x", ""))
+    if "Å" in label:
+        return "this cut's angle axis is already a momentum"
+    return None
+
+
+def sample_rotations(data) -> dict:
+    """The manipulator angles the file recorded, for comparing a cut with
+    the map whose alignment it is about to borrow."""
+    motors = dict(getattr(data.scan, "fourd_info", {}) or {})
+    return {name: float(motors[name]) for name in ("SRn", "SRz")
+            if name in motors and isinstance(motors[name], (int, float, np.floating))}
+
+
+class CutKConversionDialog(QDialog):
+    """Convert one Cut from angle to momentum.
+
+    The conversion needs two things the cut itself cannot supply: which
+    deflector position it was taken at (the file knows) and at which angles
+    Gamma sits (the file cannot know -- normal emission is a beamline
+    convention).
+
+    **By default Γ is taken to lie on the cut**, at the slit angle of a
+    vertical line dragged on the cut itself: its deflector angle is then the
+    cut's own, and the cut runs through Γ. That is not exact when the cut
+    misses Γ, but it is often all there is -- an experiment sometimes
+    measures one slit cut and nothing else. Γ's angles still enter the
+    geometry as angles (normal emission inside the sine), not as a shift of
+    the converted axis, so the k scale stays right on both sides of it.
+
+    **Advanced** is for a cut that does not run through Γ: Γ's deflector
+    angle and the sample rotation typed, or inherited from a Map converted
+    earlier -- exact if both were measured in the same alignment.
+    """
+
+    def __init__(self, window: "CutWindow"):
+        super().__init__(window)
+        self.window_ = window
+        self.setWindowTitle("Convert cut to momentum (k)")
+        self.setModal(False)
+        scan = window.data.scan
+        self.slit = np.asarray(scan.x, dtype=float)
+        self.energy = np.asarray(scan.y, dtype=float)
+
+        # Three groups of settings plus a readout is a tall dialog, and a
+        # laptop screen is not. In a scroll area it opens at whatever height
+        # there is instead of squashing its own rows until the spin boxes
+        # are unreadable.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroller = QScrollArea()
+        scroller.setWidgetResizable(True)
+        scroller.setFrameShape(QFrame.NoFrame)
+        content = QWidget()
+        scroller.setWidget(content)
+        outer.addWidget(scroller, 1)
+
+        layout = QVBoxLayout(content)
+        intro = QLabel(
+            "Drag the vertical line on the cut to the slit angle of Γ. The "
+            "cut is then taken to run through Γ -- not exact if it misses Γ, "
+            "but the only choice when only this cut was measured. For a cut "
+            "that does not run through Γ, see Advanced.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        # -- where Gamma is: on the cut -----------------------------------------
+        gamma_group = QGroupBox("Γ on this cut")
+        gamma = QFormLayout(gamma_group)
+        self.gamma_slit = self._angle_box(
+            "The slit angle at which Γ is: the vertical line on the cut.")
+        gamma.addRow("Γ slit angle (deg)", self.gamma_slit)
+        layout.addWidget(gamma_group)
+
+        # -- what this cut is ------------------------------------------------
+        cut_group = QGroupBox("This cut")
+        cut = QFormLayout(cut_group)
+        self.deflector_box = self._angle_box(
+            "The deflector position this cut was taken at. Read from the "
+            "file; edit it only if the file recorded it wrongly.")
+        recorded = cut_deflector_angle(window.data, default=float("nan"))
+        self.deflector_box.setValue(0.0 if not np.isfinite(recorded) else recorded)
+        cut.addRow("Deflector angle (deg)", self.deflector_box)
+
+        self.energy_offset_box = QDoubleSpinBox()
+        self.energy_offset_box.setDecimals(4)
+        self.energy_offset_box.setRange(-10000.0, 10000.0)
+        self.energy_offset_box.setSingleStep(0.1)
+        self.energy_offset_box.setToolTip(
+            "Added to the energy axis before converting, for when it is not "
+            "already a true kinetic energy.")
+        cut.addRow("Energy offset (eV)", self.energy_offset_box)
+        note = ("Deflector angle read from the file." if np.isfinite(recorded)
+                else "This file records no deflector angle — type it, or "
+                     "leave it at 0 if the cut was taken at the deflector's zero.")
+        shifted = subtracted_fermi_level(window.data)
+        if shifted:
+            self.energy_offset_box.setValue(shifted)
+            note += (f" The energy axis is E − E_F; E_F = {shifted:.4f} eV "
+                     f"is added back so the conversion uses kinetic energies.")
+        self.file_note = QLabel(note)
+        self.file_note.setWordWrap(True)
+        cut.addRow("", self.file_note)
+        layout.addWidget(cut_group)
+
+        # -- Advanced: Γ elsewhere --------------------------------------------
+        self.advanced = QGroupBox("Advanced: Γ off this cut")
+        self.advanced.setCheckable(True)
+        self.advanced.setChecked(False)
+        self.advanced.setToolTip(
+            "Ticked: Γ's deflector angle and the sample rotation below are "
+            "used, so the cut may run past Γ at any distance. Unticked: Γ is "
+            "on the cut, at the line's slit angle.")
+        adv_outer = QVBoxLayout(self.advanced)
+        adv_widget = QWidget()
+        adv_outer.addWidget(adv_widget)
+        advanced = QFormLayout(adv_widget)
+        advanced.setContentsMargins(0, 0, 0, 0)
+        self.map_button = QPushButton("From a converted map...")
+        self.map_button.setToolTip(
+            "Take Γ's angles from a Map already converted in this session. "
+            "Exact if the cut was measured in the same alignment -- the "
+            "manipulator angles of both are compared and any difference is "
+            "reported.")
+        self.map_button.clicked.connect(self.from_converted_map)
+        advanced.addRow("", self.map_button)
+        self.gamma_defl = self._angle_box(
+            "Deflector angle at which Γ was observed -- the same number "
+            "as the Map conversion's.")
+        self.gamma_defl.setValue(self.deflector_box.value())
+        self.azimuth_box = self._angle_box(
+            "Sample rotation about the surface normal, as in the Map "
+            "conversion.")
+        advanced.addRow("Γ deflector angle (deg)", self.gamma_defl)
+        advanced.addRow("Sample rotation (deg)", self.azimuth_box)
+        self.source_note = QLabel("Typed by hand — nothing inherited yet.")
+        self.source_note.setWordWrap(True)
+        self.source_note.setMinimumHeight(34)
+        advanced.addRow("", self.source_note)
+        self.advanced.toggled.connect(adv_widget.setVisible)
+        adv_widget.setVisible(False)
+        layout.addWidget(self.advanced)
+
+        # -- the output -------------------------------------------------------
+        out_group = QGroupBox("Output")
+        out = QFormLayout(out_group)
+        self.name_box = QLineEdit(self._default_name())
+        out.addRow("Name", self.name_box)
+
+        self.by_count = QRadioButton("by number of points")
+        self.by_resolution = QRadioButton("by step size")
+        self.by_count.setChecked(True)
+        mode_row = QWidget()
+        mode_box = QHBoxLayout(mode_row)
+        mode_box.setContentsMargins(0, 0, 0, 0)
+        mode_box.addWidget(self.by_count)
+        mode_box.addWidget(self.by_resolution)
+        mode_box.addStretch(1)
+        out.addRow("Output grid", mode_row)
+
+        n_e = self.energy.size
+        self.nk_box = self._count_box(
+            max(self.slit.size, 2),
+            f"Number of k points. Defaults to the measured {self.slit.size} "
+            f"angles.")
+        self.ne_box = self._count_box(
+            n_e, f"Number of energy points. Defaults to the measured {n_e}.")
+        out.addRow("k points", self.nk_box)
+        out.addRow("E points", self.ne_box)
+
+        # Points and spacings are one choice seen two ways: whichever is
+        # chosen above is typed, and the other (greyed) follows it.
+        self.dk_box = self._resolution_box(0.01, 5, "Å⁻¹",
+                                           "Spacing between k points.")
+        step_meV = abs(float(self.energy[1] - self.energy[0])) * 1000 if n_e > 1 else 10.0
+        self.de_box = self._resolution_box(
+            max(round(step_meV, 3), 0.001), 3, "meV",
+            f"Spacing between energy points. The measurement's own step is "
+            f"{step_meV:.4g} meV.")
+        out.addRow("k step (Å⁻¹)", self.dk_box)
+        out.addRow("E step (meV)", self.de_box)
+
+        self.radial_box = QCheckBox("Measure from Γ itself")
+        self.radial_box.setToolTip(
+            "Off: the axis is the momentum along the cut, zeroed where the "
+            "cut passes closest to Γ -- the coordinate a band disperses "
+            "in.\nOn: the axis is the distance from Γ, which leaves a "
+            "real gap of ±k⊥ around zero because the cut never "
+            "reaches Γ. Honest, but half the picture is then empty.")
+        out.addRow("", self.radial_box)
+
+        self.trim_box = QCheckBox("Trim to the range every energy covers")
+        self.trim_box.setToolTip(
+            "k scales with sqrt(E), so the lowest-energy rows do not reach as "
+            "far as the highest. Off, the ends are missing for those rows; "
+            "on, the output is cut back to the range all of them share.")
+        out.addRow("", self.trim_box)
+
+        # Only for a setting that defines no grid at all; the values
+        # themselves are in the boxes.
+        self.grid_note = QLabel("")
+        self.grid_note.setWordWrap(True)
+        out.addRow("", self.grid_note)
+        layout.addWidget(out_group)
+
+        self.geometry_note = QLabel("")
+        self.geometry_note.setWordWrap(True)
+        self.geometry_note.setMinimumHeight(52)
+        self.geometry_note.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.geometry_note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Convert")
+        buttons.button(QDialogButtonBox.Cancel).setText("Close")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        # Outside the scroll area: Convert must not be something to scroll
+        # down for.
+        buttons.setContentsMargins(8, 4, 8, 8)
+        outer.addWidget(buttons)
+        self.resize(self.sizeHint().width() + 40, 700)
+
+        for radio in (self.by_count, self.by_resolution):
+            radio.toggled.connect(self._update_grid_mode)
+        for box in (self.gamma_defl, self.gamma_slit, self.azimuth_box,
+                    self.deflector_box, self.energy_offset_box,
+                    self.nk_box, self.ne_box, self.dk_box, self.de_box):
+            box.valueChanged.connect(self._refresh)
+        for box in (self.radial_box, self.trim_box, self.advanced):
+            box.toggled.connect(self._refresh)
+
+        # Γ's slit angle as a line on the cut, both ways: drag it, or type.
+        start = 0.0 if self.slit.min() <= 0.0 <= self.slit.max() \
+            else float(np.median(self.slit))
+        self.gamma_slit.setValue(start)
+        self.gamma_line = pg.InfiniteLine(
+            pos=start, angle=90, movable=True,
+            pen=pg.mkPen("#e8413c", width=2),
+            label="Γ", labelOpts={"position": 0.95, "color": "#e8413c"})
+        self.gamma_line.setZValue(30)
+        window.view.view_box.addItem(self.gamma_line, ignoreBounds=True)
+        self.gamma_line.sigPositionChanged.connect(self._line_moved)
+        self.gamma_slit.valueChanged.connect(self._slit_typed)
+        self.finished.connect(lambda *_: self._remove_line())
+
+        from arpes_viewer.tools.runtime import remembered
+        self.restored = remembered.recall(self.REMEMBERED, self._shape())
+        if self.restored:
+            self.restore(self.restored)
+        self._update_grid_mode()
+
+    # -- the line on the cut ---------------------------------------------------
+    def _line_moved(self, *_):
+        value = float(self.gamma_line.value())
+        if abs(value - self.gamma_slit.value()) > 1e-9:
+            self.gamma_slit.setValue(value)
+
+    def _slit_typed(self, value):
+        if abs(float(self.gamma_line.value()) - value) > 1e-9:
+            self.gamma_line.blockSignals(True)
+            self.gamma_line.setValue(float(value))
+            self.gamma_line.blockSignals(False)
+
+    def _remove_line(self):
+        try:
+            self.window_.view.view_box.removeItem(self.gamma_line)
+        except (RuntimeError, AttributeError):
+            pass                     # the window went first
+
+    # -- remembered between cuts of one size ------------------------------
+    #: the key the settings are remembered under (tools.runtime.remembered)
+    REMEMBERED = "cut_k_conversion"
+
+    def _shape(self):
+        return (self.slit.size, self.energy.size)
+
+    def remembered_settings(self) -> dict:
+        """What carries over to the next cut of this size: where Γ is, the
+        Advanced choice and angles, and the output -- not the deflector
+        angle or the energy offset, which belong to each file."""
+        return {"gamma_slit": self.gamma_slit.value(),
+                "advanced": self.advanced.isChecked(),
+                "gamma_defl": self.gamma_defl.value(),
+                "azimuth": self.azimuth_box.value(),
+                "radial": self.radial_box.isChecked(),
+                "trim": self.trim_box.isChecked(),
+                "by_count": self.by_count.isChecked(),
+                "nk": self.nk_box.value(), "ne": self.ne_box.value(),
+                "dk": self.dk_box.value(), "de": self.de_box.value()}
+
+    def restore(self, settings: dict):
+        boxes = {"gamma_slit": self.gamma_slit, "gamma_defl": self.gamma_defl,
+                 "azimuth": self.azimuth_box, "nk": self.nk_box,
+                 "ne": self.ne_box, "dk": self.dk_box, "de": self.de_box}
+        for name, box in boxes.items():
+            if name in settings:
+                box.blockSignals(True)
+                box.setValue(type(box.value())(settings[name]))
+                box.blockSignals(False)
+        self._slit_typed(self.gamma_slit.value())
+        for name, box in (("advanced", self.advanced), ("radial", self.radial_box),
+                          ("trim", self.trim_box)):
+            if name in settings:
+                box.setChecked(bool(settings[name]))
+        if "by_count" in settings:
+            (self.by_count if settings["by_count"] else self.by_resolution).setChecked(True)
+        self.source_note.setText("Settings from the last conversion of a cut "
+                                 "of this size.")
+
+    def accept(self):
+        from arpes_viewer.tools.runtime import remembered
+        remembered.remember(self.REMEMBERED, self._shape(),
+                            self.remembered_settings())
+        super().accept()
+
+    # -- small builders ----------------------------------------------------
+    @staticmethod
+    def _angle_box(tip: str):
+        box = QDoubleSpinBox()
+        box.setDecimals(3)
+        box.setRange(-180.0, 180.0)
+        box.setSingleStep(0.5)
+        box.setToolTip(tip)
+        return box
+
+    @staticmethod
+    def _count_box(value: int, tip: str):
+        box = QSpinBox()
+        box.setRange(2, 20000)
+        box.setValue(int(value))
+        box.setToolTip(tip)
+        return box
+
+    @staticmethod
+    def _resolution_box(value, decimals, unit, tip):
+        box = QDoubleSpinBox()
+        box.setDecimals(decimals)
+        box.setRange(10.0 ** -decimals, 1e6)
+        box.setSingleStep(10.0 ** -(decimals - 1))
+        box.setValue(value)
+        box.setToolTip(f"{tip} In {unit}.")
+        return box
+
+    def _default_name(self) -> str:
+        base = f"{self.window_.filename} [k]"
+        taken = set(self.window_.existing_names())
+        if base not in taken:
+            return base
+        n = 2
+        while f"{base} {n}" in taken:
+            n += 1
+        return f"{base} {n}"
+
+    def output_name(self) -> str:
+        return self.name_box.text().strip() or self._default_name()
+
+    # -- inheriting an alignment -------------------------------------------
+    def from_converted_map(self):
+        """Take Γ's angles from a Map converted earlier in this session.
+
+        The Map conversion's theta/phi offsets *are* Γ's angles -- the
+        user picked the point that became k = (0, 0) -- so they transfer to
+        any cut taken in the same alignment without being measured again.
+        """
+        entries = getattr(self.window_, "_dataset_entries", None)
+        loader = getattr(self.window_, "_dataset_loader", None)
+        if not callable(entries) or not callable(loader):
+            QMessageBox.information(self, "Cut k conversion",
+                                     "No dataset list is available here.")
+            return None
+        candidates = [(label, key) for label, key in entries()
+                      if label.rstrip().endswith("[k_map]")]
+        if not candidates:
+            QMessageBox.information(
+                self, "Cut k conversion",
+                "No converted map is in the list yet. Convert a map of this "
+                "sample first ('Convert to momentum (k)' in the map viewer), then come back — or "
+                "type Γ's angles below.")
+            return None
+        labels = [label for label, _ in candidates]
+        choice, ok = QInputDialog.getItem(self, "Inherit Γ from a map",
+                                           "Converted map:", labels, 0, False)
+        if not ok:
+            return None
+        key = candidates[labels.index(choice)][1]
+        try:
+            data = loader(key)
+        except Exception as exc:
+            QMessageBox.warning(self, "Cut k conversion",
+                                 f"That map could not be read:\n{exc}")
+            return None
+        return self.adopt_alignment(data, choice)
+
+    def adopt_alignment(self, data, label: str = ""):
+        """Copy a converted map's k-space origin into the boxes, and say how
+        far the two measurements' manipulator angles agree."""
+        info = dict(getattr(data.scan, "info", {}) or {})
+        try:
+            theta = float(info["kconv.theta_offset_deg"])
+            phi = float(info["kconv.phi_offset_deg"])
+        except (KeyError, TypeError, ValueError):
+            QMessageBox.warning(
+                self, "Cut k conversion",
+                "That dataset does not record a k conversion, so there is no "
+                "Γ to inherit from it.")
+            return None
+        azimuth = float(info.get("kconv.azimuth_deg", 0.0))
+        for box, value in ((self.gamma_defl, theta), (self.gamma_slit, phi),
+                           (self.azimuth_box, azimuth)):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self._slit_typed(phi)
+        self.advanced.setChecked(True)
+
+        mine = sample_rotations(self.window_.data)
+        theirs = sample_rotations(data)
+        shared = sorted(set(mine) & set(theirs))
+        drift = {name: mine[name] - theirs[name] for name in shared
+                 if abs(mine[name] - theirs[name]) > 0.01}
+        note = f"Γ taken from {label or 'a converted map'}."
+        if drift:
+            note += (" ⚠ The manipulator moved between the two: "
+                     + ", ".join(f"{name} by {value:+.3f}°"
+                                 for name, value in drift.items())
+                     + ". The inherited angles are only right if that motion "
+                       "does not change where Γ sits — check, or "
+                       "correct the angles by hand.")
+        elif shared:
+            note += (" The manipulator was in the same position for both ("
+                     + ", ".join(f"{name} {mine[name]:.3f}°"
+                                 for name in shared) + ").")
+        self.source_note.setText(note)
+        self._refresh()
+        return theta, phi, azimuth
+
+    # -- the output grid ----------------------------------------------------
+    def _update_grid_mode(self, *_):
+        by_count = self.by_count.isChecked()
+        for box in (self.nk_box, self.ne_box):
+            box.setEnabled(by_count)
+        for box in (self.dk_box, self.de_box):
+            box.setEnabled(not by_count)
+        self._refresh()
+
+    def geometry(self) -> dict:
+        """The conversion's geometry. Without Advanced, Γ is on the cut:
+        its deflector angle is the cut's own, and no rotation is applied."""
+        advanced = self.advanced.isChecked()
+        return {
+            "deflector_deg": self.deflector_box.value(),
+            "gamma_deflector_deg": (self.gamma_defl.value() if advanced
+                                    else self.deflector_box.value()),
+            "gamma_slit_deg": self.gamma_slit.value(),
+            "azimuth_deg": self.azimuth_box.value() if advanced else 0.0,
+            "energy_offset_eV": self.energy_offset_box.value(),
+        }
+
+    def k_extent(self):
+        from arpes_viewer.tools.momentum.cutk import cut_extent
+        try:
+            return cut_extent(self.slit, self.energy,
+                              radial=self.radial_box.isChecked(),
+                              trim=self.trim_box.isChecked(), **self.geometry())
+        except Exception:
+            return None
+
+    def grid_counts(self):
+        """(n_k, n_E), whichever way the user asked for them."""
+        if self.by_count.isChecked():
+            return int(self.nk_box.value()), int(self.ne_box.value())
+        extent = self.k_extent()
+        if extent is None:
+            raise ValueError("the settings do not define a k range yet")
+        lo, hi = extent
+        n_k = int(round((hi - lo) / self.dk_box.value())) + 1
+        span_meV = abs(float(self.energy[-1] - self.energy[0])) * 1000.0
+        n_e = int(round(span_meV / self.de_box.value())) + 1
+        return max(n_k, 2), max(n_e, 2)
+
+    def settings(self) -> dict:
+        n_k, n_energy = self.grid_counts()
+        settings = dict(self.geometry())
+        settings.update({"n_k": n_k, "n_energy": n_energy,
+                         "radial": self.radial_box.isChecked(),
+                         "trim": self.trim_box.isChecked()})
+        return settings
+
+    # -- what the settings would give --------------------------------------
+    def _refresh(self, *_):
+        try:
+            n_k, n_e = self.grid_counts()
+            extent = self.k_extent()
+        except Exception as exc:
+            self.grid_note.setText(str(exc))
+            self.geometry_note.setText("")
+            return
+        if extent is None:
+            self.grid_note.setText("These settings do not define a k range.")
+            self.geometry_note.setText("")
+            return
+        lo, hi = extent
+        self.grid_note.setText("")
+        # The greyed half of the grid shows what the typed half works out
+        # to, so it never holds a stale number that looks like a result.
+        span_meV = abs(float(self.energy[-1] - self.energy[0])) * 1000.0
+        if self.by_count.isChecked():
+            shown = ((self.dk_box, (hi - lo) / max(n_k - 1, 1)),
+                     (self.de_box, span_meV / max(n_e - 1, 1)))
+        else:
+            shown = ((self.nk_box, n_k), (self.ne_box, n_e))
+        for box, value in shown:
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self.geometry_note.setText(self.describe_geometry(lo, hi))
+
+    def describe_geometry(self, lo: float, hi: float) -> str:
+        """Everything the axes cannot say: how far off Γ this cut runs,
+        and how much of an idealisation "a line at constant k⊥" is for it.
+
+        The conversion itself follows the exact arc, so the variation below
+        is not an error in the result -- it is how much the *description* of
+        the cut as one number is rounded. Said that way round, because the
+        obvious reading of a number like that is "my conversion is wrong by
+        this much", and it is not.
+        """
+        from arpes_viewer.tools.momentum.cutk import cut_momenta
+        try:
+            _k_par, k_perp = cut_momenta(self.slit, self.energy, **self.geometry())
+        except Exception as exc:
+            return str(exc)
+        perp = np.abs(k_perp)
+        try:
+            n_k = self.grid_counts()[0]
+        except Exception:
+            n_k = max(self.slit.size, 2)
+        pixel = abs(hi - lo) / max(n_k - 1, 1)
+
+        if perp.max() < 1e-6:
+            return (f"k from {lo:+.4g} to {hi:+.4g} Å⁻¹. This cut "
+                    f"runs through Γ, so k∥ is the distance from it.")
+        spread = float(perp.max() - perp.min())
+        text = (f"k from {lo:+.4g} to {hi:+.4g} Å⁻¹. The cut runs "
+                f"{perp.mean():.4g} Å⁻¹ from Γ, varying by "
+                f"{spread:.4g} Å⁻¹ along it and across the energy "
+                f"window — the conversion follows the exact arc, so that is "
+                f"how much \"a line at constant k⊥\" is an idealisation, not "
+                f"an error. One output point is {pixel:.4g} Å⁻¹.")
+        if spread > 0.05:
+            text += (" ⚠ At that size the cut is a visibly curved path "
+                     "through the zone; compare it with a calculation along "
+                     "the same arc, not a straight line.")
+        return text
+
+    def closeEvent(self, event):
+        self.window_._cut_k_dialog = None
+        super().closeEvent(event)
+
+
+@fits_screen
+class FermiFitDialog(_PickerDialog):
+    """Fit the Fermi edge of the cut on screen.
+
+    The EDC is the cut summed over an angle range, and the fit runs over an
+    energy range: both are the selection box on the image, so the region can
+    be dragged there or typed here, whichever is quicker.
+
+    The temperature is **held** by default at what the file recorded. On a
+    single edge the temperature and the resolution are not separable -- the
+    measured width is sqrt((3.53kT)^2 + FWHM^2) -- so fitting both gives two
+    numbers that mean nothing apart. Unticking "hold" is allowed, and the
+    summary then prints their correlation, which is how you can tell.
+
+    The two rarely-needed operations live in "Advanced" at the bottom:
+    dividing the Fermi cut-off out (superconducting gaps, mostly) and
+    fitting the edge channel by channel.
+    """
+
+    def __init__(self, window):
+        super().__init__(window, window.view, "Fermi level fitting")
+        self.window_ = window
+        self.fit_result = None
+        #: On a map's slit-cut window the fit is of the cut on screen, which
+        #: the window's slider moves along the map's first axis; the energy
+        #: axis can then be offset by one E_F or by one fitted per cut.
+        self.slices = (getattr(window, "which", None) == "slit"
+                       and hasattr(window, "cut_position"))
+        self.per_cut = False
+        self.cut_fits = []          # [{"position", "indices", "ef", "error"}]
+        self._load_frame()
+
+        outer = QHBoxLayout(self)
+        left = QWidget()
+        layout = QVBoxLayout(left)
+        layout.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(left, stretch=1)
+        if self.slices:
+            intro = QLabel(
+                "The EDC is the slit cut on screen summed over an angle range; "
+                "the fit runs over an energy range. Drag the selection box on "
+                "the image or type the numbers here -- they follow each other. "
+                f"Move the cut with its slider ({window.contour.defl_label}) "
+                f"to fit another one.")
+        else:
+            intro = QLabel(
+                "The EDC is this cut summed over an angle range; the fit runs over "
+                "an energy range. Drag the selection box on the image or type the "
+                "numbers here -- they follow each other.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        # -- the region -----------------------------------------------------
+        region = QFormLayout()
+        self.angle_from, self.angle_to = self._range_boxes(self._angle_axis)
+        self.energy_from, self.energy_to = self._range_boxes(self._energy_axis)
+        region.addRow(f"Integrate {self._angle_label}", self._pair(self.angle_from,
+                                                                   self.angle_to))
+        region.addRow(f"Fit window {self._energy_label}",
+                      self._pair(self.energy_from, self.energy_to))
+        self.box_button = QPushButton("Show the selection box")
+        self.box_button.setCheckable(True)
+        self.box_button.setToolTip(
+            "Put the box on the image; its horizontal extent is the angle range "
+            "and its vertical extent the energy window.")
+        self.box_button.toggled.connect(self._toggle_box)
+        region.addRow("", self.box_button)
+        layout.addLayout(region)
+
+        # -- parameters -----------------------------------------------------
+        self.table = QTableWidget(len(PARAMETERS), 3)
+        self.table.setHorizontalHeaderLabels(["Value", "Hold", "Uncertainty"])
+        self.table.setVerticalHeaderLabels([PARAMETER_LABELS[p] for p in PARAMETERS])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.verticalHeader().setDefaultSectionSize(26)
+        # Tall enough for all seven rows: a table showing two of them and a
+        # scrollbar hides half the model from the person judging the fit.
+        self.table.setMinimumHeight(7 * 26 + 30)
+        self.table.setMaximumHeight(7 * 26 + 34)
+        self.value_boxes, self.hold_boxes, self.error_labels = {}, {}, {}
+        for row, name in enumerate(PARAMETERS):
+            box = QDoubleSpinBox()
+            box.setDecimals(6)
+            box.setRange(-1e9, 1e9)
+            box.setButtonSymbols(QDoubleSpinBox.NoButtons)
+            self.table.setCellWidget(row, 0, box)
+            self.value_boxes[name] = box
+
+            hold = QCheckBox()
+            hold.setChecked(name == "temperature")
+            holder = QWidget()
+            hbox = QHBoxLayout(holder)
+            hbox.setContentsMargins(0, 0, 0, 0)
+            hbox.addStretch(1)
+            hbox.addWidget(hold)
+            hbox.addStretch(1)
+            self.table.setCellWidget(row, 1, holder)
+            self.hold_boxes[name] = hold
+
+            label = QLabel("")
+            label.setAlignment(Qt.AlignCenter)
+            self.table.setCellWidget(row, 2, label)
+            self.error_labels[name] = label
+        self.hold_boxes["temperature"].setToolTip(
+            "Held by default: on one edge the temperature cannot be told apart "
+            "from the resolution. Untick it only if the resolution is known "
+            "independently -- the summary will print their correlation.")
+        layout.addWidget(self.table)
+
+        row = QHBoxLayout()
+        self.estimate_button = QPushButton("Estimate")
+        self.estimate_button.setToolTip("Read starting values off the data.")
+        self.estimate_button.clicked.connect(self.estimate)
+        self.fit_button = QPushButton("Fit")
+        self.fit_button.clicked.connect(self.run_fit)
+        # Next to Fit, because it is what you press straight afterwards: the
+        # fit and the thing the fit is for belong on one row.
+        self.offset_button = QPushButton("Offset energy axis")
+        self.offset_button.setToolTip(
+            "List a copy of this dataset with the energy axis shifted so the "
+            "fitted E_F sits at zero.")
+        # Through a lambda: clicked() would pass its `checked` flag as
+        # whole_map.
+        self.offset_button.clicked.connect(lambda: self.offset_energy_axis())
+        self.offset_button.setEnabled(False)
+        row.addWidget(self.estimate_button)
+        row.addWidget(self.fit_button)
+        row.addWidget(self.offset_button)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        # -- the picture ----------------------------------------------------
+        self.plot = pg.PlotWidget()
+        self.plot.setMinimumHeight(220)
+        self.plot.setLabel("bottom", self._energy_label)
+        self.plot.setLabel("left", "counts")
+        strip_stock_menu(self.plot.getPlotItem())
+        self.data_curve = self.plot.plot(pen=pg.mkPen("#1f6f8b", width=2), name="EDC")
+        self.model_curve = self.plot.plot(pen=pg.mkPen("#bd4921", width=2))
+        self.ef_line = pg.InfiniteLine(angle=90, pen=pg.mkPen("#2f7a3f", width=2,
+                                                              style=Qt.DashLine))
+        self.ef_line.setVisible(False)
+        self.plot.addItem(self.ef_line, ignoreBounds=True)
+        layout.addWidget(self.plot, stretch=1)
+
+        self.summary = QLabel("")
+        self.summary.setWordWrap(True)
+        self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.summary)
+
+        # -- what to do with the answer -------------------------------------
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        close = QPushButton("Close")
+        close.clicked.connect(self.reject)
+        actions.addWidget(close)
+
+        advanced = QGroupBox("Advanced -- superconducting gaps and reference samples")
+        advanced.setCheckable(True)
+        advanced.setChecked(False)
+        adv = QFormLayout(advanced)
+        self.cutoff_box = QDoubleSpinBox()
+        self.cutoff_box.setRange(0.5, 20.0)
+        self.cutoff_box.setValue(4.0)
+        self.cutoff_box.setSingleStep(0.5)
+        self.cutoff_box.setToolTip(
+            "Everything above E_F + this many kT becomes missing: the divisor "
+            "there is a small number known only to the noise.")
+        self.divide_button = QPushButton("Divide the Fermi cut-off out")
+        self.divide_button.setToolTip(
+            "Divide by the resolution-broadened Fermi function only -- not by "
+            "the fitted density of states, and with the background taken out "
+            "first so it is not inflated near E_F.")
+        self.divide_button.clicked.connect(self.divide_out)
+        adv.addRow("Cut off above (kT)", self.cutoff_box)
+        adv.addRow("", self.divide_button)
+
+        self.channel_width = QSpinBox()
+        self.channel_width.setRange(0, 200)
+        self.channel_width.setValue(2)
+        self.channel_width.setToolTip(
+            "Add this many neighbouring channels on each side before fitting, "
+            "for a reference too thin to fit channel by channel.")
+        self.channel_step = QSpinBox()
+        self.channel_step.setRange(1, 100)
+        self.channel_step.setValue(1)
+        self.channel_step.setToolTip(
+            "Fit every Nth channel. The curvature is smooth, so there is "
+            "rarely anything to gain from fitting all of them.")
+        self.channels_button = QPushButton("Fit E_F channel by channel")
+        self.channels_button.setToolTip(
+            "Fit the edge in each detector channel of this cut and plot E_F "
+            "against angle -- the curvature of the Fermi surface, measured "
+            "rather than clicked.")
+        self.channels_button.clicked.connect(self.fit_by_channel)
+        adv.addRow("Neighbours (+/- channels)", self.channel_width)
+        adv.addRow("Fit every Nth channel", self.channel_step)
+        adv.addRow("", self.channels_button)
+        layout.addWidget(advanced)
+        layout.addLayout(actions)
+
+        self.cuts_panel = self._cuts_panel()
+        self.cuts_panel.setVisible(False)
+        outer.addWidget(self.cuts_panel)
+
+        for box in (self.angle_from, self.angle_to, self.energy_from, self.energy_to):
+            box.valueChanged.connect(self._on_range_typed)
+        window.view.selectionChanged.connect(self._on_box_moved)
+        if self.slices:
+            window.control.changed.connect(self._cut_moved)
+        self.value_boxes["temperature"].setValue(metadata_temperature(window.data))
+        self.estimate()
+
+    def _load_frame(self):
+        self._angle_axis, self._energy_axis, self._frame, \
+            self._angle_label, self._energy_label = self.window_.fermi_frame()
+
+    # -- a map: one cut after another ----------------------------------------
+    def _cuts_panel(self):
+        """The fitted cuts, beside the fit once the user has chosen to fit
+        the map cut by cut: where each was, its E_F (editable), and the line
+        the slices in between will be shifted by."""
+        panel = QGroupBox("Fitted cuts")
+        panel.setMinimumWidth(330)
+        box = QVBoxLayout(panel)
+        self.cuts_note = QLabel(
+            "Move the cut with the slit cut's slider and press Fit: each fit is "
+            "added here (a second fit at the same place replaces the first). "
+            "E_F can be edited. Slices between fitted cuts are shifted by a "
+            "straight line between their neighbours; beyond the first and "
+            "the last, by the nearest fit.")
+        self.cuts_note.setWordWrap(True)
+        box.addWidget(self.cuts_note)
+        self.cuts_table = QTableWidget(0, 3)
+        self.cuts_table.setHorizontalHeaderLabels(
+            [self.window_.contour.defl_label.split(" (")[0] if self.slices
+             else "position", "E_F (eV)", "±"])
+        self.cuts_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.cuts_table.verticalHeader().setVisible(False)
+        self.cuts_table.itemChanged.connect(self._cut_fit_edited)
+        box.addWidget(self.cuts_table, stretch=1)
+        self.cuts_plot = pg.PlotWidget()
+        self.cuts_plot.setMinimumHeight(170)
+        self.cuts_plot.setLabel("left", "E_F (eV)")
+        if self.slices:
+            self.cuts_plot.setLabel("bottom", self.window_.contour.defl_label)
+        strip_stock_menu(self.cuts_plot.getPlotItem())
+        self.cuts_line = self.cuts_plot.plot(pen=pg.mkPen("#0d7377", width=2))
+        self.cuts_points = self.cuts_plot.plot(
+            pen=None, symbol="o", symbolSize=7, symbolBrush="#bd4921",
+            symbolPen=None)
+        box.addWidget(self.cuts_plot)
+        row = QHBoxLayout()
+        remove = QPushButton("Remove selected")
+        remove.clicked.connect(self._remove_cut_fits)
+        self.apply_cuts_button = QPushButton("Offset energy axis by these fits")
+        self.apply_cuts_button.setToolTip(
+            "List a copy of the map with every slice shifted by its own E_F, "
+            "from these fits, so all of them have E_F at zero.")
+        self.apply_cuts_button.clicked.connect(lambda: self.apply_cut_fits())
+        row.addWidget(remove)
+        row.addStretch(1)
+        row.addWidget(self.apply_cuts_button)
+        box.addLayout(row)
+        return panel
+
+    def _cut_moved(self):
+        """The slit cut's slider moved: a different cut to fit."""
+        self._load_frame()
+        self.fit_result = None
+        self.offset_button.setEnabled(False)
+        self.ef_line.setVisible(False)
+        self.refresh_edc()
+        position, _ = self.window_.cut_position()
+        self.summary.setText(f"The cut is now at {position:.5g}. Press Fit.")
+
+    def start_per_cut(self):
+        """Fit the map cut by cut from here on, starting with this fit."""
+        self.per_cut = True
+        self.offset_button.setVisible(False)
+        self.cuts_panel.setVisible(True)
+        self.resize(max(self.width(), 900), self.height())
+        if self.fit_result is not None:
+            self._record_fit()
+        self.summary.setText(
+            "Fitting cut by cut. Move the slit cut's slider, press Fit, and "
+            "repeat; then “Offset energy axis by these fits”.")
+
+    def _record_fit(self):
+        position, indices = self.window_.cut_position()
+        result = self.fit_result
+        entry = {"position": position, "indices": np.asarray(indices),
+                 "ef": float(result.values["ef"]),
+                 "error": float(result.errors.get("ef", float("nan")))}
+        self.cut_fits = [e for e in self.cut_fits
+                         if abs(e["position"] - position) > 1e-12]
+        self.cut_fits.append(entry)
+        self.cut_fits.sort(key=lambda e: e["position"])
+        self._show_cut_fits()
+
+    def _show_cut_fits(self):
+        table = self.cuts_table
+        table.blockSignals(True)
+        table.setRowCount(len(self.cut_fits))
+        for row, entry in enumerate(self.cut_fits):
+            cells = (f"{entry['position']:.5g}", f"{entry['ef']:.6g}",
+                     "" if not np.isfinite(entry["error"]) else f"{entry['error']:.2g}")
+            for column, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if column != 1:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                table.setItem(row, column, item)
+        table.blockSignals(False)
+        positions = [e["position"] for e in self.cut_fits]
+        levels = [e["ef"] for e in self.cut_fits]
+        self.cuts_points.setData(positions, levels)
+        if self.cut_fits and self.slices:
+            axis = np.asarray(self.window_.sum_axis, dtype=float)
+            self.cuts_line.setData(axis, levels_along(axis, positions, levels))
+        else:
+            self.cuts_line.setData([], [])
+        self.apply_cuts_button.setEnabled(bool(self.cut_fits))
+
+    def _cut_fit_edited(self, item):
+        if item.column() != 1 or not 0 <= item.row() < len(self.cut_fits):
+            return
+        try:
+            self.cut_fits[item.row()]["ef"] = float(item.text())
+            self.cut_fits[item.row()]["error"] = float("nan")   # typed, not fitted
+        except ValueError:
+            pass
+        self._show_cut_fits()
+
+    def _remove_cut_fits(self):
+        rows = sorted({index.row() for index in self.cuts_table.selectedIndexes()},
+                      reverse=True)
+        for row in rows:
+            if 0 <= row < len(self.cut_fits):
+                del self.cut_fits[row]
+        self._show_cut_fits()
+
+    def apply_cut_fits(self):
+        """Shift every slice of the map by its own E_F: the fitted cuts',
+        and between them a straight line."""
+        if not self.cut_fits:
+            return None
+        axis = np.asarray(self.window_.sum_axis, dtype=float)
+        positions = [e["position"] for e in self.cut_fits]
+        levels = levels_along(axis, positions, [e["ef"] for e in self.cut_fits])
+        info = {"cuts_fitted": len(self.cut_fits),
+                "fitted_at": ", ".join(f"{p:.6g}" for p in positions),
+                "fitted_ef": ", ".join(f"{e['ef']:.6g}" for e in self.cut_fits),
+                "between_fits": "linear interpolation; held beyond the ends"}
+        try:
+            return self.window_.offset_energy_per_slice(levels, info)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Offset energy axis", str(exc))
+            return None
+
+    # -- small builders ---------------------------------------------------
+    @staticmethod
+    def _pair(first, second):
+        holder = QWidget()
+        box = QHBoxLayout(holder)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.addWidget(first)
+        box.addWidget(QLabel("to"))
+        box.addWidget(second)
+        box.addStretch(1)
+        return holder
+
+    @staticmethod
+    def _range_boxes(axis):
+        lo, hi = float(np.min(axis)), float(np.max(axis))
+        boxes = []
+        for value in (lo, hi):
+            box = QDoubleSpinBox()
+            box.setDecimals(4)
+            box.setRange(lo, hi)
+            box.setValue(value)
+            box.setKeyboardTracking(False)
+            box.setButtonSymbols(QDoubleSpinBox.NoButtons)
+            box.setMaximumWidth(96)
+            boxes.append(box)
+        return boxes
+
+    # -- the region and the EDC -------------------------------------------
+    def _toggle_box(self, on: bool):
+        view = self.window_.view
+        view.set_selection_visible(bool(on))
+        if on:
+            view.set_selection_corners(self.angle_from.value(), self.energy_from.value(),
+                                       self.angle_to.value(), self.energy_to.value())
+        self.box_button.setText("Hide the selection box" if on
+                                else "Show the selection box")
+
+    def _on_box_moved(self):
+        corners = self.window_.view.selection_corners()
+        if corners is None:
+            return
+        x0, y0, x1, y1 = corners
+        for box, value in ((self.angle_from, x0), (self.angle_to, x1),
+                           (self.energy_from, y0), (self.energy_to, y1)):
+            box.blockSignals(True)
+            box.setValue(float(np.clip(value, box.minimum(), box.maximum())))
+            box.blockSignals(False)
+        self.refresh_edc()
+
+    def _on_range_typed(self, *_):
+        if self.box_button.isChecked():
+            self.window_.view.set_selection_corners(
+                self.angle_from.value(), self.energy_from.value(),
+                self.angle_to.value(), self.energy_to.value())
+        self.refresh_edc()
+
+    def edc(self):
+        """(energy, intensity) for the angle range on screen."""
+        lo, hi = sorted((self.angle_from.value(), self.angle_to.value()))
+        inside = (self._angle_axis >= lo) & (self._angle_axis <= hi)
+        if not inside.any():
+            inside = np.zeros_like(self._angle_axis, dtype=bool)
+            inside[int(np.argmin(np.abs(self._angle_axis - lo)))] = True
+        return self._energy_axis, np.nansum(self._frame[inside], axis=0)
+
+    def window_range(self):
+        lo, hi = sorted((self.energy_from.value(), self.energy_to.value()))
+        return (lo, hi)
+
+    def windowed_edc(self):
+        """The part of the EDC the fit actually sees -- what the plot shows.
+
+        Drawing the whole energy axis would put the edge in a corner and let
+        the intensity scale be set by data nobody is fitting; restricted to
+        the window, the edge fills the panel and the residual is visible.
+        """
+        energy, intensity = self.edc()
+        lo, hi = self.window_range()
+        inside = (energy >= lo) & (energy <= hi)
+        if inside.sum() < 2:
+            return energy, intensity
+        return energy[inside], intensity[inside]
+
+    def refresh_edc(self):
+        energy, intensity = self.windowed_edc()
+        self.data_curve.setData(energy, intensity)
+        if energy.size:
+            self.plot.setXRange(float(energy.min()), float(energy.max()), padding=0.02)
+        if self.fit_result is not None:
+            self.model_curve.setData(energy, self.fit_result.model(energy))
+        else:
+            self.model_curve.setData([], [])
+
+    # -- fitting ----------------------------------------------------------
+    def parameters(self) -> dict:
+        return {name: box.value() for name, box in self.value_boxes.items()}
+
+    def held(self) -> tuple:
+        return tuple(name for name, box in self.hold_boxes.items() if box.isChecked())
+
+    def _show_values(self, values: dict, errors: dict = None):
+        for name, box in self.value_boxes.items():
+            box.blockSignals(True)
+            box.setValue(float(values[name]))
+            box.blockSignals(False)
+            error = (errors or {}).get(name)
+            self.error_labels[name].setText(
+                "" if error is None or not np.isfinite(error)
+                else ("held" if name in self.held() and error == 0 else f"± {error:.4g}"))
+
+    def estimate(self):
+        """Starting values read off the data."""
+        energy, intensity = self.edc()
+        lo, hi = self.window_range()
+        inside = (energy >= lo) & (energy <= hi)
+        try:
+            guess = initial_guess(energy[inside], intensity[inside],
+                                  temperature=self.value_boxes["temperature"].value())
+        except ValueError as exc:
+            self.summary.setText(str(exc))
+            return None
+        guess["temperature"] = self.value_boxes["temperature"].value()
+        self._show_values(guess)
+        self.refresh_edc()
+        shown = self.windowed_edc()[0]
+        self.model_curve.setData(shown, fermi_edge_model(shown, **guess))
+        self.summary.setText("Starting values estimated from the data. Press Fit.")
+        return guess
+
+    def run_fit(self):
+        energy, intensity = self.edc()
+        try:
+            result = fit_fermi_edge(
+                energy, intensity, start=self.parameters(), fixed=self.held(),
+                temperature=self.value_boxes["temperature"].value(),
+                window=self.window_range())
+        except Exception as exc:
+            QMessageBox.warning(self, "Fermi level fitting", f"The fit failed:\n{exc}")
+            return None
+        self.fit_result = result
+        self._show_values(result.values, result.errors)
+        self.refresh_edc()
+        self.ef_line.setPos(result.values["ef"])
+        self.ef_line.setVisible(True)
+        self.summary.setText(result.summary())
+        self.offset_button.setEnabled(True)
+        if self.per_cut:
+            self._record_fit()
+        self.window_.statusBar().showMessage(
+            f"E_F = {result.values['ef']:.5g} eV, resolution "
+            f"{result.values['resolution'] * 1000:.3g} meV FWHM")
+        return result
+
+    def fit_info(self) -> dict:
+        """The fit as metadata, to travel with anything it produces."""
+        if self.fit_result is None:
+            return {}
+        result = self.fit_result
+        info = {f"{name}": float(result.values[name]) for name in PARAMETERS}
+        info.update({f"{name}_err": float(result.errors.get(name, float("nan")))
+                     for name in PARAMETERS})
+        info["held"] = ", ".join(result.fixed) or "(nothing)"
+        info["reduced_chi2"] = float(result.reduced_chi2)
+        info["combined_width_eV"] = float(result.combined_width)
+        info["window_eV"] = f"{result.window[0]:.6g}..{result.window[1]:.6g}"
+        info["angle_range"] = (f"{min(self.angle_from.value(), self.angle_to.value()):.6g}"
+                               f"..{max(self.angle_from.value(), self.angle_to.value()):.6g}")
+        pair = result.correlation.get(("temperature", "resolution"))
+        if pair is not None:
+            info["corr_T_resolution"] = float(pair)
+        return info
+
+    # -- what comes out of it ---------------------------------------------
+    def offset_energy_axis(self, whole_map=None):
+        """Shift the energy axis by the fitted E_F.
+
+        For a map, first asked (``whole_map`` None): the same offset for the
+        whole map, or one per cut -- in which case this fit starts the list
+        of fitted cuts, and the offsetting waits until the list is done."""
+        if self.fit_result is None:
+            return None
+        ef = float(self.fit_result.values["ef"])
+        if self.slices and whole_map is None:
+            answer = QMessageBox.question(
+                self, "Offset energy axis",
+                f"Shift the whole map by this cut's E_F ({ef:.5g} eV)?\n\n"
+                f"Yes: one offset for every slice.\n"
+                f"No: fit more cuts first -- the E_F of slices between fitted "
+                f"cuts is interpolated linearly.",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Yes)
+            if answer == QMessageBox.Cancel:
+                return None
+            whole_map = answer == QMessageBox.Yes
+        if self.slices and not whole_map:
+            self.start_per_cut()
+            return None
+        return self.window_.offset_energy_axis(ef, self.fit_info())
+
+    def divide_out(self):
+        if self.fit_result is None:
+            QMessageBox.information(self, "Fermi level fitting",
+                                     "Fit the edge first.")
+            return None
+        return self.window_.divide_fermi_cutoff(self.fit_result,
+                                                 self.cutoff_box.value(),
+                                                 self.fit_info())
+
+    def fit_by_channel(self):
+        curve = self.window_.fit_channels_here(
+            temperature=self.value_boxes["temperature"].value(),
+            fixed=self.held(), window=self.window_range(),
+            half_width=self.channel_width.value(), step=self.channel_step.value(),
+            start=self.parameters())
+        if curve is None:
+            return None
+        angles, ef, ok = curve
+        if not ok.any():
+            self.summary.setText("No channel could be fitted.")
+            return None
+        spread = float(np.nanmax(ef[ok]) - np.nanmin(ef[ok]))
+        self.summary.setText(
+            f"{int(ok.sum())} of {angles.size} channels fitted; E_F varies by "
+            f"{spread * 1000:.3g} meV across the detector. The curve is drawn "
+            f"over the cut -- use “FS correction” to flatten it.")
+        return curve
+
+
+def run_channel_fit(parent, angles, energy, frame, *, temperature, fixed=("temperature",),
+                    window=(None, None), half_width=0, step=1, start=None,
+                    draw_on=None, title="Fitting the edge channel by channel"):
+    """Fit every (Nth) channel of an angle-vs-energy frame, with a progress
+    dialog that can be cancelled, and optionally draw the result.
+
+    Hundreds of fits take tens of seconds, so this is the one operation in
+    the program that has to say how far along it is; cancelling keeps
+    whatever has been fitted so far, which is usually enough to see whether
+    the settings were right.
+
+    This one still runs on the GUI thread, unlike the processing panels and
+    the k conversion (see ``ui.common.jobs``), because it hands its answer back as
+    a return value and both callers use it on the next line -- turning that
+    into a callback would restructure the Fermi-level workflow for a fit
+    that is already interruptible. What it does not do any more is leave the
+    door open while it pumps events: the dialog is **application** modal, so
+    ``processEvents`` below cannot dispatch a click on some other window
+    into a second copy of this same code. That was the real hazard in the
+    pattern, rather than the pumping itself.
+    """
+    progress = QProgressDialog(title, "Cancel", 0, 100, parent)
+    progress.setWindowModality(Qt.ApplicationModal)
+    progress.setMinimumDuration(400)
+    progress.setValue(0)
+
+    def report(done, total):
+        progress.setMaximum(int(total))
+        progress.setValue(int(done))
+        QApplication.processEvents()
+        return not progress.wasCanceled()
+
+    try:
+        ef, err, ok = fit_channels(angles, energy, frame, half_width=half_width,
+                                   step=step, temperature=temperature, fixed=fixed,
+                                   window=window, start=start, progress=report)
+    except Exception as exc:
+        progress.close()
+        QMessageBox.warning(parent, "Fermi level fitting",
+                             f"Channel fitting failed:\n{exc}")
+        return None
+    progress.close()
+
+    if draw_on is not None and ok.any():
+        draw_on.show_picked_points(angles[ok], ef[ok])
+        order = np.argsort(angles[ok])
+        draw_on.show_overlay_path(angles[ok][order], ef[ok][order])
+    return angles, ef, ok
+
+
+class AuReferenceDialog(QDialog):
+    """Measure the Fermi surface's curvature on a reference sample.
+
+    A gold (or freshly-scraped polycrystalline) reference has a Fermi edge
+    at every angle with no band structure to confuse it, so fitting it
+    channel by channel gives the analyser's curvature directly -- measured,
+    with an error bar per channel, instead of clicked by eye.
+
+    The reference may be a Cut or a Map (a map is summed over the deflector,
+    since every deflector position sees the same slit curvature).
+    """
+
+    def __init__(self, parent, entries, loader, default_temperature: float = 30.0):
+        super().__init__(parent)
+        self.setWindowTitle("Fermi surface from a reference")
+        self.entries = list(entries)
+        self.loader = loader
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            "Pick the reference measurement (gold, or anything with a clean "
+            "edge at every angle). Its Fermi edge is fitted channel by channel "
+            "and the result becomes the correction curve.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        form = QFormLayout()
+        self.dataset_combo = QComboBox()
+        for label, _key in self.entries:
+            self.dataset_combo.addItem(label)
+        form.addRow("Reference", self.dataset_combo)
+
+        self.temperature_box = QDoubleSpinBox()
+        self.temperature_box.setRange(0.1, 2000.0)
+        self.temperature_box.setDecimals(2)
+        self.temperature_box.setValue(float(default_temperature))
+        self.temperature_box.setToolTip(
+            "Held during the fit. It cannot be separated from the resolution "
+            "on a single edge, and it does not affect where the edge is.")
+        form.addRow("Temperature (K)", self.temperature_box)
+
+        self.width_box = QSpinBox()
+        self.width_box.setRange(0, 200)
+        self.width_box.setValue(3)
+        self.width_box.setToolTip(
+            "Channels added on each side before fitting. A reference too thin "
+            "to fit alone becomes fittable; the channel's position does not move.")
+        form.addRow("Neighbours (+/- channels)", self.width_box)
+
+        self.step_box = QSpinBox()
+        self.step_box.setRange(1, 200)
+        self.step_box.setValue(1)
+        self.step_box.setToolTip(
+            "Fit every Nth channel. The curvature is smooth, so sampling it and "
+            "letting the polynomial interpolate is usually enough -- and a "
+            "thousand fits take minutes.")
+        form.addRow("Fit every Nth channel", self.step_box)
+        layout.addLayout(form)
+
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        layout.addWidget(self.note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Fit the reference")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.dataset_combo.currentIndexChanged.connect(self._describe)
+        self._describe()
+
+    def _describe(self, *_):
+        data = self.selected_data()
+        if data is None:
+            self.note.setText("")
+            return
+        try:
+            angles, energy, _frame, angle_label, _e_label = reference_frame(data)
+        except ValueError as exc:
+            self.note.setText(str(exc))
+            return
+        self.step_box.setValue(max(1, int(np.ceil(angles.size / 120))))
+        self.temperature_box.setValue(metadata_temperature(data,
+                                                            self.temperature_box.value()))
+        self.note.setText(f"{angles.size} channels along {angle_label}, "
+                          f"{energy.size} energy points.")
+
+    def selected_data(self):
+        index = self.dataset_combo.currentIndex()
+        if not (0 <= index < len(self.entries)):
+            return None
+        try:
+            return self.loader(self.entries[index][1])
+        except Exception as exc:
+            self.note.setText(f"could not be read: {exc}")
+            return None
+
+    def settings(self) -> dict:
+        return {"temperature": self.temperature_box.value(),
+                "half_width": self.width_box.value(),
+                "step": self.step_box.value(),
+                "label": self.dataset_combo.currentText()}
+
+
+# --------------------------------------------------------------------------
+# Bulk operations on the datasets picked in the launcher
+# --------------------------------------------------------------------------
+class DataOperationsDialog(QDialog):
+    """Truncate, self-normalise or compress the selected datasets.
+
+    One dialog for the three MATLAB tools (``td_demo``,
+    ``self_normalization_demo``, ``data_comb_resamp_demo``) because they are
+    the same action from the user's side: pick datasets, set a few numbers
+    per axis, get new datasets. Each result is listed under the original's
+    name with the MATLAB suffix (``_tk``, ``_s_nor``, ``_comb``), so a chain
+    of operations reads back off the names.
+
+    Every tab drives **all** the selected datasets at once. That only means
+    anything if they have the same shape -- one set of bounds cannot describe
+    two different axes -- so the launcher checks that before opening this and
+    says so if they disagree, rather than producing a batch of quietly wrong
+    results.
+
+    Resampling, the other half of ``data_comb_resamp_demo``, is deliberately
+    not here: it keeps every Nth point and discards the rest, which throws
+    away most of the counts in a photon-starved scan. Compressing sums each
+    block instead, so the counts are kept and the noise improves.
+    """
+
+    #: the datasets this dialog produced, for the launcher to list
+    datasetsCreated = pyqtSignal(list)
+
+    #: operation -> (the tab it is, the window's title)
+    OPERATIONS = {"truncate": (0, "Truncate (crop)"),
+                  "normalise": (1, "Self-normalise"),
+                  "compress": (2, "Compress (bin)")}
+
+    def __init__(self, datasets, parent=None, operation=None):
+        super().__init__(parent)
+        self.datasets = list(datasets)          # [(name, data), ...]
+        self.setWindowTitle("Crop / bin / normalise")
+        self.setModal(False)
+
+        kind = self.datasets[0][1].kind
+        self.kind = kind
+        self.axis_names = ARRAY_AXES.get(kind, ())
+        scan = self.datasets[0][1].scan
+        self.axes = [np.asarray(getattr(scan, name), dtype=float)
+                     for name in self.axis_names]
+        self.axis_labels = [scan.labels.get(name, name) for name in self.axis_names]
+
+        layout = QVBoxLayout(self)
+        shape = " x ".join(str(a.size) for a in self.axes)
+        names = ", ".join(name for name, _ in self.datasets[:4])
+        if len(self.datasets) > 4:
+            names += f", ... ({len(self.datasets)} in all)"
+        header = QLabel(f"<b>{len(self.datasets)} dataset(s)</b> of kind "
+                        f"<b>{kind}</b>, {shape} points<br>{names}")
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        self.tabs = QTabWidget()
+        # Kept: a page left out of the tabs belongs to nothing else.
+        self._pages = pages = ((self._truncate_tab(), "Crop (truncate)"),
+                               (self._normalise_tab(), "Normalise"),
+                               (self._compress_tab(), "Bin (compress)"))
+        # Each operation has its own button under the main list, so the
+        # window it opens is that operation alone: the other two tabs would
+        # only be a second, hidden way to the other buttons. (All three
+        # pages are still built; the settings live on them.)
+        self.operation = None
+        if operation is None:
+            for page, text in pages:
+                self.tabs.addTab(page, text)
+        else:
+            self.operation, title = self.OPERATIONS[operation]
+            self.tabs.addTab(*pages[self.operation])
+            self.tabs.tabBar().hide()
+            self.setWindowTitle(title)
+        layout.addWidget(self.tabs)
+
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        layout.addWidget(self.note)
+
+        buttons = ButtonRow()
+        add_button(buttons, "Apply", QDialogButtonBox.ApplyRole).clicked.connect(
+            self.apply)
+        add_button(buttons, "Close", QDialogButtonBox.RejectRole).clicked.connect(
+            self.reject)
+        layout.addWidget(buttons)
+
+    # -- tabs -------------------------------------------------------------
+    def _axis_caption(self, index: int) -> str:
+        axis = self.axes[index]
+        return (f"{self.axis_labels[index]}  "
+                f"[{axis.min():.4g} .. {axis.max():.4g}, {axis.size} pts]")
+
+    def _truncate_tab(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        self.trunc_boxes = []
+        for i in range(len(self.axes)):
+            row = QWidget()
+            box = QHBoxLayout(row)
+            box.setContentsMargins(0, 0, 0, 0)
+            lo, hi = QLineEdit(), QLineEdit()
+            for edit, which in ((lo, "from"), (hi, "to")):
+                edit.setPlaceholderText(which)
+                edit.setMaximumWidth(90)
+                edit.setToolTip("Leave blank for the end of the data.")
+                box.addWidget(edit)
+            box.addStretch(1)
+            form.addRow(self._axis_caption(i), row)
+            self.trunc_boxes.append((lo, hi))
+
+        self.trunc_by_value = QRadioButton("by value")
+        self.trunc_by_index = QRadioButton("by index (1-based)")
+        self.trunc_by_value.setChecked(True)
+        mode = QWidget()
+        mode_box = QHBoxLayout(mode)
+        mode_box.setContentsMargins(0, 0, 0, 0)
+        mode_box.addWidget(self.trunc_by_value)
+        mode_box.addWidget(self.trunc_by_index)
+        mode_box.addStretch(1)
+        form.addRow("Bounds mean", mode)
+        self.trunc_by_index.toggled.connect(self._trunc_mode_changed)
+        return page
+
+    @staticmethod
+    def _retype(edit, axis, to_index: bool):
+        """Rewrite a typed bound for the other reading of the same boxes:
+        a value as the 1-based index of the nearest point, an index as that
+        point's value. Switching "by value"/"by index" then keeps pointing
+        at the same data instead of silently reading 1.2 eV as point 1.2.
+        Blank or unreadable text is left as it is."""
+        text = edit.text().strip()
+        axis = np.asarray(axis, dtype=float)
+        if not text or axis.size == 0:
+            return
+        try:
+            number = float(text)
+        except ValueError:
+            return
+        if to_index:
+            edit.setText(str(int(np.argmin(np.abs(axis - number))) + 1))
+        else:
+            i = int(np.clip(round(number), 1, axis.size)) - 1
+            edit.setText(f"{axis[i]:.6g}")
+
+    def _trunc_mode_changed(self, to_index: bool):
+        for axis, (lo, hi) in zip(self.axes, self.trunc_boxes):
+            self._retype(lo, axis, to_index)
+            self._retype(hi, axis, to_index)
+
+    def _norm_mode_changed(self, to_index: bool):
+        dim = self.norm_window_axis.currentData()
+        if dim is None:
+            return
+        for edit in (self.norm_from, self.norm_to):
+            self._retype(edit, self.axes[dim], to_index)
+
+    def _normalise_tab(self) -> QWidget:
+        """Choose what is divided by its own intensity.
+
+        The preset says it in ARPES terms (each EDC, each cut...) and ticks
+        the axes for it; the ticks stay editable for anything else. The
+        sentence under them spells out what the current ticks do, because
+        "along" alone was read as "the axis that is kept" and the opposite
+        normalisation was applied without anyone noticing.
+        """
+        page = QWidget()
+        form = QFormLayout(page)
+        self.norm_presets = normalise_presets(self.kind, len(self.axes))
+        self.norm_preset = QComboBox()
+        for text, dims in self.norm_presets:
+            self.norm_preset.addItem(text)
+        self.norm_preset.addItem("custom (tick the axes below)")
+        self.norm_preset.setToolTip(
+            "What is divided by its own total. The first entry is the usual "
+            "choice for this kind of data: each EDC for a cut, each cut "
+            "(slit × energy) for a map or kz map.")
+        form.addRow("Normalise", self.norm_preset)
+
+        self.norm_checks = []
+        directions = QWidget()
+        box = QHBoxLayout(directions)
+        box.setContentsMargins(0, 0, 0, 0)
+        for i, label in enumerate(self.axis_labels):
+            check = QCheckBox(self._short_label(i))
+            check.setToolTip(
+                "The axes summed over. Tick one axis to divide every line "
+                "along it by that line's own total; tick two to divide every "
+                "plane by the plane's total.")
+            check.toggled.connect(self._norm_checks_changed)
+            box.addWidget(check)
+            self.norm_checks.append(check)
+        box.addStretch(1)
+        form.addRow("Summed over", directions)
+        self.norm_explain = QLabel("")
+        self.norm_explain.setWordWrap(True)
+        form.addRow("", self.norm_explain)
+
+        window = QWidget()
+        wbox = QHBoxLayout(window)
+        wbox.setContentsMargins(0, 0, 0, 0)
+        self.norm_window_axis = QComboBox()
+        self.norm_window_axis.setToolTip(
+            "The axis the window below is on: one of the axes summed over.")
+        wbox.addWidget(self.norm_window_axis)
+        self.norm_from, self.norm_to = QLineEdit(), QLineEdit()
+        for edit, which in ((self.norm_from, "from"), (self.norm_to, "to")):
+            edit.setPlaceholderText(which)
+            edit.setMaximumWidth(90)
+            edit.setToolTip(
+                "Optional: only these points of the chosen axis are summed "
+                "to make the normalisation. Blank means all of them.")
+            wbox.addWidget(edit)
+        self.norm_by_value = QRadioButton("by value")
+        self.norm_by_index = QRadioButton("by index")
+        self.norm_by_value.setChecked(True)
+        wbox.addWidget(self.norm_by_value)
+        wbox.addWidget(self.norm_by_index)
+        wbox.addStretch(1)
+        form.addRow("Sum only over", window)
+        self.norm_by_index.toggled.connect(self._norm_mode_changed)
+
+        self.norm_to_peak = QCheckBox("normalise to the peak instead of the sum")
+        self.norm_to_peak.toggled.connect(self._norm_checks_changed)
+        form.addRow("", self.norm_to_peak)
+
+        self.norm_preset.currentIndexChanged.connect(self._norm_preset_changed)
+        self._norm_preset_changed()
+        return page
+
+    def _short_label(self, index: int) -> str:
+        return self.axis_labels[index].split(" (")[0]
+
+    def _norm_dims(self):
+        return [i for i, check in enumerate(self.norm_checks) if check.isChecked()]
+
+    def _norm_preset_changed(self, *_):
+        index = self.norm_preset.currentIndex()
+        if not 0 <= index < len(self.norm_presets):
+            return                                  # custom: keep the ticks
+        dims = self.norm_presets[index][1]
+        for i, check in enumerate(self.norm_checks):
+            check.blockSignals(True)
+            check.setChecked(i in dims)
+            check.blockSignals(False)
+        self._norm_checks_changed()
+
+    def _norm_checks_changed(self, *_):
+        dims = self._norm_dims()
+        # Ticks that match a preset show it; anything else is "custom".
+        match = next((i for i, (_, preset) in enumerate(self.norm_presets)
+                      if tuple(preset) == tuple(dims)), len(self.norm_presets))
+        self.norm_preset.blockSignals(True)
+        self.norm_preset.setCurrentIndex(match)
+        self.norm_preset.blockSignals(False)
+
+        previous = self.norm_window_axis.currentData()
+        self.norm_window_axis.clear()
+        for d in dims:
+            self.norm_window_axis.addItem(self._short_label(d), d)
+        # The window is nearly always an energy range, and energy is the last
+        # array axis of every kind, so prefer it when it is ticked.
+        keep = self.norm_window_axis.findData(previous)
+        self.norm_window_axis.setCurrentIndex(
+            keep if keep >= 0 else self.norm_window_axis.count() - 1)
+
+        what = "maximum" if self.norm_to_peak.isChecked() else "total"
+        if not dims:
+            text = "Tick the axes to sum over, or pick a preset above."
+        elif len(dims) > 2:
+            text = "Sum over one axis (lines) or two (planes), not three."
+        elif len(dims) == len(self.norm_checks):
+            text = f"The whole dataset is divided by its own {what}."
+        else:
+            kept = [self._short_label(i) for i in range(len(self.norm_checks))
+                    if i not in dims]
+            shape = "line" if len(dims) == 1 else "plane"
+            text = (f"Each {shape} over "
+                    f"{' × '.join(self._short_label(d) for d in dims)} is divided "
+                    f"by its own {what} — one factor for every "
+                    f"{' and '.join(kept)}.")
+        self.norm_explain.setText(f"<i>{text}</i>")
+
+    def _compress_tab(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        self.compress_boxes = []
+        for i, axis in enumerate(self.axes):
+            spin = QSpinBox()
+            spin.setRange(1, max(1, int(axis.size)))
+            spin.setValue(1)
+            spin.setMaximumWidth(80)
+            spin.setToolTip(
+                "Points summed into one. The axis takes each block's mean "
+                "position; a remainder too short for a whole block is dropped.")
+            spin.valueChanged.connect(self._update_compress_note)
+            form.addRow(self._axis_caption(i), spin)
+            self.compress_boxes.append(spin)
+        self.compress_note = QLabel("")
+        form.addRow("Result", self.compress_note)
+        self._update_compress_note()
+        return page
+
+    def _update_compress_note(self, *_):
+        sizes = [axis.size // spin.value()
+                 for axis, spin in zip(self.axes, self.compress_boxes)]
+        before = int(np.prod([axis.size for axis in self.axes]))
+        after = int(np.prod(sizes)) if all(sizes) else 0
+        self.compress_note.setText(
+            " x ".join(str(s) for s in sizes) +
+            (f"  ({100.0 * after / before:.1f}% of the points)" if before else ""))
+
+    # -- applying ---------------------------------------------------------
+    @staticmethod
+    def _number(edit):
+        text = edit.text().strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            raise ValueError(f"{text!r} is not a number")
+
+    def _values_and_axes(self, data):
+        scan = data.scan
+        values = scan.value4d if data.kind == "spem_4d" else scan.value
+        if hasattr(values, "materialise"):
+            values = values.materialise()
+        axes = [np.asarray(getattr(scan, name), dtype=float)
+                for name in self.axis_names]
+        return np.asarray(values, dtype=float), axes
+
+    def apply(self):
+        tab = self.tabs.currentIndex() if self.operation is None else self.operation
+        try:
+            if tab == 0:
+                operation, suffix, prefix = self._apply_truncate, "_tk", "trunc"
+            elif tab == 1:
+                operation, suffix, prefix = self._apply_normalise, "_s_nor", "snorm"
+            else:
+                operation, suffix, prefix = self._apply_compress, "_comb", "compress"
+            settings = operation(None, probe=True)
+        except ValueError as exc:
+            QMessageBox.warning(self, self.windowTitle(), str(exc))
+            return
+
+        if not self._confirm_size():
+            return
+
+        created = []
+        datasets = list(self.datasets)
+        # the settings read now, on the GUI thread: the job touches no widget
+        operation = operation(_FROZEN)
+
+        def work(report):
+            out = []
+            for index, (name, data) in enumerate(datasets):
+                report(index / len(datasets),
+                       f"{name} ({index + 1} of {len(datasets)})")
+                try:
+                    values, axes = self._values_and_axes(data)
+                    out.append(operation((values, axes)))
+                except Exception as exc:
+                    raise ValueError(f"{name}: {exc}") from exc
+            return out
+
+        try:
+            results = jobs.run_blocking(self, self.windowTitle(), work)
+        except jobs.JobCancelled:
+            return
+        except ValueError as exc:
+            QMessageBox.warning(self, self.windowTitle(), str(exc))
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for (name, data), (new_values, new_axes) in zip(datasets, results):
+                by_name = dict(zip(self.axis_names, new_axes))
+                order = CONSTRUCTOR_AXES.get(data.kind, self.axis_names)
+                created.append(MemoryData(
+                    data.kind, tuple(by_name[n] for n in order), new_values,
+                    dict(data.scan.labels), source_label=f"{name}{suffix}",
+                    parameters=settings, prefix=prefix,
+                    source_path=getattr(data, "path", ""),
+                    source_info=dict(data.scan.info),
+                    source_motors=dict(data.scan.fourd_info)))
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.datasetsCreated.emit(created)
+        shapes = " x ".join(str(a.size) for a in created[0].scan_axes()) \
+            if hasattr(created[0], "scan_axes") else ""
+        self.note.setText(f"Created {len(created)} dataset(s) ending in "
+                          f"“{suffix}”. {shapes}")
+        return created
+
+    def _confirm_size(self) -> bool:
+        """A spatial scan's cube has to be in memory to be operated on, and
+        a real one is GB-sized -- so say so before spending the minutes and
+        the RAM, rather than appearing to hang."""
+        if self.kind != "spem_4d":
+            return True
+        points = int(np.prod([a.size for a in self.axes])) * len(self.datasets)
+        gigabytes = points * 8 / 1e9
+        if gigabytes < 2.0:
+            return True
+        answer = QMessageBox.question(
+            self, self.windowTitle(),
+            f"This reads about {gigabytes:.1f} GB of cube into memory "
+            f"({len(self.datasets)} spatial scan(s)). Continue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return answer == QMessageBox.Yes
+
+    def _apply_truncate(self, payload, probe: bool = False):
+        bounds = [(self._number(lo), self._number(hi)) for lo, hi in self.trunc_boxes]
+        by_index = self.trunc_by_index.isChecked()
+        if probe:
+            if all(lo is None and hi is None for lo, hi in bounds):
+                raise ValueError("Set at least one bound to truncate.")
+            return {"bounds": [list(b) for b in bounds],
+                    "by": "index" if by_index else "value"}
+        def run(data):
+            return truncate(data[0], data[1], bounds, by_index=by_index)
+        return run if payload is _FROZEN else run(payload)
+
+    def _apply_normalise(self, payload, probe: bool = False):
+        dims = self._norm_dims()
+        window = (self._number(self.norm_from), self._number(self.norm_to))
+        window_dim = self.norm_window_axis.currentData()
+        by_index = self.norm_by_index.isChecked()
+        to_peak = self.norm_to_peak.isChecked()
+        if probe:
+            if not dims:
+                raise ValueError("Tick the axis (or two axes) to sum over.")
+            if len(dims) > 2:
+                raise ValueError("Sum over one axis (lines) or two (planes), "
+                                 "not three.")
+            settings = {"along": [self.axis_names[d] for d in dims],
+                        "window": list(window),
+                        "by": "index" if by_index else "value",
+                        "to_peak": bool(to_peak)}
+            if window != (None, None) and window_dim is not None:
+                settings["window_on"] = self.axis_names[window_dim]
+            return settings
+        def run(data):
+            values, axes = data
+            return (self_normalize(values, axes, dims, window=window,
+                                   by_index=by_index, to_peak=to_peak,
+                                   window_dim=window_dim), axes)
+        return run if payload is _FROZEN else run(payload)
+
+    def _apply_compress(self, payload, probe: bool = False):
+        factors = [spin.value() for spin in self.compress_boxes]
+        if probe:
+            if all(f == 1 for f in factors):
+                raise ValueError("Set a factor above 1 on at least one axis.")
+            return {"factors": list(factors)}
+        def run(data):
+            return compress(data[0], data[1], factors)
+        return run if payload is _FROZEN else run(payload)
+
+
+#: passed to a data operation instead of data: "read your settings now and
+#: return the computation", so it can run off the GUI thread
+_FROZEN = object()
+
+
+# --------------------------------------------------------------------------
+def open_viewer(data, filename: str, colormap: str, flip: bool):
+    """Build the right viewer for a loaded file, or return None for kinds
+    that have nothing to show."""
+    if data.kind in ("spem_4d", "spem_1d"):
+        return SpatialScanWindow(data, filename, colormap, flip)
+    if data.kind == "cut":
+        return CutWindow(data, filename, colormap, flip)
+    if data.kind in CUBE_KINDS:
+        # A converted k-map is displayed exactly like the map it came from --
+        # same contour, same two cuts -- with the axes labelled in A^-1.
+        return ContourWindow(data, filename, colormap, flip)
+    if data.kind in CURVE_KINDS:
+        from arpes_viewer.ui.viewers.curves import CurveWindow
+        return CurveWindow(data, filename, colormap, flip)
+    return None

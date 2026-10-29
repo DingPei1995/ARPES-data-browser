@@ -15,8 +15,8 @@ window and the viewers), then the **Basic**, **Advanced** and
 **Calculation** tabs, then figures — ending with two figures built step
 by step in the figure composer. The technical
 background for each step (formulas, test results, design choices) is in the
-technical references beside the code — [reading data](../loader/README.md),
-[the windows](../ui/README.md), [analysis](../tools/README.md) — and in the
+technical references beside the code — [reading data](../arpes_viewer/loader/README.md),
+[the windows](../arpes_viewer/ui/README.md), [analysis](../arpes_viewer/tools/README.md) — and in the
 [CHANGELOG](../CHANGELOG.md).
 
 Every screenshot was taken from the running program, using the synthetic
@@ -1779,7 +1779,7 @@ data as shown and the measurement it came from.
   kinetic energy of E_F (photon energy − work function) into *Energy offset*.
 - **A file is misread** — choose the reader explicitly in the loader, and see
   *Assumptions worth knowing about* in the
-  [reading-data reference](../loader/README.md#assumptions-worth-knowing-about)
+  [reading-data reference](../arpes_viewer/loader/README.md#assumptions-worth-knowing-about)
   (axis order in SOLEIL files).
 - **Dragging the cursor on a big map is sluggish** — a map read lazily from
   its file re-slices in about 0.1 s per window, so the other windows wait for

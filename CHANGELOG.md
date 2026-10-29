@@ -19,6 +19,23 @@ dispersion, constant-energy contours on any plane, or the 3-D Fermi surface.
 The step-by-step windows ask before closing and remember their settings, and
 Enter in a field never presses a button.
 
+- **A package for pip, a licence, and the authorship stated.** The code is
+  now one package, `arpes_viewer/` (`loader/`, `tools/`, `ui/`,
+  `version.py`, and the main window as `app.py` with a `main()`), so that
+  `pip install arpes-viewer` installs it and the `arpes-viewer` command (or
+  `python -m arpes_viewer`) starts it; `ARPES_viewer.py`, `ARPES viewer.pyw`
+  and `ARPES viewer.app` still start a downloaded copy as before.
+  `pyproject.toml` describes the package; `.github/workflows/publish.yml`
+  builds it and publishes it to PyPI when a GitHub release is published
+  (trusted publishing, no stored token), with the README's links made
+  absolute for the PyPI page (`devtools/pypi_readme.py`). Installed with
+  pip, the error logs go to `~/.arpes_viewer/error_logs/`, since the
+  package's own folder is no place for them. The licence is the PolyForm
+  Noncommercial License 1.0.0 (`LICENSE.md`); `NOTICE` states that this is
+  Ding Pei's personal work, developed from Ding Pei's own earlier code with
+  no institutional funding, with Ding Pei's testing on real experimental
+  data and the feedback from it, and the implementation assisted by Claude.
+
 - **Calculated bands: the plane, the cell, the bands' looks**
   (`tools/crystal/planecut.py`, `ui/panels/bands.py`, `ui/panels/fsview.py`).
   Contours are cut on any plane, set as the Brillouin-zone tool sets one:

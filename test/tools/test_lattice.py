@@ -4,7 +4,7 @@ Brillouin-zone tool, and the space-group-consistency checker.
 import numpy as np
 import pytest
 
-from tools.crystal.lattice import (LatticeParams, bravais_symbol,
+from arpes_viewer.tools.crystal.lattice import (LatticeParams, bravais_symbol,
                                    conventional_vectors, primitive_vectors,
                                    reciprocal_vectors,
                                    validate_lattice_parameters,

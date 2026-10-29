@@ -14,9 +14,9 @@ since :func:`wigner_seitz_cell` grows the shell itself.
 import numpy as np
 import pytest
 
-from tools.crystal.lattice import (LatticeParams, primitive_vectors,
+from arpes_viewer.tools.crystal.lattice import (LatticeParams, primitive_vectors,
                                    reciprocal_vectors, point_group_operations)
-from tools.crystal.bz3d import (wigner_seitz_cell, plane_cut, plane_basis,
+from arpes_viewer.tools.crystal.bz3d import (wigner_seitz_cell, plane_cut, plane_basis,
                                 tile_and_cut, face_planes, irreducible_wedge,
                                 cut_points_3d)
 

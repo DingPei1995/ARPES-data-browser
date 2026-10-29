@@ -13,7 +13,7 @@ turns that stand it vertical.
 import numpy as np
 import pytest
 
-from tools.momentum.kspace import points_to_azimuth
+from arpes_viewer.tools.momentum.kspace import points_to_azimuth
 
 
 def direction(degrees, length=1.0):
@@ -129,7 +129,7 @@ def test_two_identical_points_are_an_error():
 def test_the_rotation_really_does_stand_the_direction_up(degrees):
     """End to end against the rotation the conversion applies, rather than
     against the formula that produced it."""
-    from tools.momentum.kspace import rotation_matrix
+    from arpes_viewer.tools.momentum.kspace import rotation_matrix
 
     rotation = points_to_azimuth(direction(degrees))
     radians = np.radians(degrees)

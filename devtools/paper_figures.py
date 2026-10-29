@@ -39,7 +39,7 @@ for folder in (HERE, os.path.join(HERE, "devtools")):
     if folder not in sys.path:
         sys.path.insert(0, folder)
 
-from loader import registry                          # noqa: E402
+from arpes_viewer.loader import registry                          # noqa: E402
 
 import demo_data as D                                # noqa: E402
 
@@ -60,10 +60,10 @@ def converted(folder):
     """The demo measurements in momentum: ``[(name, MemoryData)]`` --
     the Γ-plane and zone-top k-maps, the photon-energy scan as (k_z, k_par,
     E), and the cuts in k."""
-    from tools.momentum.cutk import convert_cut
-    from tools.momentum.kspace import convert_map
-    from tools.momentum.kzconv import to_kz_cube
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.tools.momentum.cutk import convert_cut
+    from arpes_viewer.tools.momentum.kspace import convert_map
+    from arpes_viewer.tools.momentum.kzconv import to_kz_cube
+    from arpes_viewer.ui.viewers.widgets import MemoryData
 
     path = os.path.join(folder, "demo_bulk_bands.nxs")
     out = []
@@ -107,7 +107,7 @@ def converted(folder):
 def bands_window(folder, datasets):
     """The Calculated-bands window with the demo calculation open, the
     k_z scan's direction set, and Z and the shift fitted on the Γ-M cut."""
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     dialog = BandsDialog(datasets, colormap="blue")
     dialog.open_file(os.path.join(folder, "demo_calc_hr.dat"))
@@ -127,9 +127,9 @@ def bands_window(folder, datasets):
 def crystal_pictures(folder, size=900):
     """The crystal with its octahedra, and its Brillouin zone, from the
     crystal window: two RGBA pictures."""
-    from tools.crystal.bands import parse_path               # noqa: F401
-    from ui.panels.crystal import CrystalDialog
-    from ui.panels.figure import _qimage_array
+    from arpes_viewer.tools.crystal.bands import parse_path               # noqa: F401
+    from arpes_viewer.ui.panels.crystal import CrystalDialog
+    from arpes_viewer.ui.panels.figure import _qimage_array
 
     dialog = CrystalDialog()
     dialog.read_cif(os.path.join(folder, "demo_crystal.cif"))
@@ -162,9 +162,9 @@ def _trim(rgba, pad=8):
 
 
 def eds_panel(folder):
-    from tools.output import figure as F
-    from ui.panels.figure import panel_from_dataset
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.tools.output import figure as F
+    from arpes_viewer.ui.panels.figure import panel_from_dataset
+    from arpes_viewer.ui.viewers.widgets import MemoryData
 
     scan = _scan(os.path.join(folder, "demo_eds.nxs"), "EDS_spectrum")
     data = MemoryData("edc", (scan.x, np.zeros(1)), scan.value, dict(scan.labels),
@@ -207,11 +207,11 @@ def _figure_style(figure):
 
 def figure_1(folder, dialog, out, save_to=None):
     """Crystal, EDS, Brillouin zone, and ARPES along the path."""
-    from tools.output import figure as F
-    from ui.panels.figure import FigureWindow, Panel
+    from arpes_viewer.tools.output import figure as F
+    from arpes_viewer.ui.panels.figure import FigureWindow, Panel
 
     crystal, zone = crystal_pictures(folder)
-    from tools.output.figfile import source_record
+    from arpes_viewer.tools.output.figfile import source_record
 
     pa = Panel(data=F.picture_data(crystal, "crystal"))
     pc = Panel(data=F.picture_data(zone, "Brillouin zone"))
@@ -241,7 +241,7 @@ def figure_1(folder, dialog, out, save_to=None):
 
 
 def _second_derivative(values, k, energy):
-    from tools.processing.process import derivative, gaussian_smooth
+    from arpes_viewer.tools.processing.process import derivative, gaussian_smooth
 
     smooth = gaussian_smooth(values, (k, energy), (0.012, 0.012))
     d2 = derivative(smooth, (k, energy), 1, 2, window=0.06)
@@ -251,10 +251,10 @@ def _second_derivative(values, k, energy):
 def figure_2(folder, dialog, datasets, out, save_to=None):
     """Constant-energy map, LH and LV cuts with the calculation, the
     calculation alone, and the second derivative."""
-    from tools.output import figure as F
-    from tools.processing.process import symmetrise
-    from ui.panels.figure import FigureWindow, panel_from_arrays
-    from ui.viewers.curves import curve_panel
+    from arpes_viewer.tools.output import figure as F
+    from arpes_viewer.tools.processing.process import symmetrise
+    from arpes_viewer.ui.panels.figure import FigureWindow, panel_from_arrays
+    from arpes_viewer.ui.viewers.curves import curve_panel
 
     data = dict(datasets)
     # (a) the Fermi surface on the Γ plane, symmetrised, 50 meV

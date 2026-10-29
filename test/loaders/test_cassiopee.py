@@ -19,8 +19,8 @@ import warnings
 import numpy as np
 import pytest
 
-from loader.beamlines import cassiopee
-from loader import registry
+from arpes_viewer.loader.beamlines import cassiopee
+from arpes_viewer.loader import registry
 
 
 # --------------------------------------------------------------------------

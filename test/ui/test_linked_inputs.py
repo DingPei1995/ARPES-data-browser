@@ -22,7 +22,7 @@ def app():
 
 
 def test_map_points_drive_the_greyed_steps_and_back(app):
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers import windows as W
     window = W.ContourWindow(_map(), "m", "gray", False)
     dialog = W.KConversionDialog(window)
     kx_lo, kx_hi, ky_lo, ky_hi = dialog.k_extent()
@@ -49,7 +49,7 @@ def test_map_points_drive_the_greyed_steps_and_back(app):
 
 
 def test_cut_points_drive_the_greyed_steps_and_back(app):
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers import windows as W
     window = W.CutWindow(_cut(), "c", "gray", False)
     dialog = W.CutKConversionDialog(window)
     lo, hi = dialog.k_extent()
@@ -64,7 +64,7 @@ def test_cut_points_drive_the_greyed_steps_and_back(app):
 
 def test_the_step_boxes_are_called_steps(app):
     from PyQt5.QtWidgets import QLabel
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers import windows as W
     window = W.ContourWindow(_map(), "m", "gray", False)
     dialog = W.KConversionDialog(window)
     texts = [label.text() for label in dialog.findChildren(QLabel)]
@@ -76,7 +76,7 @@ def test_the_step_boxes_are_called_steps(app):
 
 
 def test_slice_positions_show_each_other(app):
-    from ui.panels.figure import SliceSeriesDialog
+    from arpes_viewer.ui.panels.figure import SliceSeriesDialog
     axes = (DEFL, SLIT, EKIN)
     dialog = SliceSeriesDialog(None, axes, ("x", "y", "E"))
     dialog.count_box.setValue(3)
@@ -93,7 +93,7 @@ def test_slice_positions_show_each_other(app):
 
 
 def test_switching_value_and_index_rewrites_the_bounds(app):
-    from ui.viewers.windows import DataOperationsDialog
+    from arpes_viewer.ui.viewers.windows import DataOperationsDialog
     dialog = DataOperationsDialog([("c", _cut())])
     lo, hi = dialog.trunc_boxes[0]
     axis = np.asarray(dialog.axes[0], dtype=float)
@@ -107,8 +107,8 @@ def test_switching_value_and_index_rewrites_the_bounds(app):
 
 
 def test_the_bottom_layer_shows_the_top_lattice_while_the_same(app, tmp_path, monkeypatch):
-    from ui.viewers import windows as W
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers import windows as W
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     monkeypatch.setattr(W.BrillouinZoneDialog, "last_used_path",
                         classmethod(lambda cls: str(tmp_path / "bz.json")))
     k = np.linspace(-1.2, 1.2, 21)

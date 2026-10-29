@@ -9,8 +9,8 @@ import h5py
 import numpy as np
 import pytest
 
-import loader.registry as L
-from loader.nxs_file import list_datasets, load_soleil_nxs
+import arpes_viewer.loader.registry as L
+from arpes_viewer.loader.nxs_file import list_datasets, load_soleil_nxs
 
 WORK_FUNCTION = 4.5
 N_ANGLE, N_ENERGY = 40, 61

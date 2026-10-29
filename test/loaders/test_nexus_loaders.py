@@ -11,10 +11,10 @@ import h5py
 import numpy as np
 import pytest
 
-from loader.beamlines import alba as alba_loader, diamond as diamond_loader
-from loader.formats import nexus_arpes
-from loader import registry
-from loader.nxs_file import HANDLES
+from arpes_viewer.loader.beamlines import alba as alba_loader, diamond as diamond_loader
+from arpes_viewer.loader.formats import nexus_arpes
+from arpes_viewer.loader import registry
+from arpes_viewer.loader.nxs_file import HANDLES
 
 NA, NE = 5, 6
 
@@ -257,7 +257,7 @@ def test_diamond_polar_map_keeps_the_positions_that_followed_the_angle(
     """A manipulator map: the beamline moved the sample along with the
     polar angle to keep the spot on it. Those positions are motors of the
     scan ("<name> range"), so the experiment log can say where it was."""
-    from tools.output import explog as EL
+    from arpes_viewer.tools.output import explog as EL
     path = str(tmp_path / "polar.nxs")
     _write_diamond(path, (4,), [
         ("sapolar", np.linspace(-6, 6, 4), "1", True, "deg"),

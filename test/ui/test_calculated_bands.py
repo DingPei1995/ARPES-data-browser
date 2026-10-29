@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 from PyQt5.QtWidgets import QApplication
 
-from tools.crystal import bandfiles
-from tools.crystal import bands as B
+from arpes_viewer.tools.crystal import bandfiles
+from arpes_viewer.tools.crystal import bands as B
 
 A = 3.3
 LATTICE = np.array([[A, 0, 0], [-A / 2, A * np.sqrt(3) / 2, 0], [0, 0, 6.0]])
@@ -70,7 +70,7 @@ def test_a_renamed_hamiltonian_and_a_cut_up_file_are_found(tmp_path):
 def test_matlab_grids_read_in_both_versions(tmp_path):
     from scipy.io import savemat
 
-    from tools.crystal.fermisurface import sampled
+    from arpes_viewer.tools.crystal.fermisurface import sampled
 
     model = B.WannierModel(LATTICE, np.array(list(_hoppings()), float),
                            np.array(list(_hoppings().values())))
@@ -108,7 +108,7 @@ def test_big_reads_report_their_progress(tmp_path):
 # the window
 # --------------------------------------------------------------------------
 def test_the_goal_decides_what_can_be_opened_and_shown(app, tmp_path):
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     path = _path_file(str(tmp_path))
     dialog = BandsDialog([])
@@ -125,7 +125,7 @@ def test_the_goal_decides_what_can_be_opened_and_shown(app, tmp_path):
 
 
 def test_the_fermi_surface_is_drawn_and_made_a_figure(app, tmp_path):
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     hr = str(tmp_path / "wannier90_hr.dat")
     bandfiles.write_hr(hr, LATTICE, _hoppings(), 1)
@@ -149,9 +149,9 @@ def test_the_fermi_surface_is_drawn_and_made_a_figure(app, tmp_path):
 
 
 def test_the_saved_path_keeps_its_high_symmetry_points(app, tmp_path):
-    from ui.panels.bands import BandsDialog
-    from ui.panels.figure import panel_from_dataset
-    from ui.viewers.windows import CutWindow, path_points
+    from arpes_viewer.ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.panels.figure import panel_from_dataset
+    from arpes_viewer.ui.viewers.windows import CutWindow, path_points
 
     with open(tmp_path / "KPOINTS", "w") as handle:
         handle.write("2 6   Direct Lattice Vectors(Ang)   Reciprocal\n")
@@ -180,7 +180,7 @@ def test_the_saved_path_keeps_its_high_symmetry_points(app, tmp_path):
 
 
 def test_which_file_lists_the_folder_and_opens_the_choice(app, tmp_path):
-    from ui.panels.bandfinder import WhichFileDialog
+    from arpes_viewer.ui.panels.bandfinder import WhichFileDialog
 
     _path_file(str(tmp_path))
     (tmp_path / "notes.txt").write_text("from the theory side\n")
@@ -198,8 +198,8 @@ def test_which_file_lists_the_folder_and_opens_the_choice(app, tmp_path):
 
 def test_a_step_window_asks_before_closing_and_keeps_its_settings(app, tmp_path,
                                                                   monkeypatch):
-    from ui.common import stepper
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.common import stepper
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     path = _path_file(str(tmp_path))
     dialog = BandsDialog([])
@@ -239,7 +239,7 @@ def _two_band_hr(folder):
 
 
 def test_the_contour_plane_is_set_like_the_zone_tool(app, tmp_path):
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     dialog = BandsDialog([])
     dialog.open_file(_two_band_hr(str(tmp_path)))
@@ -269,7 +269,7 @@ def test_the_contour_plane_is_set_like_the_zone_tool(app, tmp_path):
 
 
 def test_the_cell_is_locked_until_asked(app, tmp_path):
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     dialog = BandsDialog([])
     dialog.open_file(_two_band_hr(str(tmp_path)))
@@ -289,7 +289,7 @@ def test_enter_in_a_field_takes_the_value_and_presses_nothing(app, tmp_path):
     from PyQt5.QtCore import Qt
     from PyQt5.QtTest import QTest
 
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     dialog = BandsDialog([])
     dialog.show()
@@ -307,7 +307,7 @@ def test_enter_in_a_field_takes_the_value_and_presses_nothing(app, tmp_path):
 
 
 def test_bands_take_their_own_colours_and_opacity(app, tmp_path):
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     dialog = BandsDialog([])
     dialog.set_goal("fs")
@@ -333,7 +333,7 @@ def test_bands_take_their_own_colours_and_opacity(app, tmp_path):
 
 
 def test_the_goal_shapes_the_steps_and_what_is_saved(app, tmp_path):
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     dialog = BandsDialog([])
     dialog.open_file(_two_band_hr(str(tmp_path)))

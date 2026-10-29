@@ -4,7 +4,7 @@ hexagonal grid with a per-slice contrast and sub-pixel shift, Poisson."""
 import numpy as np
 import pytest
 
-from tools.processing import degrid as D
+from arpes_viewer.tools.processing import degrid as D
 
 N0, N1, NS = 150, 190, 24          # angle px, energy px, slices
 PERIOD = 5.2
@@ -159,7 +159,7 @@ def test_pixel_lock_check(info, blocked):
 
 
 def test_settings_match_and_default_source():
-    from ui.panels.degrid import default_source, settings_match
+    from arpes_viewer.ui.panels.degrid import default_source, settings_match
     a = {"lens_mode": "A30", "pass_energy_eV": 20.0}
     assert settings_match(a, dict(a))
     assert not settings_match(a, {"lens_mode": "A30", "pass_energy_eV": 50.0})

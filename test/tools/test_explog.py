@@ -5,8 +5,8 @@ import csv
 import numpy as np
 import pytest
 
-from tools.output import explog as EL
-from ui.viewers.widgets import MemoryData
+from arpes_viewer.tools.output import explog as EL
+from arpes_viewer.ui.viewers.widgets import MemoryData
 
 SLIT = np.linspace(-15, 15, 31)
 EKIN = np.linspace(84, 90, 61)

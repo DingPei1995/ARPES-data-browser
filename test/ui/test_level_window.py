@@ -17,8 +17,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt5")
 from PyQt5.QtWidgets import QApplication                           # noqa: E402
 
-from ui.viewers.widgets import MemoryData  # noqa: E402
-from ui.viewers import windows as W  # noqa: E402
+from arpes_viewer.ui.viewers.widgets import MemoryData  # noqa: E402
+from arpes_viewer.ui.viewers import windows as W  # noqa: E402
 
 DEFL = np.linspace(-10, 10, 21)
 SLIT = np.linspace(-15, 15, 31)

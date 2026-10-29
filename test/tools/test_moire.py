@@ -5,8 +5,8 @@ hexagonal-bilayer formula (:func:`hex_moire_lattice_fast`).
 import numpy as np
 import pytest
 
-from tools.crystal.bz2d import reciprocal_vectors_2d
-from tools.crystal.moire import (hex_moire_lattice_fast,
+from arpes_viewer.tools.crystal.bz2d import reciprocal_vectors_2d
+from arpes_viewer.tools.crystal.moire import (hex_moire_lattice_fast,
                                  moire_reciprocal_vectors, moire_bz)
 
 

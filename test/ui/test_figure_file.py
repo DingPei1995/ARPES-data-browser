@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 from PyQt5.QtWidgets import QApplication
 
-import tools.output.figure as nf
-from tools.output import figfile
+import arpes_viewer.tools.output.figure as nf
+from arpes_viewer.tools.output import figfile
 
 
 @pytest.fixture(scope="module")
@@ -19,8 +19,8 @@ def app():
 
 def _measurement(tmp_path):
     """A cut written to a file, read back as the launcher reads it."""
-    from loader.nxs_file import save_dataset
-    from ui.viewers.widgets import NxsData
+    from arpes_viewer.loader.nxs_file import save_dataset
+    from arpes_viewer.ui.viewers.widgets import NxsData
 
     path = str(tmp_path / "raw.nxs")
     k = np.linspace(-1, 1, 50)
@@ -34,8 +34,8 @@ def _measurement(tmp_path):
 
 def _processed(data):
     """A dataset made from ``data``, the way a processing step makes one."""
-    from tools.processing.process import Step, record_step
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.tools.processing.process import Step, record_step
+    from arpes_viewer.ui.viewers.widgets import MemoryData
 
     scan = data.scan
     info = record_step(scan.info, Step("smooth", {"sigma": 0.02}, source="cut1"))
@@ -45,7 +45,7 @@ def _processed(data):
 
 
 def _window(panels):
-    from ui.panels.figure import FigureWindow
+    from arpes_viewer.ui.panels.figure import FigureWindow
     return FigureWindow(panels, "fig")
 
 
@@ -54,7 +54,7 @@ def test_a_dataset_remembers_the_file_it_began_as(app, tmp_path):
     derived = _processed(data)
     assert derived.scan.info["origin.path"] == os.path.abspath(path)
     assert derived.scan.info["origin.entry"] == "cut1"
-    from ui.panels.figure import panel_from_dataset
+    from arpes_viewer.ui.panels.figure import panel_from_dataset
     panel = panel_from_dataset(derived, "smoothed")
     source = panel.data.sources[0]
     assert source["path"] == os.path.abspath(path)
@@ -63,7 +63,7 @@ def test_a_dataset_remembers_the_file_it_began_as(app, tmp_path):
 
 
 def test_save_and_open_again_unchanged(app, tmp_path):
-    from ui.panels.figure import open_figure_file, panel_from_dataset
+    from arpes_viewer.ui.panels.figure import open_figure_file, panel_from_dataset
 
     path, data = _measurement(tmp_path)
     panel = panel_from_dataset(_processed(data), "smoothed")
@@ -97,7 +97,7 @@ def test_save_and_open_again_unchanged(app, tmp_path):
 
 
 def test_the_data_folder_keeps_processed_and_original(app, tmp_path):
-    from ui.panels.figure import panel_from_dataset
+    from arpes_viewer.ui.panels.figure import panel_from_dataset
 
     path, data = _measurement(tmp_path)
     panel = panel_from_dataset(_processed(data), "smoothed")
@@ -120,7 +120,7 @@ def test_the_data_folder_keeps_processed_and_original(app, tmp_path):
     assert os.path.isfile(os.path.join(a, "processed", "lines.csv"))
     text = open(os.path.join(a, "sources.txt"), encoding="utf-8").read()
     assert "entry: cut1" in text and "then: smooth" in text
-    from loader import registry
+    from arpes_viewer.loader import registry
     processed = registry.load(os.path.join(a, "processed", "smoothed.nxs"))
     assert np.allclose(processed.value, panel.data.array)
     b = os.path.join(folder, "b")
@@ -130,7 +130,7 @@ def test_the_data_folder_keeps_processed_and_original(app, tmp_path):
 
 
 def test_a_reopened_figure_keeps_its_originals_when_they_moved(app, tmp_path):
-    from ui.panels.figure import open_figure_file, panel_from_dataset
+    from arpes_viewer.ui.panels.figure import open_figure_file, panel_from_dataset
 
     path, data = _measurement(tmp_path)
     window = _window([panel_from_dataset(data, "raw")])
@@ -144,8 +144,8 @@ def test_a_reopened_figure_keeps_its_originals_when_they_moved(app, tmp_path):
 
 
 def test_a_3d_view_is_saved_as_its_picture(app, tmp_path):
-    from ui.panels.figure import open_figure_file
-    from ui.panels.volume import VolumeWindow
+    from arpes_viewer.ui.panels.figure import open_figure_file
+    from arpes_viewer.ui.panels.volume import VolumeWindow
 
     rng = np.random.default_rng(0)
     view = VolumeWindow(rng.random((20, 15, 12)), (np.arange(20.0), np.arange(15.0),
@@ -160,8 +160,8 @@ def test_a_3d_view_is_saved_as_its_picture(app, tmp_path):
 
 
 def test_the_launcher_opens_a_saved_figure(app, tmp_path, monkeypatch):
-    import ARPES_viewer as lv
-    from ui.panels.figure import panel_from_arrays
+    import arpes_viewer.app as lv
+    from arpes_viewer.ui.panels.figure import panel_from_arrays
 
     window = _window([panel_from_arrays(np.ones((3, 3)), [0, 1, 2], [0, 1, 2])])
     saved = window.save_file(str(tmp_path / "f.afig"), with_data=False)
@@ -187,10 +187,10 @@ def test_not_a_figure_is_refused(tmp_path):
 def test_the_bands_window_fits_and_names_its_sources(app, tmp_path):
     """A calculation file and a measured cut in k: Z and the shift found,
     and the panels name the measurement's file and the calculation's."""
-    from tools.crystal import bandfiles
-    from tools.crystal import bands as B
-    from ui.panels.bands import BandsDialog
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.tools.crystal import bandfiles
+    from arpes_viewer.tools.crystal import bands as B
+    from arpes_viewer.ui.panels.bands import BandsDialog
+    from arpes_viewer.ui.viewers.widgets import MemoryData
 
     a = 3.3
     lattice = np.array([[a, 0, 0], [-a / 2, a * np.sqrt(3) / 2, 0], [0, 0, 6.0]])
@@ -227,8 +227,8 @@ def test_a_calculation_alone_goes_to_the_output(app, tmp_path):
     """No measurement selected: the FPLO tools' band.dat along a path and a
     Hamiltonian open, and their panels (the bands along the path, the
     contours at E_F) come out without a compare."""
-    from tools.crystal import bandfiles
-    from ui.panels.bands import BandsDialog
+    from arpes_viewer.tools.crystal import bandfiles
+    from arpes_viewer.ui.panels.bands import BandsDialog
 
     a = 3.3
     lattice = np.array([[a, 0, 0], [-a / 2, a * np.sqrt(3) / 2, 0], [0, 0, 6.0]])
@@ -257,7 +257,7 @@ def test_a_calculation_alone_goes_to_the_output(app, tmp_path):
 
 
 def test_the_stacked_slices_view_draws_layers_and_a_mark(app):
-    from ui.panels.volume import VolumeWindow
+    from arpes_viewer.ui.panels.volume import VolumeWindow
 
     rng = np.random.default_rng(1)
     axes = (np.linspace(-1, 1, 30), np.linspace(-1, 1, 30), np.linspace(-1, 0, 40))
@@ -275,8 +275,8 @@ def test_the_stacked_slices_view_draws_layers_and_a_mark(app):
 
 
 def test_points_with_error_bars_are_drawn(app):
-    from ui.panels.figure import FigureWindow
-    from ui.viewers.curves import curve_panel
+    from arpes_viewer.ui.panels.figure import FigureWindow
+    from arpes_viewer.ui.viewers.curves import curve_panel
 
     panel = curve_panel([0, 1, 2], [("c", np.array([0.0, 1.0, 0.5]), "#000000")],
                         x_label="x", y_label="y", name="p")
@@ -293,7 +293,7 @@ def test_points_with_error_bars_are_drawn(app):
 
 
 def test_arrange_aligns_spaces_and_sizes_panels(app):
-    from ui.panels.figure import FigureWindow, panel_from_arrays
+    from arpes_viewer.ui.panels.figure import FigureWindow, panel_from_arrays
 
     panels = [panel_from_arrays(np.ones((3, 3)), [0, 1, 2], [0, 1, 2]) for _ in range(3)]
     window = FigureWindow(panels, "f")
@@ -314,7 +314,7 @@ def test_arrange_aligns_spaces_and_sizes_panels(app):
 
 
 def test_letters_of_a_row_share_a_height(app):
-    from ui.panels.figure import FigurePainter, FigureWindow, panel_from_arrays
+    from arpes_viewer.ui.panels.figure import FigurePainter, FigureWindow, panel_from_arrays
 
     a = panel_from_arrays(np.ones((3, 3)), [0, 1, 2], [0, 1, 2])
     b = panel_from_arrays(np.ones((3, 3)), [0, 1, 2], [0, 1, 2])
@@ -333,7 +333,7 @@ def test_letters_of_a_row_share_a_height(app):
 
 
 def test_a_colour_bar_can_lie_under_the_panel(app):
-    from ui.panels.figure import FigureWindow, panel_from_arrays
+    from arpes_viewer.ui.panels.figure import FigureWindow, panel_from_arrays
 
     panel = panel_from_arrays(np.arange(9.0).reshape(3, 3), [0, 1, 2], [0, 1, 2])
     panel.colorbar, panel.colorbar_position, panel.colorbar_length = True, "below", 0.5
@@ -347,7 +347,7 @@ def test_a_colour_bar_can_lie_under_the_panel(app):
 
 
 def test_zone_labels_move_to_their_leftmost_equivalent(app, tmp_path):
-    from ui.panels.crystal import CrystalDialog
+    from arpes_viewer.ui.panels.crystal import CrystalDialog
 
     cif = tmp_path / "hex.cif"
     cif.write_text("""data_x

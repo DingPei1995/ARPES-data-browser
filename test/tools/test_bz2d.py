@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from tools.crystal.bz2d import (reciprocal_vectors_2d, wigner_seitz_cell_2d,
+from arpes_viewer.tools.crystal.bz2d import (reciprocal_vectors_2d, wigner_seitz_cell_2d,
                                 tile_2d, lattice_point_group_2d,
                                 irreducible_cell_2d)
 

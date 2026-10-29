@@ -11,9 +11,9 @@ import h5py
 import numpy as np
 import pytest
 
-from loader.beamlines import maestro as maestro_loader
-from loader import registry
-from loader.nxs_file import HANDLES
+from arpes_viewer.loader.beamlines import maestro as maestro_loader
+from arpes_viewer.loader import registry
+from arpes_viewer.loader.nxs_file import HANDLES
 
 
 def _row(tag, value):

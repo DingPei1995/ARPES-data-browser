@@ -8,8 +8,8 @@ import os
 import numpy as np
 import pytest
 
-from loader.beamlines import cassiopee_spin as M
-from loader import registry as L
+from arpes_viewer.loader.beamlines import cassiopee_spin as M
+from arpes_viewer.loader import registry as L
 
 
 def header(**over):

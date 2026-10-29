@@ -14,7 +14,7 @@ it out of k_z. It is not a small effect.
 import numpy as np
 import pytest
 
-from tools.momentum import kzconv
+from arpes_viewer.tools.momentum import kzconv
 
 
 A = kzconv.A_CONST
@@ -260,7 +260,7 @@ def test_the_scan_reports_the_period_the_lattice_wants():
 # Is the Fermi surface flat?
 # --------------------------------------------------------------------------
 def test_a_flat_edge_reads_as_flat():
-    from tools.spectra.fermi import fermi_edge_model
+    from arpes_viewer.tools.spectra.fermi import fermi_edge_model
     angle = np.linspace(-15, 15, 40)
     energy = np.linspace(-0.6, 0.3, 120)
     edge = fermi_edge_model(energy, ef=0.0, temperature=25.0, resolution=0.02,
@@ -271,7 +271,7 @@ def test_a_flat_edge_reads_as_flat():
 
 
 def test_a_bent_edge_is_measured():
-    from tools.spectra.fermi import fermi_edge_model
+    from arpes_viewer.tools.spectra.fermi import fermi_edge_model
     angle = np.linspace(-15, 15, 40)
     energy = np.linspace(-0.6, 0.3, 200)
     bend = 0.15 * (angle / 15.0) ** 2
@@ -287,7 +287,7 @@ def test_a_bent_edge_is_measured():
 
 def test_the_flatness_check_ignores_the_correction_padding():
     """An FS-corrected cube has NaN at the ends of its grown energy axis."""
-    from tools.spectra.fermi import fermi_edge_model
+    from arpes_viewer.tools.spectra.fermi import fermi_edge_model
     angle = np.linspace(-15, 15, 30)
     energy = np.linspace(-0.6, 0.3, 150)
     edge = fermi_edge_model(energy, ef=0.0, temperature=25.0, resolution=0.02,

@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt5")
 from PyQt5.QtWidgets import QApplication, QWidget      # noqa: E402
 
-from ui.common.jobs import JobRunner, JobCancelled  # noqa: E402
+from arpes_viewer.ui.common.jobs import JobRunner, JobCancelled  # noqa: E402
 
 
 @pytest.fixture(scope="module")

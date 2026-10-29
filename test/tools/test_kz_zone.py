@@ -11,8 +11,8 @@ import os
 import numpy as np
 import pytest
 
-from tools.crystal.bz3d import kz_frame, kz_zone_cuts, wigner_seitz_cell
-from tools.crystal.lattice import (LatticeParams, primitive_vectors,
+from arpes_viewer.tools.crystal.bz3d import kz_frame, kz_zone_cuts, wigner_seitz_cell
+from arpes_viewer.tools.crystal.lattice import (LatticeParams, primitive_vectors,
                                    reciprocal_vectors)
 
 
@@ -94,7 +94,7 @@ def app():
 
 
 def _kz_map(kind):
-    from ui.viewers.widgets import MemoryData
+    from arpes_viewer.ui.viewers.widgets import MemoryData
     first = (np.linspace(40, 120, 21) if kind == "kz_map"
              else np.linspace(2.0, 6.0, 41))
     second = (np.linspace(-12, 12, 25) if kind == "kz_map"
@@ -108,8 +108,8 @@ def _kz_map(kind):
 
 
 def test_kz_conversion_window_draws_the_cut_for_any_normal(app):
-    from ui.viewers import windows as W
-    from ui.panels.kzconv import KzConversionDialog
+    from arpes_viewer.ui.viewers import windows as W
+    from arpes_viewer.ui.panels.kzconv import KzConversionDialog
     contour = W.ContourWindow(_kz_map("kz_map"), "kz", "gray", False)
     dialog = KzConversionDialog(contour)
     # the default hexagonal group gets its gamma = 120, not 90
@@ -133,7 +133,7 @@ def test_kz_conversion_window_draws_the_cut_for_any_normal(app):
 
 
 def test_brillouin_zone_dialog_is_offered_and_draws_on_a_kz_map(app):
-    from ui.viewers import windows as W
+    from arpes_viewer.ui.viewers import windows as W
     contour = W.ContourWindow(_kz_map("kz_map_k"), "kz", "gray", False)
     info = contour.data.scan.info
     info.update({"bz.space_group": 225, "bz.a": np.pi, "bz.h": 1,

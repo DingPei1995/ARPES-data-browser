@@ -1,0 +1,2867 @@
+#!/usr/bin/env python3
+"""
+ARPES_viewer.py
+============
+Launcher for the nano-ARPES ``*.nxs`` viewer -- the ``*.nxs`` counterpart of
+the original ``h5Loader.py``.
+
+The main window is deliberately just a browser: pick a folder, pick the
+file(s) you care about, click one to read its metadata, and **double-click**
+it to open it in its own viewer window (``ui/viewers/windows.py``):
+
+- a real-space scan opens the spatial map together with the E-vs-k spectrum
+  at the cursor;
+- a single cut opens that spectrum;
+- a deflector map opens on its constant-energy contour, whose two buttons
+  open the orthogonal cuts, each in a further window.
+
+One window per thing you are looking at means several files -- or a contour
+and both its cuts -- can be on screen at once and arranged freely, which the
+single stacked layout this replaced could not do. The colormap chosen here
+applies to every open window; metadata stays here because it describes the
+file rather than any one view, and each viewer exports what it itself shows.
+
+Differences from ``h5Loader.py`` worth knowing about if you maintain both:
+no dependency on ``pyNanoScanSystem``/``tools_packages`` or ``win32*`` (see
+``tools/runtime/system.py`` and ``ui/common/notify.py`` for the stand-ins), and no "Sync with running scan" button,
+which talked to the live acquisition software rather than to the file format.
+"""
+import csv
+import os
+import sys
+import time
+import traceback
+
+from PyQt5 import QtCore
+from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtWidgets import (QAction, QApplication, QMainWindow, QTableWidgetItem,
+                              QListWidgetItem, QFileDialog, QMenu, QMessageBox,
+                              QInputDialog, QDialog, QPushButton)
+
+os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+QApplication.setHighDpiScaleFactorRoundingPolicy(QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+# Numbers are written and read the same way on every machine: a point for
+# the decimal and no thousands separator. Qt's number boxes otherwise follow
+# the system locale, so on a French or German Windows they showed "0,05" and
+# took "0.05" as invalid. Set before any widget exists -- a widget copies the
+# default locale when it is made.
+QtCore.QLocale.setDefault(QtCore.QLocale.c())
+
+from arpes_viewer.tools.runtime import system
+from arpes_viewer.tools.runtime import memory as memory_tools
+from arpes_viewer.ui.common import notify
+import numpy as np
+
+from arpes_viewer.loader.nxs_file import list_datasets, save_dataset, CUBE_KINDS, CURVE_KINDS
+from arpes_viewer.tools.processing.dataops import axis_summary, same_format, ARRAY_AXES
+from arpes_viewer.tools.processing import process as process_tools
+from arpes_viewer.ui.viewers.widgets import NxsData, MemoryData, DEFAULT_COLORMAP
+# Imported under short names, not as `import ui.common.jobs`: the launcher's own
+# global `ui` (the built main window, used on nearly every line below) would
+# otherwise shadow the `ui` package the moment it is assigned, and
+# `ui.launcher.main_window` would start looking for an attribute on a window.
+from arpes_viewer.ui.common import jobs as nxs_jobs
+from arpes_viewer.ui.launcher import main_window as main_window_ui
+from arpes_viewer.ui.viewers import windows as viewer_windows_module
+from arpes_viewer.loader import registry as nxs_loaders
+from arpes_viewer.loader import session as nxs_session
+from arpes_viewer.loader import nxs_file
+
+CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".arpes_viewer", "config.json")
+
+win = None
+ui = None
+current_data: NxsData = None     # the file whose metadata is on show
+current_info_rows = []           # full metadata, before the filter box
+#: (abspath, entry) -> {path, name, entry, kind, title, start_time, memory}.
+#: One record per dataset, because a file can hold several independent ones,
+#: and because a converted k-map is a dataset with no file behind it.
+loaded_items = {}
+current_key = None               # which dataset's metadata is on show
+viewer_windows = []                 # open viewer windows, kept alive here
+data_ops_dialog = None              # the Data operations dialog, while open
+process_dialog = None               # the Process dialog (2D or 3D), while open
+info_window = None                  # the Experiment info window, once asked for
+exp_log_keep_recording = False      # log each file added to the list (Exp. log format)
+default_colormap = DEFAULT_COLORMAP   # what a newly opened window starts with
+default_flip = False
+
+#: This run's working folder for computed datasets. Every derived dataset is
+#: written here the moment it exists (see :mod:`loader.session`), so that losing
+#: the program stops meaning losing the session's work, and so that a listed
+#: dataset can be a path rather than a resident cube.
+session = nxs_session.SessionStore()
+
+#: Kinds that are *not* auto-saved: a 4-D spatial scan is the measurement
+#: itself, gigabytes of it, and writing a copy after every operation would
+#: cost more than it protects. Everything smaller is written.
+NO_AUTOSAVE_KINDS = ("spem_4d", "spem_1d")
+
+#: What a kind is called in the list and in the Data Information panel.
+#: The internal names are terse on purpose; these are what a person reads.
+KIND_LABELS = {
+    "cut": "Cut",
+    "map": "Map",
+    "k_map": "k-map",
+    "kz_map": "kz map",
+    "kz_map_k": "kz map (k)",
+    "spem_4d": "SPEM",
+    "spem_1d": "SPEM",
+    "edc": "EDC",
+    "mdc": "MDC",
+    "spin_edc": "Spin EDC",
+}
+
+
+# --------------------------------------------------------------------------
+# File selection
+# --------------------------------------------------------------------------
+def BrowseFolder():
+    start = ui.FilePathLE.displayText() or os.path.expanduser("~")
+    folder = QFileDialog.getExistingDirectory(win, "Choose folder with .nxs files", start)
+    if folder:
+        ui.FilePathLE.setText(folder)
+
+
+def PickFiles():
+    """Explicitly choose which data files to list, rather than scanning and
+    loading a whole folder (slow when it holds multi-GB scans)."""
+    from arpes_viewer.ui.launcher.loader_dialog import LoaderDialog
+
+    start = ui.FilePathLE.displayText() or os.path.expanduser("~")
+    if not os.path.isdir(start):
+        start = os.path.expanduser("~")
+    # The same filter the Loader window builds, from what the loaders say
+    # they read -- so a beamline whose files are not .nxs is visible here too.
+    paths, _ = QFileDialog.getOpenFileNames(win, "Select data file(s)", start,
+                                            LoaderDialog._file_filter())
+    if not paths:
+        return
+    ui.FilePathLE.setText(os.path.dirname(paths[0]))
+    add_files(paths)
+
+
+def open_loader():
+    """The Loader window: files, which beamline's reader, and the axis
+    options, all before anything reaches the list."""
+    from arpes_viewer.ui.launcher.loader_dialog import LoaderDialog
+
+    dialog = LoaderDialog(win, ui.FilePathLE.displayText())
+    if dialog.exec_() != QDialog.Accepted:
+        return None
+    paths, options = dialog.chosen()
+    if not paths:
+        return None
+    ui.FilePathLE.setText(os.path.dirname(paths[0]))
+    add_files(paths, options=options)
+    return paths
+
+
+def add_files(paths, options=None, background: bool = True):
+    """List the chosen files, one row per *dataset* they contain.
+
+    A .nxs file routinely holds several complete measurements -- up to six
+    Cuts or Maps recorded one after another, each its own NeXus entry. They
+    are separate measurements sharing a file, so each gets its own row and
+    opening one opens only that entry. Files with a single dataset still
+    show a single row, labelled just by their kind.
+
+    The listing reads only structure and dataset shapes
+    (loader.nxs_file.list_datasets), so adding a folder of multi-GB scans is
+    instant.
+    """
+    figures = [p for p in paths if str(p).lower().endswith(".afig")]
+    if figures:
+        for path in figures:
+            open_saved_figure(path)
+        paths = [p for p in paths if p not in figures]
+        if not paths:
+            return
+    if background and len(paths) > 1 and not nxs_jobs.busy():
+        def work(report):
+            scanned = []
+            for index, path in enumerate(paths):
+                report(index / len(paths),
+                       f"Reading {os.path.basename(path)} "
+                       f"({index + 1} of {len(paths)})")
+                scanned.append((path, nxs_loaders.list_entries(path, options)))
+            return scanned
+
+        started = nxs_jobs.run_job(
+            win, "Loading data", work,
+            on_done=lambda scanned: _add_scanned(scanned, options),
+            on_error=lambda exc: QMessageBox.warning(
+                win, "Load", f"Could not read the files:\n{exc}"),
+            on_cancel=lambda: ui.statusbar.showMessage("Loading cancelled"))
+        if started:
+            return
+
+    _add_scanned([(path, nxs_loaders.list_entries(path, options))
+                  for path in paths], options)
+
+
+def _add_scanned(scanned, options=None):
+    """Put the results of scanning some files into the list.
+
+    Split from :func:`add_files` because the scanning is file I/O that
+    belongs on the worker thread and this is widget work that has to be on
+    the GUI thread -- which is the whole shape of moving a long operation
+    off the event loop.
+    """
+    added = 0
+    new_keys = []
+    for path, datasets in scanned:
+        name = os.path.basename(path)
+        if not datasets:
+            # Unreadable, or a layout with nothing openable in it. Still
+            # listed, so the file does not silently vanish from the browser.
+            datasets = [{"entry": None, "kind": "unknown", "title": None,
+                         "start_time": None}]
+
+        multiple = len(datasets) > 1
+        for info in datasets:
+            # An entry may name the file it should really be read from. A
+            # CASSIOPEE folder uses this: every member of a numbered series
+            # offers the same assembled map, and each names the folder's
+            # first member as its path. So the key is the same whether one
+            # file was selected or all sixty, and the folder is listed once
+            # instead of sixty times over.
+            source = info.get("path") or path
+            key = (os.path.abspath(source), info["entry"])
+            if key in loaded_items:
+                continue
+            # A loader may know what the dataset is actually called -- the
+            # native one does, because the name was saved with it. Only fall
+            # back to the filename when nothing better is offered.
+            row_name = info.get("name") or name
+            loaded_items[key] = {"memory": None,
+                                 "backing": None, "exported": True,
+                                 "options": options, **info,
+                                 "path": source, "name": row_name}
+
+            # Only name the entry when the file holds more than one, so
+            # ordinary single-measurement files stay uncluttered.
+            label = f"{row_name}   [{info['kind']}]"
+            if multiple and info.get("entry") and info["entry"] != row_name:
+                label = f"{row_name}  \u00b7  {info['entry']}   [{info['kind']}]"
+            item = QListWidgetItem(label)
+            # The display text carries the labels, so the identity of the row
+            # travels in its data rather than being parsed back out of it.
+            item.setData(QtCore.Qt.UserRole, key)
+            tip = [path]
+            if info["entry"]:
+                tip.append(f"entry: {info['entry']}")
+            if info.get("title"):
+                tip.append(f"title: {info['title']}")
+            if info.get("start_time"):
+                tip.append(f"recorded: {info['start_time']}")
+            tip.append(info["kind"])
+            item.setToolTip("\n".join(tip))
+            ui.FilePathListWidget.addItem(item)
+            added += 1
+            new_keys.append(key)
+
+    ui.statusbar.showMessage(
+        f"Added {added} dataset(s); {len(loaded_items)} in the list")
+    if new_keys and exp_log_keep_recording:
+        record_exp_log(new_keys, quiet=True)
+
+
+def listed_names():
+    """Every name currently in the browser, so a new one can avoid them."""
+    return [record["name"] for record in loaded_items.values()]
+
+
+def unique_name(base: str) -> str:
+    """``base``, or ``base 2`` / ``base 3`` ... if it is already listed."""
+    taken = set(listed_names())
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base} {n}" in taken:
+        n += 1
+    return f"{base} {n}"
+
+
+def autosave(data, name: str):
+    """Write a just-computed dataset to the session folder.
+
+    Called for every derived dataset the moment it exists, which is the
+    whole answer to "the program died and I lost the morning's work": there
+    is no window in which a result exists only as a numpy array. Returns the
+    file it wrote, or None if this kind is not auto-saved or the write
+    failed.
+
+    A failure here is reported and then ignored. Auto-saving is a safety
+    net; if the disk is full or the folder is read-only, the right outcome
+    is a working program that says so, not a refused k conversion.
+    """
+    if getattr(data, "kind", None) in NO_AUTOSAVE_KINDS:
+        return None
+    try:
+        return session.store_data(data, name)
+    except Exception as exc:                               # noqa: BLE001
+        traceback.print_exc()
+        ui.statusbar.showMessage(f"Could not auto-save '{name}': {exc}")
+        return None
+
+
+def add_memory_dataset(data, label: str):
+    """List a dataset that was computed rather than read -- a k-space map,
+    an arbitrary cut, a processed result.
+
+    It gets a row like any other, keyed by its own identity rather than by a
+    file and entry. It is also written to the session folder straight away,
+    so the row has a file behind it exactly as a measured dataset does; the
+    in-memory copy then becomes a cache that the memory budget may drop and
+    re-read. Converting the same map twice gives two rows, since the
+    settings (and so the result) differ.
+    """
+    # Show the same word a file's row shows for that kind, so a computed map
+    # and a measured one read alike in the list.
+    kind = KIND_LABELS.get(getattr(data, "kind", ""),
+                           getattr(data, "kind", "unknown"))
+    label = unique_name(label)
+    key = ("<converted>", f"{label}#{len(loaded_items)}")
+    backing = autosave(data, label)
+    loaded_items[key] = {"path": getattr(data, "path", ""), "name": label,
+                         "entry": None, "kind": kind, "title": None,
+                         "start_time": None, "memory": data,
+                         "backing": backing, "exported": False,
+                         "tags": process_tools.tags_of(data)}
+    if backing is not None:
+        session.budget.put(backing, data)
+    item = QListWidgetItem(_row_label(key))
+    item.setData(QtCore.Qt.UserRole, key)
+    where = (f"auto-saved to {os.path.basename(backing)}" if backing
+             else "computed in this session, not auto-saved")
+    item.setToolTip(f"{label}\n{where}\n{kind}" + _tags_tip(key))
+    ui.FilePathListWidget.addItem(item)
+    # Make the new row the *only* selection, so a right-click straight after
+    # a conversion acts on it alone rather than on it plus whatever was
+    # selected before.
+    ui.FilePathListWidget.clearSelection()
+    ui.FilePathListWidget.setCurrentItem(item)
+    item.setSelected(True)
+    ui.statusbar.showMessage(
+        f"Added {label} [{kind}] to the list"
+        + (" and auto-saved it" if backing else ""))
+    return item
+
+
+def selected_key():
+    """Identity of the highlighted row: ``(abspath, entry)``, or
+    ``("<converted>", tag)`` for a computed one. The row's label carries the
+    kind and entry name for reading, which are not part of that identity."""
+    items = ui.FilePathListWidget.selectedItems()
+    if not items:
+        return None
+    return items[0].data(QtCore.Qt.UserRole)
+
+
+def label_for(key) -> str:
+    """How to name one dataset in messages: the filename, plus the entry
+    when its file holds more than one."""
+    record = loaded_items.get(key)
+    if record is None:
+        return "(unknown)"
+    if record.get("memory") is not None:
+        return record["name"]
+    siblings = [k for k in loaded_items if k[0] == key[0]]
+    # A saved file names its rows after their entries; "cut_LH · cut_LH"
+    # would only say the same thing twice (the list row already skips it).
+    if len(siblings) > 1 and record["entry"] and record["entry"] != record["name"]:
+        return f"{record['name']} \u00b7 {record['entry']}"
+    return record["name"]
+
+
+def current_label() -> str:
+    """How to name the selected dataset in messages and window titles: the
+    filename, plus the entry when its file holds more than one."""
+    if loaded_items.get(current_key) is None:
+        return "(nothing selected)"
+    return label_for(current_key)
+
+
+def ClearList():
+    """Empty the list -- after asking, and after offering to save what
+    would otherwise be lost.
+
+    Rows read from files only leave the list (the files stay where they
+    are). Datasets computed in this session and not saved anywhere of the
+    user's own are listed in the question, with the choice to save them
+    first, to clear anyway (their auto-saved copies go too), or to cancel.
+    Viewers already open keep their data.
+    """
+    keys = list(loaded_items)
+    if not keys:
+        ui.statusbar.showMessage("The list is already empty")
+        return False
+    pending = unsaved_datasets()
+    if pending:
+        if not _offer_to_save(
+                "Clear list", pending, "Clear without saving",
+                f"Clear all {len(keys)} dataset(s) from the list?\n\n"
+                f"{len(pending)} of them were computed in this session and "
+                f"have not been saved to a file of your own:"):
+            return False
+    else:
+        answer = QMessageBox.question(
+            win, "Clear list",
+            f"Clear all {len(keys)} dataset(s) from the list?\n\n"
+            f"Nothing is unsaved, and files on disk are not deleted.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return False
+    _remove_keys(list(loaded_items))
+    ui.FilePathListWidget.clear()
+    ui.statusbar.showMessage("List cleared")
+    return True
+
+
+# --------------------------------------------------------------------------
+# Right-click: rename, save, remove
+# --------------------------------------------------------------------------
+def selected_keys():
+    """Identities of every highlighted row, in list order."""
+    return [item.data(QtCore.Qt.UserRole)
+            for item in ui.FilePathListWidget.selectedItems()]
+
+
+def _row_for_key(key):
+    for i in range(ui.FilePathListWidget.count()):
+        item = ui.FilePathListWidget.item(i)
+        if item.data(QtCore.Qt.UserRole) == key:
+            return item
+    return None
+
+
+def _row_label(key) -> str:
+    """The text a row should carry, from its record. Kept in one place so
+    renaming and listing cannot drift apart."""
+    record = loaded_items[key]
+    label = f"{record['name']}   [{record['kind']}]"
+    if record.get("memory") is None and record.get("entry"):
+        siblings = [k for k in loaded_items if k[0] == key[0]]
+        if len(siblings) > 1:
+            label = (f"{record['name']}  \u00b7  {record['entry']}   "
+                     f"[{record['kind']}]")
+    for tag in record.get("tags") or ():
+        label += f"  \u2039{tag}\u203a"
+    return label
+
+
+def _tags_tip(key) -> str:
+    """The tooltip line that explains a row's tags (empty without any)."""
+    tags = (loaded_items.get(key) or {}).get("tags") or ()
+    if "smoothed" in tags:
+        return ("\nsmoothed: made from smoothed data -- the second "
+                "derivative and curvature panels need no pre-smoothing")
+    return ""
+
+
+def _refresh_row_tags(key, data):
+    """Read a row's tags off its dataset once it is loaded -- a file saved
+    from a smoothed result says so in its history -- and show them."""
+    record = loaded_items.get(key)
+    if record is None or data is None:
+        return
+    tags = process_tools.tags_of(data)
+    if tags == list(record.get("tags") or ()):
+        return
+    record["tags"] = tags
+    item = _row_for_key(key)
+    if item is not None:
+        item.setText(_row_label(key))
+
+
+def show_list_menu(position):
+    """The list's right-click menu: the three ways of opening the selected
+    rows (the dataset itself, or a map's slit or scan-axis cut).
+
+    An entry that does not fit the selection -- the wrong kind of dataset,
+    or the wrong number of rows -- is greyed out, with a tooltip saying why
+    (see ui.launcher.list_actions). With several rows selected, one that does not fit
+    is enough.
+    """
+    from arpes_viewer.ui.launcher.list_actions import availability
+
+    keys = selected_keys()
+    rows = [(label_for(k), loaded_items.get(k, {}).get("kind")) for k in keys]
+    from arpes_viewer.ui.viewers.functions_menu import instant_tooltips
+
+    menu = instant_tooltips(QMenu(ui.FilePathListWidget))
+    actions = {}
+
+    def add(name, text, tooltip=""):
+        action = QAction(text, menu)
+        menu.addAction(action)
+        enabled, reason = availability(name, rows)
+        action.setEnabled(enabled)
+        if reason or tooltip:
+            action.setToolTip(reason or tooltip)
+        actions[action] = name
+        return action
+
+    # Only the ways of opening the rows. Describing, logging, naming,
+    # saving and removing them are the tool panel's Datasets box, analysis
+    # and filters its tools, and the operations that change the data
+    # (combining included) the buttons under the list -- all always in
+    # sight, so nothing is only here.
+    add("open", "Open", "Open the dataset in its own viewer window "
+        "(the same as double-clicking the row).")
+    add("slit_cut", "Open slit cut" if len(keys) <= 1
+        else f"Open {len(keys)} slit cuts",
+        "The map's slit-angle vs energy cut, in a window of its own, "
+        "without opening the map's constant-energy contour.")
+    # The map's other axis is whatever was scanned -- a deflector angle, a
+    # manipulator rotation, a photon energy -- so it is named for that.
+    add("deflector_cut", "Open scan-axis cut" if len(keys) <= 1
+        else f"Open {len(keys)} scan-axis cuts",
+        "The cut along the map's scanned axis (deflector angle, manipulator "
+        "rotation, or photon energy for a kz map) vs energy, in a window of "
+        "its own, without opening the map's constant-energy contour.")
+    global last_list_menu
+    last_list_menu = menu          # for the tests: what was offered, and how
+    chosen = menu.exec_(ui.FilePathListWidget.mapToGlobal(position))
+    if chosen is None or not chosen.isEnabled():
+        return
+    run_list_action(actions.get(chosen))
+
+
+#: The last right-click menu built, kept for the tests.
+last_list_menu = None
+
+
+def _momentum_cut(key):
+    """Whether the row is a cut in momentum, which the MDC fit needs; None
+    when that is not known. Worked out once per row and kept with it: for a
+    computed cut from the data in hand, for a cut in a file by reading its
+    labels -- only those, the values stay on disk -- the first time it is
+    the one row selected."""
+    from arpes_viewer.ui.panels.fit import momentum_cut_reason
+
+    record = loaded_items.get(key)
+    if record is None or str(record.get("kind", "")).lower() != "cut":
+        return None
+    if "momentum" not in record:
+        data = record.get("memory")
+        try:
+            if data is not None:
+                record["momentum"] = momentum_cut_reason(data) == ""
+            else:
+                read = NxsData.acquire(record["path"], record["entry"])
+                try:
+                    record["momentum"] = momentum_cut_reason(read) == ""
+                finally:
+                    read.close()
+        except Exception:                                  # noqa: BLE001
+            record["momentum"] = None
+    return record["momentum"]
+
+
+def _row_info(key, look_inside: bool = True):
+    """``(name, kind label[, momentum])`` for list_actions.availability."""
+    name, kind = label_for(key), loaded_items.get(key, {}).get("kind")
+    if not look_inside:
+        return (name, kind)
+    return (name, kind, _momentum_cut(key))
+
+
+def update_tool_buttons():
+    """Light up the buttons under the list and in the tool panel that the
+    selection can take, and grey out the rest -- with the reason in the
+    tooltip, under what the button does. From the list's records only, like
+    the right-click menu, so it costs nothing on every click."""
+    from arpes_viewer.ui.launcher.list_actions import availability
+
+    keys = selected_keys()
+    rows = [_row_info(k, look_inside=len(keys) == 1) for k in keys]
+    for name, button in {**ui.ListButtons, **ui.ToolButtons,
+                         **ui.DatasetButtons}.items():
+        enabled, reason = availability(name, rows)
+        button.setEnabled(enabled)
+        description = button.property("description") or ""
+        button.setToolTip(description if enabled
+                          else f"{description}\n\n{reason}".strip())
+
+
+def run_list_action(name):
+    """Do what a right-click menu entry, or a button under the list or in
+    the tool panel, names."""
+    handlers = {
+        "open": open_selected,
+        "slit_cut": lambda: open_map_cuts("slit"),
+        "deflector_cut": lambda: open_map_cuts("deflector"),
+        "info": show_information,
+        "rename": rename_selected,
+        "figure": plot_selected_as_figure,
+        "stack": open_stack_plot,
+        "mdcfit": lambda: open_curve_fit("mdc"),
+        "edcfit": lambda: open_curve_fit("edc"),
+        "corelevel": open_core_level_check,
+        "slices3d": lambda: open_volume_view("slices"),
+        "notch3d": lambda: open_volume_view("notch"),
+        "stack3d": lambda: open_volume_view("stack"),
+        "projection3d": lambda: open_volume_view("projection"),
+        "arithmetic": open_cut_arithmetic,
+        "combine": combine_selected,
+        "truncate": lambda: open_data_operations("truncate"),
+        "compress": lambda: open_data_operations("compress"),
+        "normalise": lambda: open_data_operations("normalise"),
+        "smooth": lambda: open_processing("smooth"),
+        "derivative": lambda: open_processing("derivative"),
+        "curvature": lambda: open_processing("curvature"),
+        "symmetry": lambda: open_processing("symmetry"),
+        "background": lambda: open_processing("background"),
+        "degrid": open_degrid,
+        "fermi": open_fermi_fit,
+        "kmap": lambda: open_k_conversion("map"),
+        "kcut": lambda: open_k_conversion("cut"),
+        "kzconv": open_kz_conversion,
+        "bz": open_brillouin_zone,
+        "slicefig": open_slice_series,
+        "kzalign": open_kz_alignment,
+        "save": save_selected,
+        "sumrepeat": open_sum_repeats,
+        "ridge": open_ridge_detection,
+        "tbfit": open_tight_binding,
+        "detcorr": open_detector_corrections,
+        "lattice": open_crystal_structure,
+        "bands": open_calculated_bands,
+        "log": show_operations_log,
+        "explogformat": open_exp_log_format,
+        "explog": record_exp_log,
+        "remove": remove_selected,
+    }
+    handler = handlers.get(name)
+    return handler() if handler is not None else None
+
+
+def plot_selected_as_figure():
+    """Every selected dataset as one panel of a figure.
+
+    The MATLAB tool's ``massplot_2D``, minus its guesswork: each panel keeps
+    its own axes and labels, and anything that is not a plain 2-D dataset is
+    reported rather than silently squeezed into one.
+    """
+    from arpes_viewer.ui.panels.figure import FigureWindow, panel_from_dataset
+
+    keys = selected_keys()
+    if not keys:
+        # A blank page of empty panels, (a) to (d), to fill one by one.
+        window = figure_window([])
+        ui.statusbar.showMessage("A blank figure: select a panel and load "
+                                 "a dataset or a picture into it")
+        return window
+    panels, problems = [], []
+    QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+    try:
+        for key in keys:
+            record = loaded_items[key]
+            data = record.get("memory")
+            opened = data is None
+            if opened:
+                try:
+                    data = NxsData.acquire(record["path"], record["entry"])
+                except Exception as exc:
+                    problems.append(f"{record['name']}: {exc}")
+                    continue
+            try:
+                panels.append(panel_from_dataset(data, record["name"]))
+            except Exception as exc:
+                problems.append(f"{record['name']}: {exc}")
+            finally:
+                if opened:
+                    data.close()
+    finally:
+        QApplication.restoreOverrideCursor()
+
+    if not panels:
+        QMessageBox.warning(win, "Figure composer",
+                            "Nothing could be plotted:\n" + "\n".join(problems))
+        return None
+    window = figure_window(panels)
+    if problems:
+        ui.statusbar.showMessage(
+            f"{len(panels)} panel(s) plotted, {len(problems)} skipped")
+    else:
+        ui.statusbar.showMessage(f"{len(panels)} panel(s) plotted")
+    return window
+
+
+#: figure composers opened from the launcher, kept alive
+figure_windows = []
+
+
+def open_saved_figure(path):
+    """A figure saved by the composer (.afig), open again to edit."""
+    from arpes_viewer.ui.panels.figure import open_figure_file
+
+    try:
+        window = open_figure_file(path, dataset_source={
+            "entries": listed_datasets, "loader": load_dataset})
+    except Exception as exc:
+        QMessageBox.warning(win, "Open a figure", f"Could not open {path}:\n{exc}")
+        return None
+    window.closed.connect(lambda w: figure_windows.remove(w)
+                          if w in figure_windows else None)
+    figure_windows.append(window)
+    return window
+
+
+def figure_window(panels):
+    from arpes_viewer.ui.panels.figure import FigureWindow
+
+    window = FigureWindow(panels, "Figure",
+                          dataset_source={"entries": listed_datasets,
+                                          "loader": load_dataset})
+    window.closed.connect(lambda w: figure_windows.remove(w)
+                          if w in figure_windows else None)
+    figure_windows.append(window)
+    window.show()
+    return window
+
+
+def rename_selected():
+    """Rename one dataset. This is the browser's own label for it -- the
+    file on disk is untouched, and a converted k-map has no file anyway."""
+    keys = selected_keys()
+    if len(keys) != 1:
+        return
+    key = keys[0]
+    record = loaded_items[key]
+    new_name, ok = QInputDialog.getText(
+        win, "Rename dataset", "Name:", text=record["name"])
+    new_name = (new_name or "").strip()
+    if not ok or not new_name or new_name == record["name"]:
+        return
+    if new_name in listed_names():
+        QMessageBox.warning(win, "Rename",
+                            f"'{new_name}' is already in the list.")
+        return
+
+    record["name"] = new_name
+    memory = record.get("memory")
+    if memory is not None and hasattr(memory, "source_label"):
+        memory.source_label = new_name      # keep the dataset's own idea in step
+    item = _row_for_key(key)
+    if item is not None:
+        item.setText(_row_label(key))
+    ui.statusbar.showMessage(f"Renamed to {new_name}")
+
+
+def remove_selected():
+    """Take datasets out of the browser.
+
+    Only the list is touched: a dataset read from a file is simply no longer
+    listed, and the file stays where it is. A converted k-map exists only in
+    this session, so removing it does discard it -- which is why the
+    confirmation says so.
+    """
+    keys = selected_keys()
+    if not keys:
+        return
+    # A computed dataset used to exist only in memory, so removing its row
+    # destroyed it. It now has an auto-saved copy behind it, so the warning
+    # is about *that* copy going, and only for the ones that really have no
+    # other home.
+    computed = [loaded_items[k]["name"] for k in keys
+                if loaded_items[k].get("backing")
+                and not loaded_items[k].get("exported")]
+    unsaved = [loaded_items[k]["name"] for k in keys
+               if loaded_items[k].get("memory") is not None
+               and not loaded_items[k].get("backing")]
+    detail = ""
+    if computed:
+        detail += (f"\n\n{len(computed)} of them were computed in this "
+                   f"session. Their auto-saved copies in the session folder "
+                   f"go too, and they have not been saved anywhere else.")
+    if unsaved:
+        detail += (f"\n\n{len(unsaved)} of them exist only in memory "
+                   f"(too large to auto-save); removing them discards them.")
+    answer = QMessageBox.question(
+        win, "Remove from list",
+        f"Remove {len(keys)} dataset(s) from the list?"
+        f"\n\nFiles on disk are not deleted.{detail}",
+        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+    if answer != QMessageBox.Yes:
+        return
+    _remove_keys(keys)
+
+
+def _remove_keys(keys):
+    """Take these rows out of the list, with their auto-saved copies; no
+    questions asked (the callers ask)."""
+    global current_data, current_key
+    for key in keys:
+        record = loaded_items.pop(key, None)
+        # Taking the row away takes its auto-saved copy with it; leaving the
+        # file behind would fill the session folder with results nothing
+        # refers to any more.
+        if record is not None and record.get("backing"):
+            session.discard(record["backing"])
+        item = _row_for_key(key)
+        if item is not None:
+            ui.FilePathListWidget.takeItem(ui.FilePathListWidget.row(item))
+        if key == current_key:
+            if current_data is not None and record is not None \
+                    and record.get("memory") is None:
+                current_data.close()
+            current_data = None
+            current_key = None
+            fill_data_info(None)
+            if info_window is not None:
+                info_window.TitleLabel.setText("No dataset")
+                info_window.KindLabel.setText("No file selected")
+                fill_info_table({}, {})
+    ui.statusbar.showMessage(f"Removed {len(keys)} dataset(s) from the list")
+
+
+def _dataset_for_saving(key):
+    """Gather one row into the plain form save_dataset writes.
+
+    Loads the dataset if it is not the one on show; a k-map is already in
+    memory. Returns None (with a message) for anything that has no simple
+    axes-and-cube form.
+    """
+    record = loaded_items[key]
+    if record.get("memory") is not None:
+        data = record["memory"]
+    else:
+        try:
+            data = NxsData.acquire(record["path"], record["entry"])
+        except Exception as exc:
+            traceback.print_exc()
+            return None, f"{record['name']}: could not be read ({exc})"
+    try:
+        # nxs_session.scan_to_dict works from loader.nxs_file.AXIS_SLOTS, the
+        # one table that says which axes a kind has -- this used to be a
+        # fifth hand-written copy of it, and the one that quietly wrote a
+        # 4-D spatial scan with only three of its four axes.
+        item = nxs_session.scan_to_dict(data.kind, data.scan, record["name"])
+        # The row's own properties (a Brillouin zone) go into the file too.
+        item["info"] = {**dict(item.get("info") or {}),
+                        **dict(record.get("properties") or {})}
+        # Saving means writing every point, lazy array or not.
+        item["value"] = np.asarray(item["value"])
+        return item, None
+    except ValueError as exc:
+        return None, f"{record['name']}: {exc}"
+    finally:
+        if record.get("memory") is None:
+            data.close()
+
+
+def _rebind_saved_rows(keys, path: str, entries):
+    """Point the rows that were just saved at the file they were saved to,
+    and delete their working copies.
+
+    Two things happen here, and the order matters. The row's identity moves
+    to ``(the file the user chose, the entry inside it)``, so re-opening it
+    later reads *that* file -- and only then is the session copy removed,
+    because deleting it first would leave a row briefly pointing at nothing.
+
+    Without this the session folder accumulated a duplicate of everything
+    already saved, and the copy, not the saved file, stayed the thing the
+    program would re-read.
+    """
+    for key, entry in zip(keys, entries or []):
+        record = loaded_items.get(key)
+        if record is None:
+            continue
+        record["exported"] = True
+        backing = record.get("backing")
+        if not backing:
+            continue                       # read from a file to begin with
+        record["path"] = path
+        record["entry"] = entry
+        record["backing"] = None
+        record["memory"] = None            # re-read from the saved file now
+        session.released(backing, f"{os.path.basename(path)}::{entry}")
+        item = _row_for_key(key)
+        if item is not None:
+            item.setToolTip(f"{record['name']}\nsaved to {path}\n"
+                            f"entry: {entry}\n{record['kind']}")
+
+
+#: The Save dialog's file types: (filter, format, extension).
+SAVE_FORMATS = (
+    ("NeXus files, reopened by this program (*.nxs)", "nxs", ".nxs"),
+    ("Igor text, all datasets in one file (*.itx)", "itx", ".itx"),
+    ("Igor binary wave, one file per dataset (*.ibw)", "ibw", ".ibw"),
+)
+
+
+def save_selected(path=None, fmt=None):
+    """Write the selected datasets to one .nxs file this program can reopen
+    -- or for Igor Pro, as an .itx text file or .ibw binary waves.
+
+    Several datasets go into one file as several entries, so saving a
+    selection and opening the result gives the same rows back. Each keeps
+    the name it has in the list, which is what "Rename..." is for. An Igor
+    export is a copy for another program: the rows keep pointing where they
+    did. ``path`` and ``fmt`` stand in for the file dialog (the tests).
+    """
+    keys = selected_keys()
+    if not keys:
+        return
+    if path is None:
+        folder = ui.FilePathLE.displayText() or os.path.expanduser("~")
+        default = loaded_items[keys[0]]["name"] if len(keys) == 1 else "datasets"
+        default = "".join(ch for ch in default if ch.isalnum() or ch in "._- ")
+        path, chosen = QFileDialog.getSaveFileName(
+            win, "Save dataset(s)", os.path.join(folder, f"{default}.nxs"),
+            ";;".join(f for f, _, _ in SAVE_FORMATS))
+        if not path:
+            return
+        fmt = next((code for f, code, _ in SAVE_FORMATS if f == chosen), None)
+    if fmt is None:
+        fmt = next((code for _, code, ext in SAVE_FORMATS
+                    if path.lower().endswith(ext)), "nxs")
+    extension = next(ext for _, code, ext in SAVE_FORMATS if code == fmt)
+    if not path.lower().endswith(extension):
+        path += extension
+
+    payload, problems, saved_keys = [], [], []
+
+    def gather(report):
+        # reading every dataset to be written: the slow half of a save
+        for index, key in enumerate(keys):
+            report(0.5 * index / len(keys), f"Reading {label_for(key)} "
+                                            f"({index + 1} of {len(keys)})")
+            item, problem = _dataset_for_saving(key)
+            if item is not None:
+                payload.append(item)
+                # In step with `payload`, so the entry names save_dataset
+                # reports back can be matched to the rows that produced them.
+                saved_keys.append(key)
+            if problem:
+                problems.append(problem)
+        if not payload:
+            return None
+        if fmt == "nxs":
+            def progress(done, total, label):
+                report(0.5 + 0.5 * done / max(total, 1),
+                       f"Writing {label or os.path.basename(path)} "
+                       f"({min(done + 1, total)} of {total})")
+            return save_dataset(path, payload, progress=progress)
+        from arpes_viewer.tools.output import igor
+        report(None, f"Writing {os.path.basename(path)}")
+        return igor.write_datasets(path, payload, fmt)
+
+    try:
+        if nxs_jobs.busy():                     # another job: here, as before
+            outcome = gather(lambda *_a, **_k: None)
+        else:
+            outcome = nxs_jobs.run_blocking(win, f"Saving {os.path.basename(path)}",
+                                            gather, cancellable=False)
+    except Exception as exc:
+        traceback.print_exc()
+        QMessageBox.warning(win, "Save", f"Could not write the file:\n{exc}")
+        return
+    if not payload:
+        QMessageBox.warning(win, "Save",
+                            "Nothing could be saved:\n" + "\n".join(problems))
+        return
+    entries = written = outcome
+
+    if fmt == "nxs":
+        _rebind_saved_rows(saved_keys, path, entries)
+        message = f"Saved {len(payload)} dataset(s) to {os.path.basename(path)}"
+    else:
+        message = (f"Wrote {len(payload)} dataset(s) for Igor Pro: "
+                   + ", ".join(os.path.basename(p) for p in written[:4])
+                   + (" ..." if len(written) > 4 else ""))
+    if problems:
+        message += f" ({len(problems)} skipped)"
+        QMessageBox.information(win, "Save", message + ":\n" + "\n".join(problems))
+    ui.statusbar.showMessage(message)
+    return path
+
+
+# --------------------------------------------------------------------------
+# Metadata (single click)
+# --------------------------------------------------------------------------
+def load_selected(item=None):
+    """Load the highlighted dataset and show its metadata. Returns the
+    NxsData (or KMapData), or None if it could not be read.
+
+    Metadata is per entry, not per file: five Maps in one file were recorded
+    at different times with different settings, so selecting a row reads
+    that entry's own metadata.
+    """
+    global current_data, current_key
+    key = selected_key()
+    if key is None:
+        return None
+    record = loaded_items.get(key)
+    if record is None:
+        return None
+    if (record.get("memory") is None and not record.get("backing")
+            and not os.path.isfile(record["path"])):
+        ui.statusbar.showMessage(f"File no longer available: {key[0]}")
+        return None
+
+    current_key = key
+    if current_data is not None:
+        current_data.close()      # release the previous dataset's claim
+        current_data = None
+    try:
+        current_data = load_dataset(key)
+    except Exception as exc:
+        traceback.print_exc()
+        current_data = None
+        ensure_info_window().KindLabel.setText("Load error")
+        fill_data_info(None)
+        fill_info_table({}, {})
+        ui.statusbar.showMessage(f"Failed to load {current_label()}: {exc}")
+        return None
+
+    _refresh_row_tags(key, current_data)
+    info = ensure_info_window()
+    info.TitleLabel.setText(current_label())
+    info.KindLabel.setText(f"kind: {current_data.kind}")
+    fill_data_info(current_data)
+    fill_info_table(current_data.scan.info, current_data.scan.fourd_info)
+    ui.statusbar.showMessage(f"{current_label()}: {current_data.kind} "
+                              f"-- double-click to open it")
+    return current_data
+
+
+#: Which axes each kind puts in the X / Y / Z / E columns of the Data
+#: Information panel, as attribute names on the scan, and what to call them.
+#: A cut is (angle, energy); a map is its two in-plane axes (angles, or
+#: momenta once converted) plus energy; a spatial scan is the two sample
+#: coordinates, then the analyser angle and the energy -- which is why it is
+#: the one kind that needs the fourth column.
+DATA_INFO_AXES = {
+    "cut": (("x", "angle"), ("y", "energy")),
+    "map": (("x", "angle/k"), ("k", "angle/k"), ("z", "energy")),
+    "k_map": (("x", "k"), ("k", "k"), ("z", "energy")),
+    "kz_map": (("x", "photon energy"), ("k", "angle/k"), ("z", "energy")),
+    "kz_map_k": (("x", "kz"), ("k", "k"), ("z", "energy")),
+    "spem_4d": (("x", "spatial"), ("y", "spatial"), ("k", "angle"), ("z", "energy")),
+    "spem_1d": (("x", "spatial"), ("k", "angle"), ("z", "energy")),
+    "edc": (("x", "energy"), ("y", "channel")),
+    "mdc": (("x", "angle/k"), ("y", "channel")),
+    "spin_edc": (("x", "energy"), ("y", "channel")),
+}
+
+
+def ensure_info_window():
+    """The information window, made the first time it is asked for.
+
+    It is not part of the launcher's layout: information is read on
+    request, and a window of its own can sit beside a viewer, stay open
+    while other files are browsed, or be closed and forgotten.
+    """
+    global info_window
+    if info_window is None:
+        info_window = main_window_ui.InfoWindow(win)
+        info_window.InfoFilterLE.textChanged.connect(apply_info_filter)
+        info_window.ExportMetaButton.clicked.connect(ExportMetadataCsv)
+    return info_window
+
+
+def show_information():
+    """Datasets -> Experiment info: read the highlighted dataset and put
+    what it is in front of the user."""
+    window = ensure_info_window()
+    if load_selected() is None:
+        return None
+    window.show()
+    window.raise_()
+    window.activateWindow()
+    return window
+
+
+def fill_data_info(data):
+    """Describe the dataset's extent in the Data Information panel: the
+    first and last value, the number of points and the step, per axis.
+
+    The column headers carry the axis's own label, so "Z" never has to be
+    guessed at -- on a map it is the energy, on a spatial scan the analyser
+    angle, and the panel says so.
+    """
+    for cell in ui.DataInfoCells.values():
+        cell.setText("")
+    ui.DataInfoBox.setTitle("Data Information" if data is None
+                            else f"Data Information \u2014 {current_label()}")
+    columns = DATA_INFO_AXES.get(getattr(data, "kind", ""), ()) if data is not None else ()
+    labels = getattr(getattr(data, "scan", None), "labels", {}) or {}
+    for index, header in enumerate(ui.DataInfoHeaders):
+        name = ("X", "Y", "Z", "E")[index]
+        if index < len(columns):
+            attribute, role = columns[index]
+            label = labels.get(attribute) or role
+            # A spatial axis is already called "X (mm)"; repeating the column
+            # letter above it would just say X twice.
+            header.setText(label if label.startswith(name + " ")
+                           else f"{name}\n{label}")
+            header.setVisible(True)
+        else:
+            header.setText(name)
+            header.setVisible(index < 3)      # X/Y/Z always, E only for 4D
+        for row in ("min", "max", "num", "step"):
+            ui.DataInfoCells[(row, index)].setVisible(
+                index < max(3, len(columns)))
+    if data is None:
+        return
+    for index, (attribute, _role) in enumerate(columns):
+        summary = axis_summary(getattr(data.scan, attribute, None))
+        if summary is None:
+            continue
+        lo, hi, num, step = summary
+        for row, value in (("min", f"{lo:.6g}"), ("max", f"{hi:.6g}"),
+                           ("num", str(num)), ("step", f"{step:.6g}")):
+            ui.DataInfoCells[(row, index)].setText(value)
+
+
+def fill_info_table(info: dict, fourd_info: dict):
+    global current_info_rows
+    current_info_rows = ([(k, v) for k, v in info.items()]
+                         + [(f"Motor.{k}", v) for k, v in fourd_info.items()])
+    apply_info_filter(ensure_info_window().InfoFilterLE.displayText())
+
+
+def apply_info_filter(pattern: str):
+    pattern = (pattern or "").strip().lower()
+    rows = [(k, v) for k, v in current_info_rows
+            if not pattern or pattern in str(k).lower() or pattern in str(v).lower()]
+    table = ensure_info_window().FileInfoTW
+    table.setRowCount(len(rows))
+    for i, (key, value) in enumerate(rows):
+        table.setItem(i, 0, QTableWidgetItem(str(key)))
+        table.setItem(i, 1, QTableWidgetItem(str(value)))
+    table.resizeColumnsToContents()
+
+
+# --------------------------------------------------------------------------
+# Opening viewers (double click)
+# --------------------------------------------------------------------------
+def open_selected(item=None):
+    """Open the highlighted dataset in its own viewer window -- that entry
+    only, even when its file holds five more beside it."""
+    key = selected_key()
+    if key is None:
+        return None
+    # A map whose cut was opened from the list already has its contour,
+    # kept off screen: show that one rather than open a second.
+    hidden = next((w for w in viewer_windows
+                   if getattr(w, "_list_key", None) == key
+                   and isinstance(w, viewer_windows_module.ContourWindow)
+                   and not w.isVisible()), None)
+    if hidden is not None:
+        hidden.show_map()
+        return hidden
+    if current_data is None or key != current_key:
+        if load_selected() is None:
+            return None
+    record = loaded_items[key]
+
+    # A reference of its own, so this window's lifetime is independent of
+    # the browser selection and of any other window on the same file. A
+    # dataset computed here is handed over as it stands, or re-read from the
+    # copy it was auto-saved to if the budget has since dropped it.
+    window_data = load_dataset(key)
+    if window_data is None:
+        return None
+
+    window = viewer_windows_module.open_viewer(
+        window_data, current_label(), default_colormap, default_flip)
+    if window is None:
+        window_data.close()
+        ui.statusbar.showMessage(
+            f"'{current_label()}' has no view: unsupported layout "
+            f"(case {current_data.scan.info.get('_case')}, "
+            f"group {current_data.scan.info.get('_group')})")
+        return None
+
+    _adopt_viewer(window, key)
+    window.closed.connect(_forget_viewer)
+    viewer_windows.append(window)
+    window.show()
+    ui.statusbar.showMessage(
+        f"Opened {current_label()} ({len(viewer_windows)} window(s) open)")
+    return window
+
+
+def open_map_cuts(which: str):
+    """Open the slit (``"slit"``) or deflector (``"deflector"``) cut of every
+    selected map, straight from the list, without its contour on screen.
+
+    A map's cut window is a view of its contour -- it takes its position
+    from the contour's cursor and its tools act on the whole map -- so the
+    contour is still made, just not shown (Functions -> "Show the map"
+    brings it up), and it closes itself once its last cut window is closed.
+    A map whose contour is already open gets the cut from that contour.
+    Returns the cut windows opened.
+    """
+    from arpes_viewer.ui.launcher.list_actions import availability
+
+    keys = selected_keys()
+    rows = [(label_for(k), loaded_items.get(k, {}).get("kind")) for k in keys]
+    enabled, reason = availability(
+        "slit_cut" if which == "slit" else "deflector_cut", rows)
+    if not enabled:
+        QMessageBox.information(win, "Open a map's cut", reason)
+        return []
+    opened = []
+    for key in keys:
+        contour = map_contour(key)
+        if contour is None:
+            continue
+        cut = contour.open_cut(which)
+        if cut is not None:
+            cut.raise_()
+            opened.append(cut)
+    if opened:
+        ui.statusbar.showMessage(
+            f"Opened {len(opened)} {'slit' if which == 'slit' else 'scan-axis'} "
+            f"cut(s)")
+    return opened
+
+
+def map_contour(key):
+    """The contour window of a listed map: the one already open, or a new
+    one kept off screen -- a map's cut windows and its tools hang off it.
+    None (after saying why) if the map cannot be read."""
+    contour = next((w for w in viewer_windows
+                    if getattr(w, "_list_key", None) == key
+                    and isinstance(w, viewer_windows_module.ContourWindow)),
+                   None)
+    if contour is not None:
+        return contour
+    try:
+        data = load_dataset(key)
+    except Exception as exc:                                # noqa: BLE001
+        QMessageBox.warning(win, "Open a map",
+                            f"{label_for(key)} could not be read: {exc}")
+        return None
+    contour = viewer_windows_module.open_viewer(
+        data, label_for(key), default_colormap, default_flip)
+    if not isinstance(contour, viewer_windows_module.ContourWindow):
+        if contour is not None:
+            contour.close()
+        else:
+            data.close()
+        return None
+    _adopt_viewer(contour, key)
+    contour.closed.connect(_forget_viewer)
+    viewer_windows.append(contour)
+    return contour
+
+
+def open_fermi_fit():
+    """The Fermi edge fit of the selected cut or map, with the picture it
+    fits beside it: the cut in its viewer, or a map's slit cut, whose slider
+    picks which cut is fitted. The fit and that window are tied together --
+    closing either closes the other."""
+    key = selected_key()
+    if key is None:
+        return None
+    kind = str(loaded_items.get(key, {}).get("kind", "")).lower()
+    if kind == "cut":
+        window = open_selected()
+    else:
+        cuts = open_map_cuts("slit")
+        window = cuts[0] if cuts else None
+    if window is None or not hasattr(window, "open_fermi_fit"):
+        return None
+    return window.open_fermi_fit(bound=True)
+
+
+def _window_for_tool(key):
+    """A fresh viewer of the row, showing only its picture (no Functions,
+    no cut buttons): what a conversion picks Γ on, and nothing to wander
+    off with. None if it cannot be opened."""
+    try:
+        data = load_dataset(key)
+    except Exception as exc:                                # noqa: BLE001
+        QMessageBox.warning(win, "Open", f"{label_for(key)} could not be read: {exc}")
+        return None
+    window = viewer_windows_module.open_viewer(
+        data, label_for(key), default_colormap, default_flip)
+    if window is None:
+        data.close()
+        return None
+    _adopt_viewer(window, key)
+    window.closed.connect(_forget_viewer)
+    viewer_windows.append(window)
+    window.show_picture_only()
+    window.show()
+    return window
+
+
+def open_k_conversion(what: str = "map"):
+    """Convert the selected angle map (``"map"``) or cut (``"cut"``) to
+    momentum. The dataset opens in a window of its own showing only its
+    picture -- the map's constant-energy contour, where the readout cursor
+    picks Γ, or the cut, where a vertical line does -- and that window and
+    the conversion dialog close together. The dialog starts from the last
+    conversion of data of the same size."""
+    key = selected_key()
+    if key is None:
+        return None
+    window = _window_for_tool(key)
+    if window is None:
+        return None
+    if what == "cut":
+        blocked = viewer_windows_module.cut_k_conversion_blocked(window.data)
+        if blocked:
+            window.close()
+            QMessageBox.information(win, "Cut k conversion",
+                                    f"This cut cannot be converted: {blocked}.")
+            return None
+        return window.open_cut_k_conversion(bound=True)
+    if not isinstance(window, viewer_windows_module.ContourWindow):
+        window.close()
+        return None
+    return window.open_k_conversion(bound=True)
+
+
+def open_brillouin_zone():
+    """Overlay a Brillouin zone on the selected map in momentum (a k-map,
+    or a converted kz map). Opened like the k conversion: the contour on
+    its own, showing only its picture, tied to the dialog. Once plotted,
+    the zone belongs to the dataset -- its viewers can show it again with
+    their "Brillouin zone" tick box, and its exports can draw it."""
+    key = selected_key()
+    if key is None:
+        return None
+    window = _window_for_tool(key)
+    if window is None:
+        return None
+    if not isinstance(window, viewer_windows_module.ContourWindow):
+        window.close()
+        return None
+    return window.open_brillouin_zone(bound=True)
+
+
+def open_slice_series():
+    """A page of 2-D slices through the selected map -- constant-energy
+    contours at a series of energies, or cuts at a series of angles -- as one
+    figure (the contour's own dialog, see ui.panels.figure.SliceSeriesDialog).
+    Not the 3-D slices: this is flat panels laid out for a paper. The figure
+    is a window of its own; a contour opened only to make it is closed."""
+    from arpes_viewer.ui.viewers.windows import keep_alive
+
+    key = selected_key()
+    if key is None:
+        return None
+    contour = map_contour(key)
+    if contour is None:
+        return None
+    made_for_it = not contour.isVisible()
+    try:
+        window = contour.open_slice_figure()
+    finally:
+        if made_for_it and not contour.cut_windows:
+            contour.close()
+    if window is not None:
+        keep_alive(window)
+    return window
+
+
+def open_kz_conversion():
+    """Convert the selected photon-energy scan to (k_z, k_par). Its dialog
+    has its own preview, so the map is not put on screen for it; the
+    dialog starts from the last conversion of a scan of the same size."""
+    key = selected_key()
+    if key is None:
+        return None
+    contour = map_contour(key)
+    if contour is None:
+        return None
+    if contour.data.kind != "kz_map":
+        QMessageBox.information(win, "kz conversion",
+                                "Only a photon-energy scan (kz map) converts to "
+                                "(k_z, k_par).")
+        return None
+    dialog = contour.open_kz_conversion()
+    if not contour.isVisible():
+        # Made for the dialog: it has nothing to do once the dialog is gone.
+        dialog.finished.connect(lambda *_: (not contour.isVisible())
+                                and contour.close())
+    return dialog
+
+
+def open_kz_alignment():
+    """Align the Fermi levels of the selected photon-energy scan (see
+    ui.panels.kzmap): the panel and the slit cut it picks its box on, tied
+    together like the Fermi edge fit."""
+    key = selected_key()
+    if key is None:
+        return None
+    contour = map_contour(key)
+    if contour is None:
+        return None
+    if contour.data.kind != "kz_map":
+        QMessageBox.information(
+            win, "Align Fermi levels",
+            "Only a photon-energy scan (kz map) is aligned this way, and only "
+            "before its conversion to momentum.")
+        return None
+    dialog = contour.open_kz_processing()
+    cut = getattr(dialog, "cut_window", None)
+    if cut is not None:
+        dialog.finished.connect(lambda *_: cut.close())
+        cut.closed.connect(lambda *_: dialog.close())
+    return dialog
+
+
+def _adopt_viewer(window, key=None):
+    """Hook a new viewer up to the list it came from.
+
+    A viewer can compute datasets of its own -- a k-space map, an
+    arbitrary-direction cut, a saved slice, a Fermi-corrected map. They land
+    in this list under whatever name their dialog was given, the dialog asks
+    which names are taken so its default does not collide, and a viewer that
+    wants to show its result straight away opens it through here, so the new
+    window is registered exactly like a double-clicked one.
+    """
+    window._name_source = listed_names
+    window._dataset_opener = open_dataset
+    # So a viewer can work from *another* listed dataset -- the Fermi-surface
+    # correction fits a gold reference, which is a different measurement.
+    window._dataset_entries = listed_datasets
+    window._dataset_loader = load_dataset
+    # The row it came from -- the row, not the object: a cut read from a
+    # file is re-read on every load, so the same row hands back a different
+    # object each time.
+    window._list_key = key
+    # What a viewer learns about its dataset that should stay with the row
+    # (a Brillouin zone overlaid on it): kept on the record and put back on
+    # the dataset every time it is loaded.
+    window._set_row_properties = (
+        lambda properties, key=key: _set_row_properties(key, properties))
+    if hasattr(window, "kMapCreated"):
+        window.kMapCreated.connect(
+            lambda data: add_memory_dataset(data, getattr(data, "source_label", "k map")))
+    if hasattr(window, "datasetCreated"):
+        window.datasetCreated.connect(
+            lambda data: add_memory_dataset(data,
+                                            getattr(data, "source_label", "computed")))
+
+
+def listed_datasets():
+    """(label, key) for every row, for a viewer that needs to work from
+    another dataset."""
+    return [(f"{label_for(key)}   [{loaded_items[key]['kind']}]", key)
+            for key in loaded_items]
+
+
+def _set_row_properties(key, properties):
+    """Keep ``properties`` (``scan.info`` keys; None removes one) with a
+    row, so they are on its dataset however often it is re-read, and in
+    the file it is saved to."""
+    record = loaded_items.get(key)
+    if record is None:
+        return
+    kept = record.setdefault("properties", {})
+    for name, value in properties.items():
+        if value is None:
+            kept.pop(name, None)
+        else:
+            kept[name] = value
+
+
+def _with_row_properties(key, data):
+    """``data`` with its row's properties on it (see _set_row_properties)."""
+    record = loaded_items.get(key) or {}
+    if data is not None and record.get("properties"):
+        info = data.scan.info
+        for name, value in record["properties"].items():
+            info[name] = value
+    return data
+
+
+def load_dataset(key):
+    """The dataset behind one row, loaded if it is not already in memory,
+    with the row's own properties on it (_set_row_properties).
+
+    Three cases, in this order:
+
+    * still resident -- hand it back;
+    * computed earlier and auto-saved -- re-read it from the session folder,
+      which is what lets the memory budget drop a cube it is not using and
+      what makes a row cost a path rather than a cube;
+    * read from a file -- open the file, as always.
+    """
+    return _with_row_properties(key, _load_dataset(key))
+
+
+def _load_dataset(key):
+    record = loaded_items[key]
+    if record.get("memory") is not None:
+        return record["memory"]
+
+    # Whatever comes back is the caller's own reference, to close once.
+    backing = record.get("backing")
+    if backing:
+        cached = session.budget.get(backing)
+        if cached is not None:
+            return cached.retain()
+        data = _reload_backing(record, backing)
+        if data is not None:
+            return data
+
+    options = record.get("options")
+    return _acquire(record["path"], record["entry"], options)
+
+
+def _acquire(path, entry, options):
+    """Open a file, on the worker thread when the reader says it will be slow.
+
+    Most readers open a file with one call into HDF5 and there is nothing to
+    report or to wait for. A few genuinely take a while -- assembling a
+    CASSIOPEE folder means parsing a hundred text files -- and those are the
+    ones that declare a ``progress`` argument. Those go through
+    :func:`ui.common.jobs.run_blocking`, so the window keeps painting and there is a
+    bar and a Cancel instead of a frozen panel.
+
+    The distinction is the reader's own: a loader that can report progress is
+    one that expected to need to. Everything else keeps the direct path it
+    has always had, which is both faster and a smaller thing to get wrong.
+    """
+    loader = None
+    try:
+        if options is not None and getattr(options, "loader", None):
+            loader = nxs_loaders.get_loader(options.loader)
+        else:
+            loader = nxs_loaders.detect(path)
+    except Exception:                                      # noqa: BLE001
+        loader = None
+
+    slow = loader is not None and nxs_loaders._accepts_progress(loader.load)
+    if not slow or nxs_jobs.busy():
+        return NxsData.acquire(path, entry, options=options)
+
+    title = f"Reading {os.path.basename(path)}"
+
+    def work(report):
+        def progress(done, total, label):
+            report(done / max(1, total), f"{label}  ({done + 1} of {total})")
+        return NxsData.acquire(path, entry, options=options, progress=progress)
+
+    try:
+        return nxs_jobs.run_blocking(win, title, work)
+    except nxs_jobs.JobCancelled:
+        # Raised rather than returned as None: every caller of load_dataset
+        # goes straight on to use the dataset, and all but one of them guard
+        # with try/except rather than a None check. An exception is the
+        # contract they already handle; a None would be an AttributeError
+        # one line later.
+        ui.statusbar.showMessage("Loading cancelled")
+        raise RuntimeError("loading was cancelled") from None
+
+
+def _reload_backing(record, backing):
+    """Re-read a derived dataset from the file it was auto-saved to.
+
+    Returns a :class:`NxsData` over the session file rather than the
+    original :class:`MemoryData`: the two present the same interface to
+    every viewer, and this one keeps the array on disk until it is used.
+    """
+    if not os.path.isfile(backing):
+        return None
+    try:
+        data = NxsData.acquire(backing, None)          # the caller's reference
+    except Exception as exc:                               # noqa: BLE001
+        traceback.print_exc()
+        ui.statusbar.showMessage(
+            f"Could not re-read '{record['name']}' from its auto-saved copy: {exc}")
+        return None
+    session.budget.put(backing, data)                  # ...and the budget's own
+    return data
+
+
+def open_dataset(data):
+    """Open a dataset object that is already in the list (a viewer has just
+    computed it) in its own viewer window."""
+    key = None
+    for candidate, record in loaded_items.items():
+        if record.get("memory") is data:
+            key = candidate
+            break
+    if key is None:
+        add_memory_dataset(data, getattr(data, "source_label", "computed"))
+        key = selected_key()
+    label = loaded_items[key]["name"] if key in loaded_items else "computed"
+    window = viewer_windows_module.open_viewer(data, label, default_colormap, default_flip)
+    if window is None:
+        return None
+    _adopt_viewer(window, key)
+    window.closed.connect(_forget_viewer)
+    viewer_windows.append(window)
+    window.show()
+    return window
+
+
+def open_data_operations(operation="truncate"):
+    """Truncate / self-normalise / compress the selected datasets --
+    ``operation`` is which: ``"truncate"``, ``"normalise"`` or
+    ``"compress"``, the one whose button under the list was pressed.
+
+    All of them at once, which is the point -- but only if they really are
+    the same shape, since one set of bounds or factors cannot describe two
+    different axes. Datasets that disagree are refused here with a list of
+    what they are, rather than producing a batch of quietly wrong results.
+    """
+    title = viewer_windows_module.DataOperationsDialog.OPERATIONS[operation][1]
+    keys = selected_keys()
+    if not keys:
+        ui.statusbar.showMessage("Select one or more datasets first")
+        QMessageBox.information(win, title,
+                                 "Select the dataset(s) to work on first.")
+        return None
+
+    datasets, problems = [], []
+    for key in keys:
+        record = loaded_items[key]
+        try:
+            data = record.get("memory")
+            if data is None:
+                data = NxsData.acquire(record["path"], record["entry"])
+        except Exception as exc:
+            traceback.print_exc()
+            problems.append(f"{label_for(key)}: could not be read ({exc})")
+            continue
+        if data.kind not in ARRAY_AXES:
+            problems.append(f"{label_for(key)}: {data.kind} has no axes to work on")
+            continue
+        if data.kind in CURVE_KINDS:
+            # Their second axis numbers channels, and one of those may be an
+            # uncertainty -- which compressing by averaging would get wrong.
+            # The curve viewer's own operations know which channel is which.
+            problems.append(f"{label_for(key)}: a {data.kind} is a curve; "
+                            f"use Crop / bin / normalise in its own viewer")
+            continue
+        datasets.append((label_for(key), data))
+
+    if problems or not datasets:
+        QMessageBox.warning(win, title,
+                             "These cannot be operated on:\n" + "\n".join(problems or
+                             ["nothing usable was selected"]))
+        return None
+
+    shapes = []
+    for name, data in datasets:
+        axes = ARRAY_AXES[data.kind]
+        shapes.append((data.kind, tuple(np.asarray(getattr(data.scan, a)).size
+                                        for a in axes)))
+    if not same_format(shapes):
+        listing = "\n".join(f"  {name}: {kind} {' x '.join(str(n) for n in shape)}"
+                             for (name, _), (kind, shape) in zip(datasets, shapes))
+        QMessageBox.warning(
+            win, title,
+            "The selected datasets are not the same format, so one set of "
+            "bounds or factors cannot describe them all. Select datasets with "
+            "the same kind and the same number of points on every axis:\n\n"
+            + listing)
+        return None
+
+    dialog = viewer_windows_module.DataOperationsDialog(datasets, win, operation)
+    dialog.datasetsCreated.connect(_list_computed)
+    dialog.show()
+    dialog.raise_()
+    global data_ops_dialog
+    data_ops_dialog = dialog
+    return dialog
+
+
+def open_processing(start=None):
+    """Smooth / differentiate / curvature / symmetrise / fit the selection,
+    on the operation ``start`` names (the tool-panel button pressed).
+
+    Two panels rather than one, and which opens is decided by what is
+    selected: a 2-D dataset goes to the plane panel, a 3-D one to the volume
+    panel. A cube's first question is always which plane an operation is
+    defined on -- the curvature of a constant-energy map and the curvature
+    of a dispersion are different quantities that share a formula -- and
+    that question has no place on a 2-D panel.
+    """
+    from arpes_viewer.ui.panels.process import ProcessDialog
+    from arpes_viewer.ui.panels.volume import VolumeProcessDialog
+
+    keys = selected_keys()
+    if not keys:
+        ui.statusbar.showMessage("Select one or more datasets first")
+        QMessageBox.information(win, "Smooth / derivative",
+                                "Select the dataset(s) to work on first.")
+        return None
+
+    datasets, problems = [], []
+    for key in keys:
+        try:
+            data = load_dataset(key)
+        except Exception as exc:
+            traceback.print_exc()
+            problems.append(f"{label_for(key)}: could not be read ({exc})")
+            continue
+        if data.kind not in ("cut",) + CUBE_KINDS:
+            problems.append(f"{label_for(key)}: {data.kind} is not a cut or a map")
+            data.close()
+            continue
+        datasets.append((label_for(key), data))
+    release = release_once(*[data for _, data in datasets])
+
+    if not datasets:
+        QMessageBox.warning(
+            win, "Smooth / derivative",
+            "These cannot be processed:\n" + "\n".join(problems or
+            ["nothing usable was selected"]) +
+            "\n\nOpen a spatial scan first and process a cut taken from it.")
+        return None
+
+    kinds = {data.kind for _, data in datasets}
+    if len(kinds) > 1:
+        QMessageBox.warning(
+            win, "Smooth / derivative",
+            "Cuts and maps need different panels, so they cannot be processed "
+            "in one go. Select one kind at a time.")
+        release()
+        return None
+
+    if kinds == {"cut"}:
+        dialog = ProcessDialog(datasets, win, default_colormap, default_flip,
+                               start=start)
+    else:
+        dialog = VolumeProcessDialog(datasets, win, default_colormap,
+                                     default_flip, start=start)
+    dialog.datasetsCreated.connect(_list_computed)
+    dialog.finished.connect(release)
+    dialog.show()
+    dialog.raise_()
+    global process_dialog
+    process_dialog = dialog
+    if problems:
+        ui.statusbar.showMessage("; ".join(problems))
+    return dialog
+
+
+def open_degrid():
+    """The De-grid window for the selected cut, map or kz map (see
+    ui.panels.degrid). A cut can take its grid from a ``[grid]`` pattern in
+    the list. The window keeps the dataset until it is closed."""
+    from arpes_viewer.ui.panels.degrid import open_degrid as degrid_window
+
+    key = selected_key()
+    if key is None:
+        return None
+    try:
+        data = load_dataset(key)
+    except Exception as exc:                                # noqa: BLE001
+        QMessageBox.warning(win, "De-grid", str(exc))
+        return None
+    dialog = degrid_window(win, data, label_for(key), entries=listed_datasets,
+                           loader=load_dataset, existing_names=listed_names,
+                           colormap=default_colormap, flip=default_flip)
+    release = release_once(data)
+    if dialog is None:
+        release()
+        return None
+    dialog.datasetsCreated.connect(_list_computed)
+    dialog.finished.connect(release)
+    dialog.show()
+    dialog.raise_()
+    global degrid_dialog
+    degrid_dialog = dialog
+    return dialog
+
+
+#: the De-grid window opened from the tool panel, kept alive
+degrid_dialog = None
+
+
+def open_stack_plot():
+    """A waterfall of EDCs or MDCs across the selected dataset."""
+    from arpes_viewer.ui.panels.process import StackWindow
+
+    key = selected_key()
+    if key is None:
+        return None
+    try:
+        data = load_dataset(key)
+    except Exception as exc:
+        QMessageBox.warning(win, "Stack plot", str(exc))
+        return None
+    if data.kind != "cut":
+        data.close()
+        QMessageBox.information(
+            win, "Stack plot",
+            "A stack is made of curves across a 2-D dataset. Open a map and "
+            "take a slice of it first, or convert it to a cut.")
+        return None
+    scan = data.scan
+    from arpes_viewer.ui.panels.figure import _dataset_sources
+    try:
+        window = StackWindow(scan.value, (scan.x, scan.y),
+                             (scan.labels.get("x", "x"), scan.labels.get("y", "y")),
+                             label_for(key), win, default_colormap,
+                             sources=_dataset_sources(data))
+    finally:
+        data.close()                     # the window holds a copy
+    window.datasetsCreated.connect(_list_computed)
+    window.show()
+    viewer_windows.append(window)
+    return window
+
+
+def open_curve_fit(mode: str = "mdc"):
+    """The MDC fit (``"mdc"``) or the EDC fit (``"edc"``) of the selected
+    cut, to read the band off the fitted peaks.
+
+    The MDC fit takes only a cut whose in-plane axis is already in A^-1.
+    Nothing in the fit itself would object to degrees -- the peaks would
+    come out perfectly well -- but every quantity built on the fitted band
+    would be wrong: v_F would be in eV.degree, m* would be meaningless, and
+    neither number carries its units around to say so. Converting first is
+    one button, and it is the honest order of operations. The EDC fit takes
+    any cut; its panel offers v_F and m* only for a momentum cut.
+    """
+    from arpes_viewer.ui.panels.fit import FitPanel, momentum_cut_reason, edc_cut_reason, FIT_MODES
+
+    title = FIT_MODES[mode]
+    key = selected_key()
+    if key is None:
+        return None
+    try:
+        data = load_dataset(key)
+    except Exception as exc:
+        QMessageBox.warning(win, title, str(exc))
+        return None
+    reason = (momentum_cut_reason if mode == "mdc" else edc_cut_reason)(data)
+    if reason:
+        data.close()
+        QMessageBox.information(win, title, reason + ".")
+        return None
+
+    window = FitPanel(data, label_for(key), win, default_colormap, default_flip,
+                      mode=mode)
+    window.datasetsCreated.connect(_list_computed)
+    window.closed.connect(_forget_viewer)
+    window.closed.connect(release_once(data))
+    window.show()
+    viewer_windows.append(window)
+    return window
+
+
+def open_core_level_check():
+    """Name the peaks of the selected cut's angle-integrated EDC.
+
+    Asks for the sample's elements, then for the energy reference (E_F
+    found from the data where the window holds the edge, else hν − W), and
+    opens the results window; see ui.panels.corelevel. The window keeps its own
+    copy of the EDC, so the dataset is released straight away.
+    """
+    from arpes_viewer.ui.panels.corelevel import start
+    from arpes_viewer.ui.viewers.windows import metadata_temperature
+
+    key = selected_key()
+    if key is None:
+        return None
+    try:
+        data = load_dataset(key)
+    except Exception as exc:
+        QMessageBox.warning(win, "Core-level check", str(exc))
+        return None
+    try:
+        if data.kind != "cut":
+            QMessageBox.information(
+                win, "Core-level check",
+                "The core-level check works on a cut: an angle-vs-energy "
+                "spectrum, integrated over its angle axis.")
+            return None
+        window = start(data, label_for(key), win,
+                       temperature=metadata_temperature(data))
+    except Exception as exc:                                # noqa: BLE001
+        QMessageBox.warning(win, "Core-level check",
+                            f"The check failed:\n{exc}")
+        return None
+    finally:
+        data.close()
+    if window is None:
+        return None
+    window.datasetsCreated.connect(_list_computed)
+    window.closed.connect(_forget_viewer)
+    window.show()
+    viewer_windows.append(window)
+    return window
+
+
+def open_volume_view(mode: str = "slices"):
+    """A 3-D view of the selected map: ``"slices"``, ``"notch"`` or
+    ``"projection"``.
+
+    Opened straight away at the "Balanced" sampling over the whole cube --
+    the window shows the sampling and can change it, once the data is in
+    sight. The window keeps the dataset open, so it can resample from the
+    full cube; it is released when the window closes.
+    """
+    from arpes_viewer.ui.panels.volume import VolumeWindow
+
+    key = selected_key()
+    if key is None:
+        return None
+    try:
+        data = load_dataset(key)
+    except Exception as exc:
+        QMessageBox.warning(win, "3D view", str(exc))
+        return None
+    if data.kind not in CUBE_KINDS:
+        data.close()
+        QMessageBox.information(
+            win, "3D view",
+            "The 3-D views need a cube: a Map or a converted k-map.")
+        return None
+    try:
+        # the whole cube is read here: the slow part of a big map
+        x, k, z, cube = nxs_jobs.busy_work(
+            win, f"Reading {label_for(key)}",
+            lambda: (lambda c: c[:3] + (np.asarray(c[3]),))(data.angle_cube))
+    except Exception as exc:                                # noqa: BLE001
+        data.close()
+        QMessageBox.warning(win, "3D view", str(exc))
+        return None
+    scan = data.scan
+    labels = (scan.labels.get("x", "x"), scan.labels.get("k", "y"),
+              scan.labels.get("z", "z"))
+    QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+    try:
+        window = VolumeWindow(cube, (x, k, z), labels, label_for(key), win,
+                              default_colormap, default_flip, mode=mode)
+    except Exception as exc:                                # noqa: BLE001
+        data.close()
+        QMessageBox.warning(win, "3D view", str(exc))
+        return None
+    finally:
+        QApplication.restoreOverrideCursor()
+    window.closed.connect(_forget_viewer)
+    window.closed.connect(release_once(data))
+    window.show()
+    viewer_windows.append(window)
+    return window
+
+
+def open_cut_arithmetic():
+    """Two cuts from the list, combined: dichroism, ratios, differences.
+
+    The tool panel's Cut arithmetic (see :mod:`ui.panels.cutops`): the two
+    cuts selected in the list, the first as A.
+    """
+    from arpes_viewer.ui.panels.cutops import CutArithmeticDialog
+
+    keys = selected_keys()[:2]
+    pair = []
+    for key in keys:
+        if str(loaded_items.get(key, {}).get("kind", "")).lower() != "cut":
+            release_once(*[data for _, data in pair])()
+            QMessageBox.information(
+                win, "Cut arithmetic",
+                f"{label_for(key)} is not a cut. Cut arithmetic works on two "
+                f"cuts; take a slice of a map first.")
+            return None
+        try:
+            data = load_dataset(key)
+        except Exception as exc:
+            release_once(*[data for _, data in pair])()
+            QMessageBox.warning(win, "Cut arithmetic", str(exc))
+            return None
+        pair.append((label_for(key), data))
+    release = release_once(*[data for _, data in pair])
+    try:
+        dialog = CutArithmeticDialog(pair[0], pair[1], win, default_colormap,
+                                     default_flip, existing_names=listed_names)
+    except ValueError as exc:
+        release()
+        QMessageBox.information(win, "Cut arithmetic", str(exc))
+        return None
+    dialog.datasetsCreated.connect(_list_computed)
+    dialog.finished.connect(release)
+    dialog.show()
+    global process_dialog
+    process_dialog = dialog
+    return dialog
+
+
+def _load_selection(title, kinds=None):
+    """``[(name, data), ...]`` for the selected rows, loaded; on a row that
+    cannot be read, or is not one of ``kinds``, says so, gives back what
+    was loaded and returns None."""
+    datasets = []
+    for key in selected_keys():
+        try:
+            data = load_dataset(key)
+        except Exception as exc:                            # noqa: BLE001
+            release_once(*[d for _, d in datasets])()
+            QMessageBox.warning(win, title, f"{label_for(key)}: {exc}")
+            return None
+        datasets.append((label_for(key), data))
+        if kinds is not None and data.kind not in kinds:
+            release_once(*[d for _, d in datasets])()
+            QMessageBox.information(win, title, f"{label_for(key)} is a "
+                                    f"{data.kind}, which this tool does not take.")
+            return None
+    return datasets
+
+
+def _show_tool(dialog, datasets=()):
+    """Show a tool window that lists what it computes, and give the
+    datasets it was handed back when it closes."""
+    release = release_once(*[data for _, data in datasets])
+    if hasattr(dialog, "datasetsCreated"):
+        dialog.datasetsCreated.connect(_list_computed)
+    dialog.finished.connect(release)
+    dialog.show()
+    dialog.raise_()
+    tool_windows.append(dialog)
+    dialog.finished.connect(lambda *_: tool_windows.remove(dialog)
+                            if dialog in tool_windows else None)
+    return dialog
+
+
+#: tool windows opened from the tool panel, kept alive while open
+tool_windows = []
+
+
+def open_sum_repeats():
+    """Sum repeats of one measurement (see ui.panels.repeats)."""
+    from arpes_viewer.ui.panels.repeats import RepeatsDialog
+
+    datasets = _load_selection("Sum repeated scans", ("cut",) + CUBE_KINDS)
+    if not datasets:
+        return None
+    try:
+        dialog = RepeatsDialog(datasets, win, existing_names=listed_names)
+    except ValueError as exc:
+        release_once(*[d for _, d in datasets])()
+        QMessageBox.information(win, "Sum repeated scans", str(exc))
+        return None
+    return _show_tool(dialog, datasets)
+
+
+def open_ridge_detection():
+    """Ridge detection on the selected cuts or maps (ui.panels.ridge)."""
+    from arpes_viewer.ui.panels.ridge import RidgeDialog
+
+    datasets = _load_selection("Ridge detection", ("cut",) + CUBE_KINDS)
+    if not datasets:
+        return None
+    return _show_tool(RidgeDialog(datasets, win, default_colormap,
+                                  existing_names=listed_names), datasets)
+
+
+def open_tight_binding():
+    """The tight-binding fit, on the selected k-map or on points from a
+    file (ui.panels.tightbinding)."""
+    from arpes_viewer.ui.panels.tightbinding import TightBindingDialog
+
+    datasets = _load_selection("Tight-binding fit", ("k_map", "kz_map_k")) \
+        if selected_keys() else []
+    if datasets is None:
+        return None
+    return _show_tool(TightBindingDialog(datasets[0] if datasets else None,
+                                         win, default_colormap,
+                                         existing_names=listed_names),
+                      datasets)
+
+
+def open_detector_corrections():
+    """Keystone and bad-region corrections (ui.panels.detector)."""
+    from arpes_viewer.ui.panels.detector import DetectorDialog
+
+    datasets = _load_selection("Detector corrections",
+                               ("cut", "map", "kz_map"))
+    if not datasets:
+        return None
+    try:
+        dialog = DetectorDialog(datasets[0], win, default_colormap,
+                                existing_names=listed_names)
+    except ValueError as exc:
+        release_once(*[d for _, d in datasets])()
+        QMessageBox.information(win, "Detector corrections", str(exc))
+        return None
+    return _show_tool(dialog, datasets)
+
+
+def open_calculated_bands():
+    """A calculated band structure against the selected maps and cuts in
+    momentum (ui.panels.bands)."""
+    from arpes_viewer.ui.panels.bands import BandsDialog
+
+    datasets = _load_selection("Calculated bands", ("k_map", "kz_map_k", "cut")) \
+        if selected_keys() else []
+    if datasets is None:
+        return None
+    return _show_tool(BandsDialog(datasets, win, existing_names=listed_names),
+                      datasets)
+
+
+def open_crystal_structure():
+    """The crystal in real space (ui.panels.crystal)."""
+    from arpes_viewer.ui.panels.crystal import CrystalDialog
+
+    # Selected k-maps can lie on the Brillouin zone's planes; anything else
+    # selected is simply not used (the crystal needs no dataset).
+    datasets = []
+    for key in selected_keys():
+        try:
+            data = load_dataset(key)
+        except Exception:                                    # noqa: BLE001
+            continue
+        if data.kind == "k_map":
+            datasets.append((label_for(key), data))
+        else:
+            data.close()
+    return _show_tool(CrystalDialog(win, datasets, default_colormap,
+                                    default_flip), datasets)
+
+
+def combine_selected(ask=None, dialog_hook=None):
+    """Combine the selected datasets into one.
+
+    Two ways (see :mod:`ui.panels.stackcuts`): cuts can be *stacked* into a map
+    along an axis the user names, and cuts or cubes of one kind (maps, kz
+    maps, k-maps) can be *joined* end to end along one of their own axes --
+    the pieces of a measurement taken in segments. For a stack of cuts on
+    one grid, first asks whether to keep the list's order; if not, the
+    dialog lets the cuts be dragged into order. The result is listed like
+    any computed dataset.
+
+    ``ask`` and ``dialog_hook`` stand in for the order question and for
+    running the dialog, for the tests.
+    """
+    from arpes_viewer.tools.processing import stackcuts
+    from arpes_viewer.ui.panels.stackcuts import (CombineCutsDialog, combined_dataset,
+                                     joined_dataset)
+
+    keys = selected_keys()
+    title = "Combine datasets"
+    if len(keys) < 2:
+        QMessageBox.information(win, title, "Select at least two datasets.")
+        return None
+    kinds = {str(loaded_items.get(k, {}).get("kind", "")).lower() for k in keys}
+    if len(kinds) != 1:
+        QMessageBox.information(
+            win, title, "The selected datasets are of different kinds ("
+                        + ", ".join(sorted(kinds)) + "). Combine cuts with "
+                        "cuts, maps with maps, kz maps with kz maps.")
+        return None
+    datasets = []
+    release = lambda: release_once(*[data for _, data in datasets])()  # noqa: E731
+    for key in keys:
+        try:
+            data = load_dataset(key)
+        except Exception as exc:                            # noqa: BLE001
+            release()
+            QMessageBox.warning(win, title, str(exc))
+            return None
+        datasets.append((label_for(key), data))
+    try:
+        kind = datasets[0][1].kind
+        if kind != "cut" and kind not in CUBE_KINDS:
+            QMessageBox.information(
+                win, title, f"A {kind} cannot be combined; cuts, maps, kz "
+                            f"maps and k-maps can.")
+            return None
+        names = [name for name, _ in datasets]
+        from arpes_viewer.loader.nxs_file import axis_slots
+        slots = axis_slots(kind, "constructor")
+        pieces = []
+        for _name, data in datasets:
+            labels = dict(data.scan.labels or {})
+            pieces.append((tuple(np.asarray(getattr(data.scan, slot), dtype=float)
+                                 for slot in slots),
+                           [labels.get(slot, slot) for slot in slots]))
+
+        stack_problem = ""
+        if kind == "cut":
+            stack_problem = stackcuts.compatibility(
+                [(name, (data.scan.x, data.scan.y), data.cut_frame,
+                  dict(data.scan.labels or {})) for name, data in datasets])
+            if stack_problem:
+                stack_problem = ("Stacking needs cuts with the same axes, "
+                                 "point for point: " + stack_problem)
+
+        keep_order = False
+        if kind == "cut" and not stack_problem:
+            listing = "\n".join(f"  {i + 1}. {n}" for i, n in enumerate(names))
+            if ask is None:
+                answer = QMessageBox.question(
+                    win, title,
+                    f"Combine the {len(names)} cuts in this order?\n\n{listing}"
+                    f"\n\nYes: this order.  No: choose the order.",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                    QMessageBox.Yes)
+                if answer == QMessageBox.Cancel:
+                    return None
+                keep_order = answer == QMessageBox.Yes
+            else:
+                keep_order = ask(names)
+                if keep_order is None:
+                    return None
+
+        dialog = CombineCutsDialog(names, reorder=not keep_order, parent=win,
+                                   pieces=pieces, can_stack=kind == "cut",
+                                   stack_problem=stack_problem)
+        accepted = (dialog_hook(dialog) if dialog_hook is not None
+                    else dialog.exec_() == dialog.Accepted)
+        if not accepted:
+            return None
+        order = dialog.order()
+        if dialog.mode() == "stack":
+            role, axis_name, unit, values = dialog.axis()
+            label = unique_name(f"{names[order[0]]} + {len(names) - 1} "
+                                f"[{axis_name or 'stack'}]")
+            result = nxs_jobs.busy_work(win, "Stacking the datasets",
+                                        combined_dataset, datasets, order, role,
+                                        axis_name, unit, values, label)
+        else:
+            plan = dialog.join_plan()
+            if not isinstance(plan, dict):
+                QMessageBox.information(win, title, f"Cannot join: {plan}")
+                return None
+            label = unique_name(f"{names[order[0]]} + {len(names) - 1} "
+                                f"[joined]")
+            result = nxs_jobs.busy_work(win, "Joining the datasets",
+                                        joined_dataset, datasets, order,
+                                        dialog.join_axis(), dialog.overlap(),
+                                        label)
+            if plan["notes"]:
+                ui.statusbar.showMessage(" ".join(plan["notes"]))
+    finally:
+        release()
+    _list_computed([result])
+    return result
+
+
+#: The old name, from when only cuts could be combined.
+combine_selected_cuts = combine_selected
+
+
+def release_once(*datasets):
+    """A callback that gives back one reference to each of ``datasets`` --
+    the first time it is called, and never again.
+
+    Every :func:`load_dataset` hands its caller a reference of its own, to
+    be closed exactly once when the caller is done. A window or dialog that
+    keeps the dataset connects this to its ``closed`` / ``finished`` signal;
+    those can fire more than once, and a second release would take away a
+    reference that belongs to someone else.
+    """
+    pending = list(datasets)
+
+    def release(*_):
+        while pending:
+            data = pending.pop()
+            try:
+                data.close()
+            except Exception:                              # noqa: BLE001
+                pass
+    return release
+
+
+def _list_computed(datasets):
+    for data in datasets:
+        add_memory_dataset(data, getattr(data, "source_label", "computed"))
+    ui.statusbar.showMessage(f"Added {len(datasets)} computed dataset(s) to the list")
+
+
+def _forget_viewer(window):
+    if window in viewer_windows:
+        viewer_windows.remove(window)
+
+
+# --------------------------------------------------------------------------
+# Memory: what the launcher's Memory box shows, and its two buttons
+# --------------------------------------------------------------------------
+#: How often the Memory box refreshes, in ms.
+MEMORY_REFRESH_MS = 2000
+
+
+def _open_viewer_windows():
+    """Viewer windows that are still on screen (a closed one can linger in
+    the list for a moment before its ``closed`` signal is handled)."""
+    alive = []
+    for window in viewer_windows:
+        try:
+            if window.isVisible():
+                alive.append(window)
+        except RuntimeError:               # its C++ side is already gone
+            pass
+    return alive
+
+
+def update_memory_status():
+    """Refresh the Memory box: this process, the machine, and what the
+    program is holding open."""
+    rss, is_peak = memory_tools.process_memory()
+    total, available = memory_tools.system_memory()
+    bar = ui.MemoryUsageBar
+    if rss is not None and total:
+        share = 100.0 * rss / total
+        bar.setValue(int(min(100, round(share))))
+        bar.setFormat(f"{memory_tools.format_bytes(rss)}"
+                      f"{' (peak)' if is_peak else ''} -- {share:.1f}% of RAM")
+        # Amber past a third of the machine, red past a half: by then the
+        # system is paging and everything slows down, which is the symptom
+        # this box exists to explain.
+        colour = ("#d9534f" if share > 50 else "#e0a030" if share > 33
+                  else "#7aa6d8")
+        bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {colour}; }}")
+    else:
+        bar.setValue(0)
+        bar.setFormat(memory_tools.format_bytes(rss) if rss is not None else "n/a")
+
+    windows = _open_viewer_windows()
+    spem = sum(1 for w in windows
+               if getattr(getattr(w, "data", None), "kind", "") in NO_AUTOSAVE_KINDS)
+    resident = [r for r in loaded_items.values() if r.get("memory") is not None]
+    resident_bytes = sum(_resident_bytes(r["memory"]) for r in resident)
+    parts = [f"Viewers open: {len(windows)} (SPEM {spem})",
+             f"HDF5 files open: {nxs_file.HANDLES.open_count()}",
+             f"Computed data in memory: {len(resident)} "
+             f"({memory_tools.format_bytes(resident_bytes)})"]
+    if available is not None and total:
+        parts.append(f"System free: {memory_tools.format_bytes(available)} "
+                     f"of {memory_tools.format_bytes(total)}")
+    ui.MemoryLabel.setText("<br>".join(parts))
+    ui.MemoryLabel.setToolTip("\n".join(
+        f"{w.windowTitle()}" for w in windows) or "No viewer windows open")
+
+
+def _resident_bytes(data) -> int:
+    """Bytes a dataset keeps resident (its array, if it is a real one)."""
+    return nxs_session.MemoryBudget._size_of(data)
+
+
+def free_memory():
+    """Give back what the launcher holds only as a convenience.
+
+    A computed dataset with an auto-saved copy is kept in memory as well, so
+    that reopening it is instant. That copy is dropped here -- the row stays
+    and reads its file when next opened -- unless a window is showing it, in
+    which case dropping the list's reference would free nothing. Then every
+    reference cycle is collected and the allocator asked to return pages.
+    """
+    before, _ = memory_tools.process_memory()
+    in_view = {id(getattr(w, "data", None)) for w in _open_viewer_windows()}
+    dropped = 0
+    for record in loaded_items.values():
+        data = record.get("memory")
+        backing = record.get("backing")
+        if data is None or not backing or not os.path.isfile(backing):
+            continue
+        if id(data) in in_view:
+            continue
+        record["memory"] = None
+        dropped += 1
+    session.budget.clear()
+    memory_tools.release_memory()
+    after, _ = memory_tools.process_memory()
+    update_memory_status()
+    change = ""
+    if before is not None and after is not None:
+        change = (f"; {memory_tools.format_bytes(max(0, before - after))} released "
+                  f"(now {memory_tools.format_bytes(after)})")
+    ui.statusbar.showMessage(
+        f"Freed memory: {dropped} cached dataset(s) dropped{change}")
+
+
+def close_all_viewers():
+    """Close every viewer window and popped-out snapshot, then free memory.
+    Each window gives its dataset back as it closes, so a spatial scan's
+    file is released once nothing else is looking at it."""
+    windows = _open_viewer_windows()
+    # Snapshots popped out of a viewer outlive it on purpose; they go too.
+    detached = list(viewer_windows_module._DETACHED)
+    if not windows and not detached:
+        free_memory()
+        return
+    answer = QMessageBox.question(
+        win, "Close all viewers",
+        f"Close all {len(windows) + len(detached)} viewer and snapshot "
+        f"window(s)? The file list is kept.")
+    if answer != QMessageBox.Yes:
+        return
+    for window in windows + detached:
+        try:
+            window.close()
+        except RuntimeError:
+            pass
+    free_memory()
+
+
+# --------------------------------------------------------------------------
+# Metadata export (the viewers export their own data)
+# --------------------------------------------------------------------------
+def ExportMetadataCsv():
+    if not current_info_rows:
+        notify.warning("No metadata loaded yet.")
+        return
+    folder = ui.FilePathLE.displayText() or os.path.expanduser("~")
+    # Name the CSV after the dataset, so five maps from one file do not all
+    # want to be called the same thing.
+    record = loaded_items.get(current_key)
+    stem = os.path.splitext(record["name"])[0] if record else "metadata"
+    if record and record.get("entry") and len([k for k in loaded_items
+                                               if k[0] == current_key[0]]) > 1:
+        stem = f"{stem}_{record['entry']}"
+    default = os.path.join(folder, stem + "_metadata.csv")
+    path, _ = QFileDialog.getSaveFileName(win, "Export metadata as CSV", default,
+                                           "CSV (*.csv)")
+    if not path:
+        return
+    if not path.lower().endswith(".csv"):
+        path += ".csv"
+    try:
+        with open(path, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["field", "value"])
+            for key, value in current_info_rows:
+                writer.writerow([key, value])
+    except (OSError, PermissionError) as exc:
+        notify.warning(f"Could not write the metadata:\n{exc}")
+        return
+    ui.statusbar.showMessage(f"Exported {len(current_info_rows)} metadata rows to {path}")
+
+
+# --------------------------------------------------------------------------
+# Wiring
+# --------------------------------------------------------------------------
+def offer_recovery():
+    """If an earlier session left datasets behind, offer to open them.
+
+    A session that ended properly leaves nothing: saving a dataset removes
+    its working copy and so does removing its row. So anything still here is
+    work from a run that stopped without being tidied up -- which is exactly
+    the case this whole mechanism exists for, and the moment to say so is
+    when the program next starts, not when the user eventually goes digging
+    through a folder named after a timestamp and a process id.
+    """
+    leftovers = session.leftovers()
+    if not leftovers:
+        return 0
+
+    total_files = sum(len(entry["files"]) for entry in leftovers)
+    total_bytes = sum(entry["bytes"] for entry in leftovers)
+    newest = leftovers[0]
+    when = time.strftime("%Y-%m-%d %H:%M",
+                         time.localtime(newest["modified"]))
+    answer = QMessageBox.question(
+        win, "Recover unsaved work",
+        f"{total_files} dataset(s) from {len(leftovers)} earlier session(s) "
+        f"were never saved to a file of your own.\n\n"
+        f"Most recent: {when} ({newest['bytes'] / 1e6:.0f} MB)\n"
+        f"Total: {total_bytes / 1e6:.0f} MB\n\n"
+        f"Add them to the list?\n\n"
+        f"They are in {session.root}\nand are deleted after "
+        f"{nxs_session.KEEP_DAYS} days. Every one of them is in the "
+        f"operations log beside them.",
+        QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+    if answer != QMessageBox.Yes:
+        ui.statusbar.showMessage(
+            f"{total_files} unsaved dataset(s) left in {session.root}")
+        return 0
+
+    paths = [os.path.join(entry["folder"], filename)
+             for entry in leftovers for filename in entry["files"]]
+    add_files(paths, background=False)
+    # Recovered rows are somebody's unsaved work, not a file they chose, so
+    # they count as unsaved until they are saved -- the close prompt has to
+    # keep warning about them.
+    for key, record in loaded_items.items():
+        if os.path.dirname(record["path"]).startswith(session.root):
+            record["exported"] = False
+            record["backing"] = record["path"]
+    session.log("RECOVER", f"{len(paths)} dataset(s)", session.root,
+                "listed at startup")
+    ui.statusbar.showMessage(f"Recovered {len(paths)} unsaved dataset(s)")
+    return len(paths)
+
+
+def open_autosave_folder():
+    """Show the auto-save folder in the system's file browser.
+
+    The copies are deleted on their own -- at a confirmed close, or
+    :data:`loader.session.KEEP_DAYS` after a crash -- but a beamline disk
+    fills up faster than that, and the quickest way to clear it is to look.
+    The status bar names this session's own folder, which is in use.
+    """
+    root = session.root
+    try:
+        os.makedirs(root, exist_ok=True)
+    except OSError as exc:
+        QMessageBox.warning(win, "Auto-save folder",
+                            f"Could not open {root}:\n{exc}")
+        return
+    if not QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(root)):
+        QMessageBox.information(win, "Auto-save folder",
+                                f"The auto-saved copies are in\n{root}")
+        return
+    ui.statusbar.showMessage(
+        f"Auto-save folder: {root} -- this session's own copies are in "
+        f"{session.name}; leave that one while the program is running")
+
+
+def show_operations_log():
+    """The operations log, in a window. What was written, when, and where."""
+    rows = nxs_session.read_log(session.root)
+    if not rows:
+        QMessageBox.information(
+            win, "Operations log",
+            f"Nothing logged yet.\n\nThe log is written to\n{session.log_path}")
+        return None
+    lines = [" | ".join(row[:6]) for row in rows]
+    box = QMessageBox(win)
+    box.setWindowTitle("Operations log")
+    box.setText(f"{len(rows)} most recent operations")
+    box.setInformativeText(f"The full log is {session.log_path}")
+    box.setDetailedText("\n".join(lines))
+    box.exec_()
+    return rows
+
+
+def _log_entries():
+    """``[(key, row label), ...]`` for every dataset in the list, in list
+    order, for the experiment log's choice of reference dataset."""
+    lw = ui.FilePathListWidget
+    entries = []
+    for i in range(lw.count()):
+        key = lw.item(i).data(QtCore.Qt.UserRole)
+        if key in loaded_items:
+            entries.append((key, lw.item(i).text()))
+    return entries
+
+
+def _log_load(key):
+    """Read one listed dataset for the experiment log: ``(data, record)``.
+    The caller closes ``data`` when done with it."""
+    return load_dataset(key), loaded_items.get(key, {})
+
+
+def open_exp_log_format():
+    """Datasets -> Exp. log format...: set the experiment log up -- where it
+    is, its separator and its columns. Returns True when a format was
+    saved."""
+    global exp_log_keep_recording
+    from arpes_viewer.ui.panels.explog import ExpLogFormatDialog
+    dialog = ExpLogFormatDialog(
+        win, entries=_log_entries, load=_log_load, selected=selected_keys,
+        folder=ui.FilePathLE.displayText() or os.path.expanduser("~"),
+        keep_recording=exp_log_keep_recording)
+    global last_exp_log_dialog
+    last_exp_log_dialog = dialog                  # for the tests
+    if dialog.exec_() != QDialog.Accepted:
+        return False
+    exp_log_keep_recording = dialog.auto_box.isChecked()
+    ui.statusbar.showMessage(
+        f"Experiment log format saved for {dialog.settings.path()}"
+        + (" -- recording each file added to the list"
+           if exp_log_keep_recording else ""))
+    return True
+
+
+#: The last Exp. log format window, kept for the tests.
+last_exp_log_dialog = None
+
+
+def record_exp_log(keys=None, quiet: bool = False):
+    """Datasets -> Auto Exp. log: add the selected datasets' records to the
+    experiment log, in its saved format, without asking. The first time,
+    when no log has been set up, the format window opens first."""
+    from arpes_viewer.tools.output import explog
+    from arpes_viewer.ui.panels.explog import record_datasets
+    if not explog.load_settings().configured:
+        if quiet or not open_exp_log_format():
+            return 0
+    return record_datasets(selected_keys() if keys is None else keys,
+                           _log_load, parent=win, quiet=quiet,
+                           status=ui.statusbar.showMessage)
+
+
+def unsaved_datasets():
+    """Datasets that exist only because this session computed them and that
+    the user has not put anywhere of their own.
+
+    The auto-saved copy in the session folder is not "somewhere of their
+    own": it is a working copy, deleted when the program closes normally,
+    so closing without being asked would lose the work.
+    """
+    return [record["name"] for record in loaded_items.values()
+            if (record.get("backing") or record.get("memory") is not None)
+            and not record.get("exported")]
+
+
+def confirm_close() -> bool:
+    """Ask before closing if there is unsaved work. True means go ahead.
+
+    The program used to close on the spot, which was fine while a dataset
+    was either a file on disk or nothing -- and painful once a session's
+    worth of processing lived only in the list.
+    """
+    pending = unsaved_datasets()
+    if not pending:
+        return True
+    return _offer_to_save(
+        "Close ARPES viewer", pending, "Close anyway",
+        f"{len(pending)} dataset(s) computed in this session have not been "
+        f"saved to a file of your own:")
+
+
+def _offer_to_save(title, pending, go_text, text) -> bool:
+    """Ask whether to save the unsaved datasets ``pending`` before going on.
+
+    Three answers: **Save to a file...** (the ordinary Save, on those rows;
+    going on only if they all got saved), ``go_text`` (go on without
+    saving) and **Cancel**. True means go on.
+    """
+    shown = "\n".join(f"  \u2022 {name}" for name in pending[:8])
+    if len(pending) > 8:
+        shown += f"\n  \u2022 ... and {len(pending) - 8} more"
+    box = QMessageBox(win)
+    box.setWindowTitle(title)
+    box.setIcon(QMessageBox.Question)
+    box.setText(text)
+    box.setInformativeText(
+        f"{shown}\n\nTheir auto-saved copies in\n{session.folder}\n"
+        f"are working copies only: going on without saving deletes them. "
+        f"(They are kept, for {nxs_session.KEEP_DAYS} days, only when the "
+        f"program crashes.)")
+    save = QPushButton("Save to a file...")
+    discard = QPushButton(go_text)
+    cancel = QPushButton("Cancel")
+    box.addButton(save, QMessageBox.AcceptRole)
+    box.addButton(discard, QMessageBox.DestructiveRole)
+    box.addButton(cancel, QMessageBox.RejectRole)
+    box.setDefaultButton(save)
+    box.exec_()
+
+    clicked = box.clickedButton()
+    if clicked is discard:
+        return True
+    if clicked is save:
+        # Select everything unsaved, then run the ordinary Save, so there is
+        # one save path rather than two that can disagree.
+        ui.FilePathListWidget.clearSelection()
+        for key, record in loaded_items.items():
+            if record["name"] in pending:
+                item = _row_for_key(key)
+                if item is not None:
+                    item.setSelected(True)
+        save_selected()
+        return not unsaved_datasets()
+    return False
+
+
+#: Set once the user has confirmed closing (everything they want is saved,
+#: or they chose to close without saving). Only then are the session's
+#: working copies deleted on the way out; any other exit -- a crash, a kill
+#: -- leaves them for the next start to offer back.
+clean_close = False
+
+
+def recovered_copies():
+    """Working copies from earlier, crashed sessions that are in the list
+    (put back at startup). The close prompt covered them like this
+    session's own, so a confirmed close deletes them too."""
+    roots = [os.path.abspath(session.root)] + [os.path.abspath(r)
+                                                for r in nxs_session.LEGACY_ROOTS]
+    own = os.path.join(os.path.abspath(session.folder), "")
+    found = []
+    for record in loaded_items.values():
+        backing = record.get("backing")
+        if not backing:
+            continue
+        path = os.path.abspath(backing)
+        if path.startswith(own):
+            continue
+        if any(path.startswith(os.path.join(root, "")) for root in roots):
+            found.append(path)
+    return found
+
+
+def finish_session():
+    """After a confirmed close: delete this session's auto-saved copies (and
+    the recovered ones in the list) instead of leaving them for the
+    three-day sweep, which is only for what a crash leaves behind."""
+    if not clean_close:
+        return 0
+    try:
+        removed = session.finish(recovered_copies())
+    except Exception:                                      # noqa: BLE001
+        traceback.print_exc()
+        return 0
+    return removed
+
+
+def _close_viewers_quietly():
+    """Close every viewer and snapshot without asking: the user has already
+    confirmed closing the program, and a window left open would keep both
+    the program running and the session's files in use."""
+    windows = _open_viewer_windows() + list(viewer_windows_module._DETACHED)
+    # Figures, stack plots and dialogs opened without a parent are top-level
+    # windows of their own, and would keep the program running too.
+    # (only windows of the program's own kinds: Qt's internal top-level
+    # widgets -- popups, tooltips -- are not touched, see close_child_windows)
+    windows += [w for w in QApplication.topLevelWidgets()
+                if isinstance(w, (QMainWindow, QDialog)) and w is not win
+                and w.isVisible() and w not in windows]
+    for window in windows:
+        try:
+            window.close()
+        except RuntimeError:
+            pass
+
+
+class _MainWindow(QMainWindow):
+    """The launcher window, with a close that asks first."""
+
+    def closeEvent(self, event):
+        if nxs_jobs.busy():
+            answer = QMessageBox.question(
+                self, "Close ARPES viewer",
+                "Something is still running. Close anyway?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                event.ignore()
+                return
+        if confirm_close():
+            global clean_close
+            clean_close = True
+            _close_viewers_quietly()
+            event.accept()
+        else:
+            event.ignore()
+
+
+def SetConnect():
+    ui.BrowseFolderButton.clicked.connect(BrowseFolder)
+    ui.LoadDataButton.clicked.connect(open_loader)
+    ui.PickFilesButton.clicked.connect(PickFiles)
+    ui.ClearListButton.clicked.connect(ClearList)
+
+    # A click only selects. Reading a dataset to describe it is real work --
+    # for a GB-sized spatial scan it is seconds -- so the information panel
+    # is filled on request (Datasets -> Experiment info), not on every
+    # click. Double-click still opens a viewer.
+    ui.FilePathListWidget.itemDoubleClicked.connect(open_selected)
+    ui.FilePathListWidget.customContextMenuRequested.connect(show_list_menu)
+    # The metadata filter and its CSV export live in the information
+    # window now, and are wired when that window is first made.
+
+    # The buttons under the list and in the tool panel (its tools and its
+    # Datasets box) are named by their list action, so the right-click
+    # menu, the buttons and the rules for
+    # greying them out (ui.launcher.list_actions) cannot drift apart.
+    for name, button in {**ui.ListButtons, **ui.ToolButtons,
+                         **ui.DatasetButtons}.items():
+        button.clicked.connect(lambda _=False, name=name: run_list_action(name))
+    ui.FilePathListWidget.itemSelectionChanged.connect(update_tool_buttons)
+    update_tool_buttons()
+
+    ui.FreeMemoryButton.clicked.connect(free_memory)
+    ui.CloseViewersButton.clicked.connect(close_all_viewers)
+    ui.OpenAutosaveButton.clicked.connect(open_autosave_folder)
+
+
+def InitializeUIWidgets():
+    values = system.load_config(CONFIG_PATH, defaults={
+        "FilePathLE": os.path.expanduser("~"),
+        "ColorMap": DEFAULT_COLORMAP,
+        "FlipColorMap": False,
+    })
+    global default_colormap, default_flip
+    ui.FilePathLE.setText(values["FilePathLE"])
+    # Each viewer window owns its colormap; these are only the values a newly
+    # opened window starts from.
+    default_colormap = values.get("ColorMap", DEFAULT_COLORMAP)
+    default_flip = bool(values.get("FlipColorMap", False))
+    return values
+
+
+def DumpUIWidgets(values):
+    values["FilePathLE"] = ui.FilePathLE.displayText()
+    # Remember the most recently opened window's choice as the next default.
+    if viewer_windows:
+        values["ColorMap"] = viewer_windows[-1].colormap
+        values["FlipColorMap"] = viewer_windows[-1].flip
+    else:
+        values["ColorMap"] = default_colormap
+        values["FlipColorMap"] = default_flip
+    system.dump_config(CONFIG_PATH, values)
+
+
+def main() -> int:
+    """Start the program: the main panel, until it is closed. What
+    ``python ARPES_viewer.py``, ``python -m arpes_viewer`` and the
+    ``arpes-viewer`` command of an installed copy run."""
+    # the windows and their state are this module's globals, which every
+    # function above reads
+    global app, win, ui, config, memory_timer
+    # Windows, a double-clicked .py: hide the console opened for it alone,
+    # which closed the program when closed by mistake (ARPES viewer.pyw opens
+    # none) -- see tools/runtime/console.py
+    from arpes_viewer.tools.runtime import console
+    console.hide_own_console()
+    app = QApplication(sys.argv)
+    # errors are kept in error_logs/ (the program's folder, or
+    # ~/.arpes_viewer for an installed copy) and do not close the program --
+    # see ui/common/crashguard.py
+    from arpes_viewer.ui.common import crashguard
+    from arpes_viewer.version import VERSION as _VERSION
+    from arpes_viewer.tools.runtime import errorlog
+    crashguard.install(errorlog.program_folder(), _VERSION)
+    # The same widget style on every system (Fusion on macOS, whose native
+    # buttons do not fit the tool panel) -- see ui/common/platform_style.py.
+    from arpes_viewer.ui.common import platform_style
+    platform_style.apply_style(app)
+    # Enter in a field takes its value; it never presses a dialog's button
+    from arpes_viewer.ui.common import enterkeys
+    enterkeys.install(app)
+    # Cyclic garbage collection from the event loop only, never inside a Qt
+    # call -- see ui/common/gcguard.py for the crash this prevents.
+    from arpes_viewer.ui.common import gcguard
+    gcguard.install(app)
+    win = _MainWindow()
+    ui = main_window_ui.Ui_MainWindow()
+    ui.setupUi(win)
+
+    config = InitializeUIWidgets()
+    SetConnect()
+
+    session.log("START", "", session.folder, "session opened")
+
+    # Order matters: prune first so the recovery offer is only ever about
+    # folders recent enough to still be there, then offer what is left.
+    try:
+        gone = session.prune_old()
+        if gone:
+            ui.statusbar.showMessage(f"Cleared {gone} old session folder(s)")
+    except Exception:                                      # noqa: BLE001
+        traceback.print_exc()
+
+    # The Memory box refreshes itself; the timer belongs to the window so
+    # it stops with it.
+    memory_timer = QtCore.QTimer(win)
+    memory_timer.timeout.connect(update_memory_status)
+    memory_timer.start(MEMORY_REFRESH_MS)
+    update_memory_status()
+
+    win.show()
+    try:
+        offer_recovery()
+    except Exception:                                      # noqa: BLE001
+        traceback.print_exc()
+    error = app.exec_()
+    finish_session()
+    session.log("END", "", session.folder,
+                "session closed" if clean_close else "session closed unconfirmed")
+    DumpUIWidgets(config)
+    return error
+
+
+if __name__ == "__main__":
+    sys.exit(main())

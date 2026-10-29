@@ -7,13 +7,13 @@ import struct
 import numpy as np
 import pytest
 
-from loader import registry  # noqa: F401  -- before the SES reader
-from tools.crystal import structure as S
-from tools.crystal import tightbinding as TB
-from tools.output import igor
-from tools.processing import detector as DT
-from tools.processing import repeats as R
-from tools.processing import ridge as RD
+from arpes_viewer.loader import registry  # noqa: F401  -- before the SES reader
+from arpes_viewer.tools.crystal import structure as S
+from arpes_viewer.tools.crystal import tightbinding as TB
+from arpes_viewer.tools.output import igor
+from arpes_viewer.tools.processing import detector as DT
+from arpes_viewer.tools.processing import repeats as R
+from arpes_viewer.tools.processing import ridge as RD
 
 #: Rock salt, written by hand: only the four face-centring translations are
 #: listed as symmetry operations, which is enough to build the cell.
@@ -67,7 +67,7 @@ def _cut_item(name="my cut 1", x=None):
 
 
 def test_ibw_round_trips_through_the_programs_own_reader(tmp_path):
-    from loader.formats.ses import read_ibw
+    from arpes_viewer.loader.formats.ses import read_ibw
     item = _cut_item()
     path = igor.write_datasets(str(tmp_path / "a.ibw"), [item], "ibw")[0]
     wave = read_ibw(path)
