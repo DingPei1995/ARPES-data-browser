@@ -2,7 +2,7 @@
 
 *[English version](USER_GUIDE_en.md) · [中文版](USER_GUIDE_zh.md)*
 
-*Dernière mise à jour : 29 octobre 2026 — pour ARPES viewer v1.2.2*
+*Dernière mise à jour : 30 octobre 2026 — pour ARPES viewer v1.2.3*
 
 La version et sa date figurent dans la barre de titre et en bas de la fenêtre
 principale. Signaler un bogue, poser une question, obtenir la dernière version :
@@ -266,7 +266,7 @@ et **Auto Exp. log** côte à côte (voir [le journal d'expérience](#le-journal
 **Rename**, **Save** et **Remove** sur une ligne, **Sum repeated scans...**
 et **Session log...**. Ses boutons se grisent comme les outils.
 
-### Où se trouvent les choses maintenant (v1.2.2)
+### Où se trouvent les choses maintenant (v1.2.3)
 
 Pour qui a utilisé une version antérieure : les outils ont quitté le menu
 contextuel et les menus *Functions* des fenêtres pour le panneau d'outils ;

@@ -4,7 +4,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/arpes-viewer.svg)](https://pypi.org/project/arpes-viewer/)
 [![User Guide](https://img.shields.io/badge/📖_User_Guide-English-blue?style=flat-square)](https://github.com/DingPei1995/ARPES-viewer/blob/main/docs/USER_GUIDE_en.md)
 
-**Version 1.2.2** (last modified 29 October 2026) — see
+**Version 1.2.3** (last modified 30 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `arpes_viewer/version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
@@ -205,6 +205,7 @@ logs** -- and give the version number.
   [English](docs/pdf/ARPES_viewer_user_guide_en.pdf) ·
   [中文](docs/pdf/ARPES_viewer_user_guide_zh.pdf) ·
   [Français](docs/pdf/ARPES_viewer_user_guide_fr.pdf).
+- **Agentic workflow** (an AI agent driving the viewer on your own machine, no data uploaded): [guide](docs/AGENTIC_WORKFLOW_en.md) and the [`agentic/`](agentic/README.md) scripts and recipes.
 - **What changed, and why**: [CHANGELOG.md](CHANGELOG.md).
 - **Technical references**, beside the code they describe -- the formulas,
   the file layouts, the assumptions and the tests behind each step:

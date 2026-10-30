@@ -10,7 +10,24 @@ file is the record of how it got that way.
 
 ---
 
-## Unreleased
+## 1.2.3 — 2026-10-30
+
+The agentic workflow: an AI agent (e.g. Claude, through the desktop app
+linked to your computer) processes data inside the viewer on your own
+machine, so raw data and code are never uploaded.
+
+- **`agentic/`.** `viewer_live.py` runs small Python command files that the
+  agent drops into a folder, inside the live viewer's GUI process;
+  `launch_viewer.py` starts the viewer with the data listed;
+  `agent_runner.pyw` runs headless jobs from a queue. Results come back as
+  text logs, screenshots and figures that can be checked. `recipes/` holds
+  four building blocks adapted from a real session: normalise, cut k
+  conversion with Fermi fit and offset, arbitrary cut from a map, and a
+  two-peak MDC fit. They use the viewer's internal functions and may need
+  changes after updates.
+- **Documentation.** `docs/AGENTIC_WORKFLOW_en.md` is the full guide, written
+  from a working deployment, with the recipes explained; two reports are in
+  `Reports/`. README links to them; the user guides carry the new version.
 
 - **The repository is now `DingPei1995/ARPES-viewer`**, matching the
   program's name and the PyPI package `arpes-viewer`; it was

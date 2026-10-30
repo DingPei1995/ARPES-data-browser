@@ -1,6 +1,6 @@
 # User Guide: Deploying a Local Agentic Workflow for ARPES Data Processing
 
-*Version of 30 October 2026. Written from a working deployment: Claude Sonnet 5.5 (medium effort) driving the open-source ARPES viewer v1.2.2 (PyQt5 / pyqtgraph) on a Windows workstation with two monitors. All paths below are placeholders; replace them with your own.*
+*Version of 30 October 2026. Written from a working deployment: Claude Sonnet 5.5 (medium effort) driving the open-source ARPES viewer v1.2.3 (PyQt5 / pyqtgraph) on a Windows workstation with two monitors. All paths below are placeholders; replace them with your own.*
 
 ## 1. What this gives you
 
@@ -102,7 +102,7 @@ Ask Claude to confirm that (1) `heartbeat.txt` is recent and (2) a screenshot of
    labels (LH, LV, CR, CL) may stay.
 ```
 
-## 6. Recipes (viewer v1.2.2 internal API)
+## 6. Recipes (viewer v1.2.3 internal API)
 
 These are the calls used in the session, shown as command files for `viewer_cmd\`. They use internal functions of this version of the viewer and may change between releases; the dialogs themselves are the stable public interface.
 

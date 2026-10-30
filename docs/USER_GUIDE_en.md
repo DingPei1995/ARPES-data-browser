@@ -2,7 +2,7 @@
 
 *[中文版 / Chinese version](USER_GUIDE_zh.md) · [Version française](USER_GUIDE_fr.md)*
 
-*Last updated: 29 October 2026 — for ARPES viewer v1.2.2*
+*Last updated: 30 October 2026 — for ARPES viewer v1.2.3*
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
@@ -250,7 +250,7 @@ rest of what is done to the rows: **Experiment info**, **Log format...** and
 **Rename**, **Save** and **Remove** on one row, **Sum repeated scans...**
 and **Session log...**. Its buttons grey out like the tools.
 
-### Where things are now (v1.2.2)
+### Where things are now (v1.2.3)
 
 If you used an earlier version: the tools moved out of the right-click menu
 and the viewers' *Functions* menus into the tool panel, so each has one way
