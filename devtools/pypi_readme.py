@@ -9,7 +9,7 @@ its relative links. Usage: ``python devtools/pypi_readme.py README.md v1.2.2``.
 import re
 import sys
 
-REPOSITORY = "https://github.com/DingPei1995/ARPES-data-browser"
+REPOSITORY = "https://github.com/DingPei1995/ARPES-viewer"
 
 
 def absolute(text: str, ref: str) -> str:
@@ -18,7 +18,7 @@ def absolute(text: str, ref: str) -> str:
         if re.match(r"[a-z]+:|#", path):         # http:, mailto:, an anchor
             return path
         if image:
-            return f"https://raw.githubusercontent.com/DingPei1995/ARPES-data-browser/{ref}/{path}"
+            return f"https://raw.githubusercontent.com/DingPei1995/ARPES-viewer/{ref}/{path}"
         return f"{REPOSITORY}/blob/{ref}/{path}"
 
     text = re.sub(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)",

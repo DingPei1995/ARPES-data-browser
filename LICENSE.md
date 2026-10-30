@@ -1,4 +1,4 @@
-Required Notice: Copyright (c) 2026 Ding Pei (https://github.com/DingPei1995/ARPES-data-browser)
+Required Notice: Copyright (c) 2026 Ding Pei (https://github.com/DingPei1995/ARPES-viewer)
 
 # PolyForm Noncommercial License 1.0.0
 

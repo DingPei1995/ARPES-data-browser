@@ -6,7 +6,7 @@
 
 The version and its date are in the main window's title bar and at the bottom of
 the main window. Bug reports, questions and the latest version:
-<https://github.com/DingPei1995/ARPES-data-browser> (please give the version
+<https://github.com/DingPei1995/ARPES-viewer> (please give the version
 number when reporting a bug).
 
 This guide walks through the program's features with screenshots, in the

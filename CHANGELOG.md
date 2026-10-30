@@ -10,6 +10,15 @@ file is the record of how it got that way.
 
 ---
 
+## Unreleased
+
+- **The repository is now `DingPei1995/ARPES-viewer`**, matching the
+  program's name and the PyPI package `arpes-viewer`; it was
+  `ARPES-data-browser`. Every link -- the main window's, README, the user
+  guides, `NOTICE`, `LICENSE.md`, `CITATION.cff`, the PyPI project links --
+  now points at the new address. GitHub redirects the old one, so links in
+  released versions and the PDF guides still work.
+
 ## 1.2.2 — 2026-10-29
 
 The terms of use and the authorship, as published with the package, and a
@@ -957,7 +966,7 @@ could not tell which build they had or whether a fix had reached them.
 - **Version and where to get help, in the main window.** The title bar reads
   *ARPES viewer v1.0.0 (updated 2026-10-25)*, and the foot of the main
   window repeats it with a link to
-  <https://github.com/DingPei1995/ARPES-data-browser> for bug reports
+  <https://github.com/DingPei1995/ARPES-viewer> for bug reports
   (Issues) and the latest version. The number lives in `version.py`; bump
   it, and its date, with every change that reaches users, and head the
   changelog entry with it.

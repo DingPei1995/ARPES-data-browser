@@ -5,7 +5,7 @@
 *最后更新：2026 年 10 月 29 日——对应 ARPES viewer v1.2.2*
 
 程序的版本号和更新日期显示在主窗口标题栏和主窗口最下方。报告 bug、提问或获取最新版本：
-<https://github.com/DingPei1995/ARPES-data-browser>（报告 bug 时请注明版本号）。
+<https://github.com/DingPei1995/ARPES-viewer>（报告 bug 时请注明版本号）。
 
 本指南按照工具面板的顺序，配合截图介绍程序的功能：先是入门（安装、载入数据、
 主窗口与各查看窗口），然后依次是 **Basic**、**Advanced**、**Calculation** 三个

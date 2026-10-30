@@ -24,7 +24,7 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.23771647
     description: "Concept DOI: all versions, resolving to the latest"
-repository-code: "https://github.com/DingPei1995/ARPES-data-browser"
+repository-code: "https://github.com/DingPei1995/ARPES-viewer"
 url: "https://pypi.org/project/arpes-viewer/"
 keywords:
   - ARPES

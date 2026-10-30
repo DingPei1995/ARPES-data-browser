@@ -6,7 +6,7 @@
 
 La version et sa date figurent dans la barre de titre et en bas de la fenêtre
 principale. Signaler un bogue, poser une question, obtenir la dernière version :
-<https://github.com/DingPei1995/ARPES-data-browser> (merci d'indiquer le numéro
+<https://github.com/DingPei1995/ARPES-viewer> (merci d'indiquer le numéro
 de version en signalant un bogue).
 
 Ce guide présente les fonctions du programme, captures d'écran à l'appui,

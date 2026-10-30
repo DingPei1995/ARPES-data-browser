@@ -11,7 +11,7 @@ and the version and date in ``CITATION.cff`` the same -- tests check them.
 """
 VERSION = "1.2.2"
 UPDATED = "2026-10-29"
-REPOSITORY = "https://github.com/DingPei1995/ARPES-data-browser"
+REPOSITORY = "https://github.com/DingPei1995/ARPES-viewer"
 
 
 def title() -> str:

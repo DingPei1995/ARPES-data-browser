@@ -2,13 +2,13 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23771647.svg)](https://doi.org/10.5281/zenodo.23771647)
 [![PyPI version](https://img.shields.io/pypi/v/arpes-viewer.svg)](https://pypi.org/project/arpes-viewer/)
-[![User Guide](https://img.shields.io/badge/📖_User_Guide-English-blue?style=flat-square)](https://github.com/DingPei1995/ARPES-data-browser/blob/main/docs/USER_GUIDE_en.md)
+[![User Guide](https://img.shields.io/badge/📖_User_Guide-English-blue?style=flat-square)](https://github.com/DingPei1995/ARPES-viewer/blob/main/docs/USER_GUIDE_en.md)
 
 **Version 1.2.2** (last modified 29 October 2026) — see
 [CHANGELOG.md](CHANGELOG.md) for what changed. The version is in
 `arpes_viewer/version.py` and is shown in the main window's title bar and at its foot,
 with a link to this repository for bug reports and the latest version
-(<https://github.com/DingPei1995/ARPES-data-browser>). Please quote it when
+(<https://github.com/DingPei1995/ARPES-viewer>). Please quote it when
 reporting a bug, and upload the error log with the report ([below](#bug-reports)).
 
 > **Terms of use.** This program is for **non-commercial use only**
@@ -164,7 +164,7 @@ arpes-viewer
 ```
 
 (`python -m arpes_viewer` does the same; for the latest, unreleased
-version: `pip install git+https://github.com/DingPei1995/ARPES-data-browser`.)
+version: `pip install git+https://github.com/DingPei1995/ARPES-viewer`.)
 Installed this way, the error logs go to `~/.arpes_viewer/error_logs/`.
 
 From a downloaded copy of this repository, with those packages installed:
@@ -191,7 +191,7 @@ python ARPES_viewer.py
 
 The program saves what went wrong by itself, in
 `error_logs/errors_<date>_<time>.txt` in its folder (in `~/.arpes_viewer/` when installed with pip), and keeps running. With
-a bug report on [GitHub Issues](https://github.com/DingPei1995/ARPES-data-browser/issues),
+a bug report on [GitHub Issues](https://github.com/DingPei1995/ARPES-viewer/issues),
 **upload that file** (drag it into the text box) **or paste its text** -- the
 main panel's foot has **Copy the newest error log** and **Open the error
 logs** -- and give the version number.
