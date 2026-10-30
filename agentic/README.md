@@ -13,5 +13,5 @@ Quick start (Windows):
 4. Put command files into `viewer_cmd/` (live viewer) or `queue/` (headless); read `out/*.log`; screenshots are in `shots/`.
 
 `recipes/` holds building blocks adapted from a real session (normalise, cut k conversion + Fermi fit + offset, arbitrary cut from a map,
-two-peak MDC fit). They call the viewer's internal functions of v1.2.2 and may need changes after updates; check each on one dataset first.
+two-peak MDC fit). They call the viewer's internal functions of v1.2.3 and may need changes after updates; check each on one dataset first.
 Working folders are git-ignored.

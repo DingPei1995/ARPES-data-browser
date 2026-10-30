@@ -17,8 +17,8 @@ authors:
     given-names: Ding
     orcid: "https://orcid.org/0000-0002-3995-0690"
 license: PolyForm-Noncommercial-1.0.0
-version: 1.2.2
-date-released: 2026-10-29
+version: 1.2.3
+date-released: 2026-10-30
 doi: 10.5281/zenodo.23771647
 identifiers:
   - type: doi
