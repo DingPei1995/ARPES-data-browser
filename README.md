@@ -214,7 +214,6 @@ logs** -- and give the version number.
   - [The windows](arpes_viewer/ui/README.md) -- the main panel, the viewers, autosave
     and recovery, long operations;
   - [Analysis](arpes_viewer/tools/README.md) -- what each tool does and what it assumes;
-    the tools ported from the MATLAB programs;
   - [Momentum conversion](arpes_viewer/tools/momentum/README.md) -- k conversion, k_z
     maps;
   - [Spectra](arpes_viewer/tools/spectra/README.md) -- core levels, curves, curve fits,
