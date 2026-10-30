@@ -14,8 +14,8 @@ reporting a bug, and upload the error log with the report ([below](#bug-reports)
 > **Terms of use.** This program is for **non-commercial use only**
 > (academic research and teaching); any commercial use is not permitted.
 > New and updated loaders cover data from **public large-scale facilities**
-> (synchrotrons and similar user facilities) only -- formats of individual
-> laboratories' own set-ups are not supported. If you use this program for
+> (synchrotrons and similar user facilities), formats of individual
+> laboratories' own set-ups can be added by the user him/herself. If you use this program for
 > a paper on ARPES experiments, please cite it in its references:
 > Ding Pei, *ARPES viewer*, Zenodo, <https://doi.org/10.5281/zenodo.23771647>
 > (GitHub's *Cite this repository* gives the reference in other formats).
