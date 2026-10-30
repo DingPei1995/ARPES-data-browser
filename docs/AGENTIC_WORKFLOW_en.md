@@ -4,7 +4,7 @@
 
 ## 1. What this gives you
 
-You talk to Claude in one chat window (Chinese or English). Claude plans the processing, runs it **inside the ARPES viewer on your own computer**, shows you the result in the viewer on a second monitor, and asks you whenever a physical parameter is uncertain. The report is written in English with sample information removed.
+You talk to Claude in one chat window. Claude plans the processing, runs it **inside the ARPES viewer on your own computer**, shows you the result in the viewer on a second monitor, and asks you whenever a physical parameter is uncertain. The report is written in English with sample information removed.
 
 **Hard guarantees of this design**
 
